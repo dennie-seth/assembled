@@ -8,6 +8,8 @@
   "_note": "synthetic — programmatic reference image for T-0199 gate infrastructure validation. Represents the player walk (move) state. img2img from the approved idle sheet (player_idle_sheet_v1.png, T-0198) is the intended production path once Windows-side ComfyUI is accessible from WSL.",
   "generator": "assets/src/character/src/char_gen/synth_states.py:generate_move_sheet (invoked via tests/conftest.py ensure_synth_sheets fixture)",
   "card": "T-0199",
+  "motion_class": "locomotion",
+  "motion_class_basis": "T-0359: this sidecar's own prompt and layout.frame_cells record a repeating walk-gait cycle -- the prompt names it a '10-frame walk cycle with ±4px horizontal leg stride variation (left/right legs alternate in opposing directions across frames 0-9)', and frame_cells' own walk_offsets return to (0,0) 'neutral' three times (cells (0,0), (1,1), (2,2)) before 'cycle restart' at (3,0) -- a repeating gait, not a one-off pose change. Same category as player_walk_sheet_hybrid.provenance.json, so motion_class=\"locomotion\".",
   "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
   "layout": {
     "sheet_px": [

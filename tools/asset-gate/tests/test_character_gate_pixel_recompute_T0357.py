@@ -536,8 +536,19 @@ def test_cli_character_gate_still_exits_zero_except_for_the_walks_known_fidelity
     consequence and says it is correct, not a regression, pending T-0338's
     replacement walk.
 
+    T-0359 also labelled the 6 remaining non-walk sidecars this file's own
+    baseline used to leave exempt (`player_crouch_hide_sheet_v1`/`v2`,
+    `player_die_sheet_v1`/`v2`, `player_move_sheet_v1`/`v2`) as
+    `transition`/`locomotion` from their own recorded prompts/layouts --
+    accurately, per `character_motion_class_baseline.txt`'s own updated
+    comment. None of those 6 carry the `frame_generation` rig-keypoint
+    evidence this module's recompute requires, so each now FAILS
+    `character_motion_fidelity` with a `missing_rig_evidence` reason, and
+    (T-0361) `character_part_identity` alongside it for the same reason --
+    12 new, expected FAIL lines, not a regression.
+
     So this test no longer asserts a clean exit -- it asserts the exit is
-    non-zero for EXACTLY those two already-known, already-documented reasons
+    non-zero for EXACTLY those 14 already-known, already-documented reasons
     and nothing else, so it still catches a genuine NEW regression anywhere
     else in the committed tree."""
     import os
@@ -572,6 +583,18 @@ def test_cli_character_gate_still_exits_zero_except_for_the_walks_known_fidelity
         failures.add((match.group(1), match.group(2).rstrip(":")))
 
     expected_failures = {
+        ("character_motion_fidelity", "character/player_crouch_hide_sheet_v1.provenance.json"),
+        ("character_part_identity", "character/player_crouch_hide_sheet_v1.provenance.json"),
+        ("character_motion_fidelity", "character/player_crouch_hide_sheet_v2.provenance.json"),
+        ("character_part_identity", "character/player_crouch_hide_sheet_v2.provenance.json"),
+        ("character_motion_fidelity", "character/player_die_sheet_v1.provenance.json"),
+        ("character_part_identity", "character/player_die_sheet_v1.provenance.json"),
+        ("character_motion_fidelity", "character/player_die_sheet_v2.provenance.json"),
+        ("character_part_identity", "character/player_die_sheet_v2.provenance.json"),
+        ("character_motion_fidelity", "character/player_move_sheet_v1.provenance.json"),
+        ("character_part_identity", "character/player_move_sheet_v1.provenance.json"),
+        ("character_motion_fidelity", "character/player_move_sheet_v2.provenance.json"),
+        ("character_part_identity", "character/player_move_sheet_v2.provenance.json"),
         ("character_motion_fidelity", "character/player_walk_sheet_hybrid.provenance.json"),
         ("character_motion_score_binding", "character/player_walk_sheet_hybrid.provenance.json"),
     }

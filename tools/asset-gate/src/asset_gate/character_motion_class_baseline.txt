@@ -17,10 +17,10 @@
 # backfilled by a dedicated follow-up card, never grown to silence a fresh
 # violation.
 #
-# T-0359 backfilled `motion_class` on 12 of the original 18 sidecars listed
-# here and removed them from this list; they now pass
-# `character_motion_class_declared` on merit (justified in each sidecar's own
-# new `motion_class_basis` field), not via this exemption:
+# T-0359 backfilled `motion_class` on all 18 of the non-walk sidecars
+# originally listed here and removed every one of them from this list; they
+# now pass `character_motion_class_declared` on merit (justified in each
+# sidecar's own new `motion_class_basis` field), not via this exemption:
 #   - 11 idle sheets whose own `generator` field names an idle-specific
 #     script (e.g. `gen_arm_a_idle_T0228.py`, `gen_hybrid_idle_T0252.py`) ->
 #     `motion_class: "idle"`.
@@ -33,19 +33,29 @@
 #     it is idle, not unclassifiable, even though (like the round-1 bake-off
 #     arms above) it carries no `frame_delta_range` of its own -- that gap is
 #     `character_arm_c_baseline.txt`'s CHR-1 concern, not this file's.
+#   - `player_crouch_hide_sheet_v1`/`v2` -> `motion_class: "transition"`:
+#     each sidecar's own prompt/`layout.frame_cells` describes a
+#     one-directional, non-repeating descent from standing to fully
+#     crouched/hidden -- real per-frame pose progression, but not a
+#     repeating gait, so `transition`, not `idle` or `locomotion`.
+#   - `player_die_sheet_v1`/`v2` -> `motion_class: "transition"`: each
+#     sidecar's own prompt/`layout.frame_cells` describes a one-directional,
+#     non-repeating fall from standing to prone/collapsed -- a terminal
+#     transition, not a loop.
+#   - `player_move_sheet_v1`/`v2` -> `motion_class: "locomotion"`: each
+#     sidecar's own prompt explicitly names it a walk cycle with alternating
+#     left/right leg stride, the same repeating-gait category as
+#     `player_walk_sheet_hybrid.provenance.json` below.
 #
-# The 6 remaining non-walk entries below (`player_crouch_hide_sheet_*`,
-# `player_die_sheet_*`, `player_move_sheet_*`) are deliberately left
-# baselined: their own `synth_states.py` prompts describe real per-frame
-# motion (a crouch/hide descent, a death sequence, a stride cycle) -- unlike
-# `pose_grid_stage3_T0218`, they cannot honestly be called `idle`. They would
-# classify as `transition`/`locomotion`, not `idle` -- but none of them carry
-# the `layout`/`frame_generation` rig evidence T-0357's own recompute
-# requires, so labelling them accurately would immediately fail them for
-# missing rig evidence, a new, unreviewed CI-red consequence beyond this
-# card's own explicitly-reviewed walk exemption below. That classification
-# call (and whether these old synthetic T-0199 fixtures are even meant to be
-# held to the T-0340 bar) is left to a dedicated follow-up card.
+# Labelling the 6 `player_crouch_hide_sheet_*`/`player_die_sheet_*`/
+# `player_move_sheet_*` sidecars accurately makes `character_motion_fidelity`
+# FAIL on all 6 -- none of them carry the `frame_generation` rig-keypoint
+# evidence T-0357's own recompute requires, so each now fails with
+# `missing_rig_evidence` naming that gap explicitly. That is the correct,
+# intended outcome of an accurate label, not a defect: this card's job is to
+# make the gate state each sheet's real condition, never to keep it quiet by
+# leaving an honestly-classifiable sheet unlabelled. See the verbatim gate
+# output below for the exact FAIL lines this produces.
 #
 # ---------------------------------------------------------------------------
 # EXPLICIT INTERIM-PLACEHOLDER EXEMPTION -- @DennieSeth, 2026-09-11
@@ -83,7 +93,7 @@
 # `motion_class: "locomotion"` (confirmed from the sidecar's own
 # `frame_generation` rig keypoints, not asserted); this entry no longer does
 # anything for this sidecar -- `check_character_motion_class_declared`
-# passes it on merit, not via this exemption, the same way the 12 backfilled
+# passes it on merit, not via this exemption, the same way the 18 backfilled
 # entries above do. It stays listed only because removing an
 # explicitly-reviewed, still-relevant historical decision record on a
 # read-and-passes-either-way technicality would erase context a future
@@ -109,14 +119,34 @@
 #   [PASS] character_motion_class_declared: character/player_walk_sheet_hybrid.provenance.json has no motion_class recorded -- every character-generation output must declare one (T-0357) [baseline-exempt: predates T-0357 motion-class enforcement]
 #   [PASS] character_motion_fidelity: character/player_walk_sheet_hybrid.provenance.json: motion_class=None is not locomotion/transition/loop -- the pose-fidelity/identity-stability gate does not apply (idle keeps the XOR/union cap instead)
 #
-# AFTER (current HEAD, this card's changes applied): exit 1, exactly these
-# two `[FAIL]` lines in the entire output (everything else is `[PASS]`):
+# AFTER-1 (this card's first commit, 0362aa55 -- only the walk labelled, the
+# 6 `player_crouch_hide_sheet_*`/`player_die_sheet_*`/`player_move_sheet_*`
+# sidecars still baselined): exit 1, exactly these two `[FAIL]` lines:
+#   [FAIL] character_motion_fidelity: character/player_walk_sheet_hybrid.provenance.json: motion_class='locomotion' pose-fidelity IoU floor 0.3935 < 0.7, identity-stability distance 0.3203 > 0.15 [recomputed live from the sheet's own pixels + versioned rig keypoints, not the sidecar's recorded range]
+#   [FAIL] character_motion_score_binding: character/player_walk_sheet_hybrid.provenance.json is missing or has a malformed motion-score-binding field(s): motion_score_binding, pose_fidelity_range, identity_stability_range -- a recorded locomotion/transition/loop motion score must be bound to the sheet's content hash, rig/config version, palette hash and evaluator version (T-0360)
+#
+# AFTER-2 (current HEAD, this card's changes applied -- the 6 remaining
+# non-walk entries now also labelled from their own generation data and
+# removed from this file, per the FAIL verdict on AFTER-1 that leaving them
+# baselined was itself inaccurate): exit 1, exactly these 14 `[FAIL]` lines
+# (everything else is `[PASS]`) -- labelling `player_crouch_hide_sheet_*`/
+# `player_die_sheet_*`/`player_move_sheet_*` transition/locomotion makes
+# both `character_motion_fidelity` (T-0357) and `character_part_identity`
+# (T-0361) engage and FAIL on each of the 6, since none of them carry the
+# `frame_generation` rig-keypoint evidence either check's recompute requires
+# -- an accurate, expected consequence of an accurate label, not a defect:
+#   [FAIL] character_motion_fidelity: character/player_crouch_hide_sheet_v1.provenance.json: motion_class='transition' requires recomputing pose-fidelity/identity-stability from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0357 Codex PR review 2026-09-11, P1)
+#   [FAIL] character_part_identity: character/player_crouch_hide_sheet_v1.provenance.json: motion_class='transition' requires recomputing part identity from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0361, mirroring T-0357's own P1 fix)
+#   [FAIL] character_motion_fidelity: character/player_crouch_hide_sheet_v2.provenance.json: motion_class='transition' requires recomputing pose-fidelity/identity-stability from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0357 Codex PR review 2026-09-11, P1)
+#   [FAIL] character_part_identity: character/player_crouch_hide_sheet_v2.provenance.json: motion_class='transition' requires recomputing part identity from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0361, mirroring T-0357's own P1 fix)
+#   [FAIL] character_motion_fidelity: character/player_die_sheet_v1.provenance.json: motion_class='transition' requires recomputing pose-fidelity/identity-stability from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0357 Codex PR review 2026-09-11, P1)
+#   [FAIL] character_part_identity: character/player_die_sheet_v1.provenance.json: motion_class='transition' requires recomputing part identity from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0361, mirroring T-0357's own P1 fix)
+#   [FAIL] character_motion_fidelity: character/player_die_sheet_v2.provenance.json: motion_class='transition' requires recomputing pose-fidelity/identity-stability from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0357 Codex PR review 2026-09-11, P1)
+#   [FAIL] character_part_identity: character/player_die_sheet_v2.provenance.json: motion_class='transition' requires recomputing part identity from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0361, mirroring T-0357's own P1 fix)
+#   [FAIL] character_motion_fidelity: character/player_move_sheet_v1.provenance.json: motion_class='locomotion' requires recomputing pose-fidelity/identity-stability from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0357 Codex PR review 2026-09-11, P1)
+#   [FAIL] character_part_identity: character/player_move_sheet_v1.provenance.json: motion_class='locomotion' requires recomputing part identity from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0361, mirroring T-0357's own P1 fix)
+#   [FAIL] character_motion_fidelity: character/player_move_sheet_v2.provenance.json: motion_class='locomotion' requires recomputing pose-fidelity/identity-stability from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0357 Codex PR review 2026-09-11, P1)
+#   [FAIL] character_part_identity: character/player_move_sheet_v2.provenance.json: motion_class='locomotion' requires recomputing part identity from the sheet's own pixels + versioned rig evidence, but no 'frame_generation' is declared -- a locomotion/transition/loop asset must never fall back to trusting the sidecar's own self-reported scores (T-0361, mirroring T-0357's own P1 fix)
 #   [FAIL] character_motion_fidelity: character/player_walk_sheet_hybrid.provenance.json: motion_class='locomotion' pose-fidelity IoU floor 0.3935 < 0.7, identity-stability distance 0.3203 > 0.15 [recomputed live from the sheet's own pixels + versioned rig keypoints, not the sidecar's recorded range]
 #   [FAIL] character_motion_score_binding: character/player_walk_sheet_hybrid.provenance.json is missing or has a malformed motion-score-binding field(s): motion_score_binding, pose_fidelity_range, identity_stability_range -- a recorded locomotion/transition/loop motion score must be bound to the sheet's content hash, rig/config version, palette hash and evaluator version (T-0360)
 character/player_walk_sheet_hybrid.provenance.json
-character/player_crouch_hide_sheet_v1.provenance.json
-character/player_crouch_hide_sheet_v2.provenance.json
-character/player_die_sheet_v1.provenance.json
-character/player_die_sheet_v2.provenance.json
-character/player_move_sheet_v1.provenance.json
-character/player_move_sheet_v2.provenance.json

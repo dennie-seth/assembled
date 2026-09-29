@@ -28,6 +28,8 @@
   "comfyui_prompt_id": "5ec16a7d-cad8-4913-b496-31d23d4d8b37",
   "generator": "assets/src/character/gen_states_v2_tiled.py",
   "card": "T-0213",
+  "motion_class": "transition",
+  "motion_class_basis": "T-0359: this sidecar's own prompt explicitly describes a 'progressive death fall sequence across frames from standing to collapsed' -- a one-directional, non-repeating pose change ending horizontal, with no return to the starting pose. That is neither idle (it has frame-to-frame pose progression by the prompt's own description) nor locomotion (it is not a repeating gait cycle) -- it is a terminal transition from standing to fallen, so motion_class=\"transition\".",
   "spec": "docs/design/13-asset-pipeline.md \u00a73.5 (Characters \u2014 the hard class) + \u00a76 (archetype-first coherence guard)",
   "layout": {
     "sheet_px": [

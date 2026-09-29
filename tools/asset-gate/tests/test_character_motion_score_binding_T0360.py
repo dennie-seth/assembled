@@ -788,11 +788,25 @@ def test_cli_character_gate_still_exits_zero_except_for_the_walks_known_binding_
     `character_motion_class_baseline.txt`'s "EXPLICIT INTERIM-PLACEHOLDER
     EXEMPTION" note.
 
+    T-0359 also labelled the 6 remaining non-walk sidecars this file's own
+    baseline used to leave exempt (`player_crouch_hide_sheet_v1`/`v2`,
+    `player_die_sheet_v1`/`v2`, `player_move_sheet_v1`/`v2`) as
+    `transition`/`locomotion` from their own recorded prompts/layouts. None
+    of those 6 carry the `frame_generation` rig-keypoint evidence needed to
+    recompute a pose-fidelity score at all, so `character_motion_fidelity`
+    (T-0357) and `character_part_identity` (T-0361) FAIL on each of them
+    with a `missing_rig_evidence` reason before a recompute ever happens --
+    this check's own binding logic explicitly only fires once a recompute
+    has succeeded (`check_motion_score_binding`'s own docstring), so none of
+    those 6 add a `character_motion_score_binding` failure of their own; 12
+    new `character_motion_fidelity`/`character_part_identity` FAIL lines,
+    not a regression.
+
     So this test no longer asserts a clean exit -- it asserts the exit is
-    non-zero for EXACTLY the two already-known, already-documented reasons
-    (this check's own missing-binding FAIL, and T-0357's fidelity-floor
-    FAIL, both on the walk alone) and nothing else, so it still catches a
-    genuine NEW regression anywhere else in the committed tree."""
+    non-zero for EXACTLY the 14 already-known, already-documented reasons
+    (this check's own missing-binding FAIL and T-0357's fidelity-floor FAIL
+    on the walk, plus the 12 lines above) and nothing else, so it still
+    catches a genuine NEW regression anywhere else in the committed tree."""
     import os
     import re
     import subprocess
@@ -824,6 +838,18 @@ def test_cli_character_gate_still_exits_zero_except_for_the_walks_known_binding_
         failures.add((match.group(1), match.group(2).rstrip(":")))
 
     expected_failures = {
+        ("character_motion_fidelity", "character/player_crouch_hide_sheet_v1.provenance.json"),
+        ("character_part_identity", "character/player_crouch_hide_sheet_v1.provenance.json"),
+        ("character_motion_fidelity", "character/player_crouch_hide_sheet_v2.provenance.json"),
+        ("character_part_identity", "character/player_crouch_hide_sheet_v2.provenance.json"),
+        ("character_motion_fidelity", "character/player_die_sheet_v1.provenance.json"),
+        ("character_part_identity", "character/player_die_sheet_v1.provenance.json"),
+        ("character_motion_fidelity", "character/player_die_sheet_v2.provenance.json"),
+        ("character_part_identity", "character/player_die_sheet_v2.provenance.json"),
+        ("character_motion_fidelity", "character/player_move_sheet_v1.provenance.json"),
+        ("character_part_identity", "character/player_move_sheet_v1.provenance.json"),
+        ("character_motion_fidelity", "character/player_move_sheet_v2.provenance.json"),
+        ("character_part_identity", "character/player_move_sheet_v2.provenance.json"),
         ("character_motion_fidelity", "character/player_walk_sheet_hybrid.provenance.json"),
         ("character_motion_score_binding", "character/player_walk_sheet_hybrid.provenance.json"),
     }
