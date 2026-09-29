@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from char_gen.part_isolation import (
+    exceeds_stray_fraction_tolerance,
     is_part_mask_degenerate,
     keep_components_containing_points,
     mask_overlap_fraction,
@@ -150,3 +151,28 @@ class TestIsPartMaskDegenerate:
     def test_zero_total_px_raises(self):
         with pytest.raises(ValueError):
             is_part_mask_degenerate(100, 0)
+
+
+class TestExceedsStrayFractionTolerance:
+    """A part mask is rejected on stray-fragment grounds if the fraction of
+    its own raw detection dropped by `keep_components_containing_points`
+    exceeds this stated tolerance -- the other half of "isolation judged on
+    more than total area" (the overlap check above is the other half).
+    0.35 is justified against T-0417's own first live run against the real
+    "legs" panel: three genuinely well-separated, visually correct parts
+    (right_upper_leg, right_lower_leg, right_boot) measured stray fractions
+    of 0.278/0.224/0.222 -- jagged-edge/small-decoration noise around an
+    otherwise clean detection, not a failed request -- so the tolerance
+    sits above that observed range rather than at it, while a request that
+    scattered more than a third of its own raw mask across disconnected
+    fragments is still caught as a real isolation failure."""
+
+    def test_the_observed_clean_right_leg_results_are_within_tolerance(self):
+        for stray_fraction in (0.2784364288185163, 0.2237317848142873, 0.22206848841231408):
+            assert exceeds_stray_fraction_tolerance(stray_fraction) is False
+
+    def test_a_mask_that_is_mostly_stray_fragments_exceeds_tolerance(self):
+        assert exceeds_stray_fraction_tolerance(0.6) is True
+
+    def test_zero_stray_fraction_is_within_tolerance(self):
+        assert exceeds_stray_fraction_tolerance(0.0) is False

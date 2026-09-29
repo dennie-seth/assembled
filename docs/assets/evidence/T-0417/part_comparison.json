@@ -32,6 +32,8 @@
             "stray_fraction": 0.2784364288185163
           },
           "degenerate": false,
+          "stray_fraction_exceeds_tolerance": false,
+          "isolated": true,
           "prompts": [
             {
               "x": 358,
@@ -122,6 +124,8 @@
             "stray_fraction": 0.2237317848142873
           },
           "degenerate": false,
+          "stray_fraction_exceeds_tolerance": false,
+          "isolated": true,
           "prompts": [
             {
               "x": 276,
@@ -212,6 +216,8 @@
             "stray_fraction": 0.22206848841231408
           },
           "degenerate": false,
+          "stray_fraction_exceeds_tolerance": false,
+          "isolated": true,
           "prompts": [
             {
               "x": 225,
@@ -300,6 +306,8 @@
             "stray_fraction": 0.0
           },
           "degenerate": null,
+          "stray_fraction_exceeds_tolerance": null,
+          "isolated": false,
           "prompts": [
             {
               "x": 665,
@@ -388,6 +396,8 @@
             "stray_fraction": 0.0
           },
           "degenerate": null,
+          "stray_fraction_exceeds_tolerance": null,
+          "isolated": false,
           "prompts": [
             {
               "x": 747,
@@ -478,6 +488,8 @@
             "stray_fraction": 0.07702089009990917
           },
           "degenerate": false,
+          "stray_fraction_exceeds_tolerance": false,
+          "isolated": true,
           "prompts": [
             {
               "x": 798,

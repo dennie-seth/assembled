@@ -80,6 +80,7 @@ from char_gen.cutout_sam3 import (  # noqa: E402
 from char_gen.part_descend import box_descend_part  # noqa: E402
 from char_gen.part_isolation import (  # noqa: E402
     PART_OVERLAP_FRACTION_TOLERANCE,
+    exceeds_stray_fraction_tolerance,
     is_part_mask_degenerate,
     keep_components_containing_points,
     mask_overlap_fraction,
@@ -348,6 +349,14 @@ def _run_one_part(
     degenerate = (
         is_part_mask_degenerate(foreground_px_after, cleaned_mask.size) if present else None
     )
+    stray_fraction_exceeds_tolerance = (
+        exceeds_stray_fraction_tolerance(isolation["stray_fraction"]) if present else None
+    )
+    # The stated verdict for "isolation judged on more than total area":
+    # present, not degenerate, and not rejected on stray-fragment grounds.
+    # A sibling-overlap rejection is layered on separately in `main()`'s
+    # `_evaluate_overlaps`, once every part in the panel has its own mask.
+    isolated = bool(present and not degenerate and not stray_fraction_exceeds_tolerance)
 
     after_arr = np.array(crop).copy()
     after_arr[~cleaned_mask] = (255, 0, 255)  # magenta marks this part's own background call
@@ -397,6 +406,8 @@ def _run_one_part(
         "foreground_px_after_isolation": foreground_px_after,
         "isolation": isolation,
         "degenerate": degenerate,
+        "stray_fraction_exceeds_tolerance": stray_fraction_exceeds_tolerance,
+        "isolated": isolated,
         "prompts": prompts,
         "sam3_after": str(after_path.relative_to(REPO_ROOT)),
         "mask": str(mask_path.relative_to(REPO_ROOT)),
@@ -406,7 +417,7 @@ def _run_one_part(
     print(
         f"{panel_key}/{part_key}: present={present} fg_raw={foreground_px_raw} "
         f"fg_after_isolation={foreground_px_after} stray_fraction={stray_fraction:.4f} "
-        f"degenerate={degenerate}"
+        f"degenerate={degenerate} isolated={isolated}"
     )
     return result
 

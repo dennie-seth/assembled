@@ -42,6 +42,18 @@ import numpy as np
 PART_DEGENERATE_FRACTION_LOW = 0.002
 PART_DEGENERATE_FRACTION_HIGH = 0.35
 
+#: A part mask that drops more than this fraction of its own raw detection
+#: to disconnected stray fragments (see `keep_components_containing_points`)
+#: is rejected on stray-fragment grounds -- the other half of "isolation
+#: judged on more than total area" (`PART_OVERLAP_FRACTION_TOLERANCE` below
+#: is the other half). Justified against T-0417's own first live SAM3 run
+#: against the real "legs" panel: three genuinely well-separated, visually
+#: correct parts (right_upper_leg, right_lower_leg, right_boot) measured
+#: stray fractions of 0.278/0.224/0.222 -- jagged-edge/small-decoration
+#: noise around an otherwise clean detection, not a failed request -- so
+#: 0.35 sits above that observed range rather than at it.
+PART_STRAY_FRACTION_TOLERANCE = 0.35
+
 #: A sibling-part mask overlapping more than this fraction of the SMALLER
 #: mask's own area is treated as "not actually separated" rather than two
 #: independently isolated parts. Some overlap near a shared joint (thigh vs.
@@ -119,6 +131,14 @@ def keep_components_containing_points(
         "stray_px": stray_px,
         "stray_fraction": stray_fraction,
     }
+
+
+def exceeds_stray_fraction_tolerance(stray_fraction: float) -> bool:
+    """True when a part's own `stray_fraction` (from
+    `keep_components_containing_points`) exceeds `PART_STRAY_FRACTION_TOLERANCE` --
+    the stated, justified rejection rule for "disconnected stray fragments
+    beyond a stated tolerance"."""
+    return stray_fraction > PART_STRAY_FRACTION_TOLERANCE
 
 
 def mask_overlap_fraction(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
