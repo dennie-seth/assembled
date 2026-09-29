@@ -1,5 +1,5 @@
 {
-  "//": "Shared guardrail (T-0071 + T-0082, .claude/rules/assets.md): every generation agent refuses to run a recipe whose checkpoint/model isn't listed here with an approved license. Approved families: Apache-2.0, OpenRAIL (incl. CreativeML Open RAIL-M/RAIL++-M variants), CC0-derived. No CC-BY-NC, ever.",
+  "//": "Shared guardrail (T-0071 + T-0082, .claude/rules/assets.md): every generation agent refuses to run a recipe whose checkpoint/model isn't listed here with an approved license. Approved families: Apache-2.0, OpenRAIL (incl. CreativeML Open RAIL-M/RAIL++-M variants), CC0-derived, plus two approved-with-caveat families -- Stability-Community (T-0081) and SAM (T-0337). No CC-BY-NC, ever.",
   "checkpoints": [
     {
       "filename": "sd_xl_base_1.0.safetensors",
@@ -21,6 +21,13 @@
       "license_family": "Stability-Community",
       "source": "https://huggingface.co/stabilityai/stable-audio-open-1.0",
       "notes": "Installed on the Windows Stable Audio Open host, docs/stable-audio-setup.md (T-0081). Approved-with-caveat, not the plain Apache-2.0/OpenRAIL/CC0 tier: free under the Stability AI Community License while the project stays under $1M annual revenue -- Stability registration/commercial license required if that changes. Gated on HF, requires an authenticated huggingface-cli login. Consumed by audio-agent/AudioAgent (T-0082) for texture SFX (13-asset-pipeline.md §4.5)."
+    },
+    {
+      "filename": "sam3.1_multiplex_fp16.safetensors",
+      "license": "SAM License (2025-11-19)",
+      "license_family": "SAM",
+      "source": "https://huggingface.co/Comfy-Org/sam3.1",
+      "notes": "Meta AI's Segment Anything Model 3.1, the `Comfy-Org/sam3.1` repack, installed on the Windows ComfyUI host under `models/diffusion_models` and loaded via ComfyUI core `UNETLoader` (T-0337). sha256 `9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03`. SEGMENTATION ONLY -- it carves pixels that an approved generator produced; it synthesises nothing. Licence read in full 2026-09-29 and byte-identical to Meta's own `facebookresearch/sam3/LICENSE`: commercial use is permitted, there is no non-commercial clause and no claim over outputs (section 5(a) gives the user ownership of derivative works and modifications). Caveats: Trade Controls / ITAR-style prohibited end uses, no reverse engineering, acknowledgement in research publications, and REDISTRIBUTION of the weights would require carrying the Agreement with them -- so the checkpoint stays on the host and is never vendored into this repo. Consumed by assets/src/character cutout work (T-0337)."
     }
   ]
 }
