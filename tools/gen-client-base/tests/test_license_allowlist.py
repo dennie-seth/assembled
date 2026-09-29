@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from gen_client_base.license_allowlist import (
+    APPROVED_LICENSE_FAMILIES,
     CheckpointEntry,
     CheckpointNotAllowedError,
     assert_checkpoint_allowed,
@@ -77,3 +78,22 @@ def test_assert_checkpoint_allowed_accepts_injected_allowlist():
     }
     entry = assert_checkpoint_allowed("custom.safetensors", allowlist=allowlist)
     assert entry.license == "Apache-2.0"
+
+
+def test_sam_is_an_approved_license_family():
+    """The SAM License is a fourth approved-with-caveat family (see module docstring)."""
+    assert "SAM" in APPROVED_LICENSE_FAMILIES
+
+
+def test_load_allowlist_reads_the_sam3_entry():
+    allowlist = load_allowlist()
+    assert "sam3.1_multiplex_fp16.safetensors" in allowlist
+    entry = allowlist["sam3.1_multiplex_fp16.safetensors"]
+    assert entry.license == "SAM License (2025-11-19)"
+    assert entry.license_family == "SAM"
+
+
+def test_assert_checkpoint_allowed_passes_for_approved_sam3_checkpoint():
+    entry = assert_checkpoint_allowed("sam3.1_multiplex_fp16.safetensors")
+    assert entry.filename == "sam3.1_multiplex_fp16.safetensors"
+    assert entry.license_family == "SAM"

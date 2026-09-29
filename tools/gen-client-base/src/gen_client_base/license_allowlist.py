@@ -26,7 +26,22 @@ from pathlib import Path
 # is required for continued use (docs/stable-audio-setup.md). Still
 # categorically excludes CC-BY-NC (MusicGen, AudioGen, etc.), which has no
 # such compliance path at any revenue level.
-APPROVED_LICENSE_FAMILIES = {"Apache-2.0", "OpenRAIL", "CC0", "Stability-Community"}
+# "SAM" is an approved-with-caveat fifth family, added for Meta's
+# `sam3.1_multiplex_fp16.safetensors` (T-0337). The SAM License (Last Updated
+# 2025-11-19) was read in full on 2026-09-29 and is byte-identical to Meta's own
+# `facebookresearch/sam3/LICENSE`. It grants a non-exclusive, worldwide,
+# non-transferable and royalty-free licence to "use, reproduce, distribute,
+# copy, create derivative works of, and make modifications to the SAM
+# Materials", with NO non-commercial clause and NO ownership claim over outputs
+# -- section 5(a) makes the user the owner of their derivative works and
+# modifications. Its caveats are why this is not the plain Apache-2.0/OpenRAIL/
+# CC0 tier: Trade Controls / ITAR-style prohibited end uses, no reverse
+# engineering, acknowledgement in research publications, and -- the operative
+# one for this repo -- REDISTRIBUTION of the weights would require carrying the
+# Agreement with them. This repo consumes the checkpoint on the host and
+# redistributes only generated pixels, not the weights, so that caveat is not
+# engaged today; it would be if the model were ever vendored into the repo.
+APPROVED_LICENSE_FAMILIES = {"Apache-2.0", "OpenRAIL", "CC0", "Stability-Community", "SAM"}
 
 DEFAULT_ALLOWLIST_PATH = (
     Path(__file__).resolve().parents[2] / "config" / "checkpoint_allowlist.json"

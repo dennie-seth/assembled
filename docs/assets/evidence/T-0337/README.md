@@ -197,7 +197,12 @@ background only. Regression tests
 (`tests/test_part_descend_T0337.py::TestBoxDescendPartDoesNotEraseDarkForeground`) assert decoded
 RGBA alpha end-to-end through `save_sprite_sheet`, not tRNS metadata alone.
 
-## [FIX ROUND 1] Open finding — SAM3 checkpoint license is UNVERIFIED, not registered
+## [FIX ROUND 1] Open finding — SAM3 checkpoint license (RESOLVED 2026-09-29)
+
+**RESOLVED 2026-09-29 — the licence was read in full and the checkpoint is now registered.** `sam3.1_multiplex_fp16.safetensors` is an entry in `tools/gen-client-base/config/checkpoint_allowlist.json` with `license_family` `SAM`, and `SAM` is an approved-with-caveat family in `APPROVED_LICENSE_FAMILIES`. The SAM License (Last Updated 2025-11-19) is byte-identical to Meta's own `facebookresearch/sam3/LICENSE`: commercial use is permitted, there is no non-commercial clause, and section 5(a) gives the user ownership of their derivative works, so no claim is made over generated pixels. The caveats are Trade Controls / ITAR-style prohibited end uses, no reverse engineering, research-publication acknowledgement, and redistribution of the weights only under the same Agreement — so the checkpoint stays on the ComfyUI host and is never vendored into this repo. The structural gap the finding also describes — that the hand-built-graph path reaches ComfyUI without ever calling `assert_checkpoint_allowed` — is NOT closed by this and is carded separately. 
+
+The original finding is kept verbatim below as the record of the position at the time.
+
 
 `sam3.1_multiplex_fp16.safetensors` is **not** in
 `tools/gen-client-base/config/checkpoint_allowlist.json`, the file
