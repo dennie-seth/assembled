@@ -352,10 +352,12 @@ def _run_one_part(
     stray_fraction_exceeds_tolerance = (
         exceeds_stray_fraction_tolerance(isolation["stray_fraction"]) if present else None
     )
-    # The stated verdict for "isolation judged on more than total area":
-    # present, not degenerate, and not rejected on stray-fragment grounds.
-    # A sibling-overlap rejection is layered on separately in `main()`'s
-    # `_evaluate_overlaps`, once every part in the panel has its own mask.
+    # This part's own verdict in isolation: present, not degenerate, and not
+    # rejected on stray-fragment grounds. `main()`'s `_apply_overlap_rejection`
+    # folds the sibling-overlap verdict (from `_evaluate_overlaps`, which
+    # needs every part in the panel's own mask first) back into this value
+    # once the whole panel has run -- see that function for why this base
+    # value is kept under `isolated_before_overlap` rather than overwritten.
     isolated = bool(present and not degenerate and not stray_fraction_exceeds_tolerance)
 
     after_arr = np.array(crop).copy()
@@ -407,6 +409,13 @@ def _run_one_part(
         "isolation": isolation,
         "degenerate": degenerate,
         "stray_fraction_exceeds_tolerance": stray_fraction_exceeds_tolerance,
+        # `isolated_before_overlap` is this part's own verdict, never touched
+        # again once written. `isolated`/`overlap_exceeds_tolerance` start
+        # equal to it/False and are folded in by `_apply_overlap_rejection`
+        # in `main()`, which recomputes both fresh from this base value on
+        # every run -- see that function's docstring for why.
+        "isolated_before_overlap": isolated,
+        "overlap_exceeds_tolerance": False,
         "isolated": isolated,
         "prompts": prompts,
         "sam3_after": str(after_path.relative_to(REPO_ROOT)),
@@ -441,6 +450,44 @@ def _evaluate_overlaps(panel_key: str, masks_by_part: dict[str, np.ndarray]) -> 
             }
         )
     return overlaps
+
+
+def _apply_overlap_rejection(
+    parts_by_key: dict[str, dict], overlaps: list[dict]
+) -> dict[str, dict]:
+    """Folds `_evaluate_overlaps`'s pairwise verdicts back into each
+    individual part's own `isolated` flag -- the half of "isolation judged
+    on more than total area" that stray-fragment rejection alone doesn't
+    cover. `_run_one_part`'s own verdict (present, not degenerate, not
+    stray-rejected) is preserved verbatim under `isolated_before_overlap`
+    and never mutated again; every call here recomputes `isolated` and
+    `overlap_exceeds_tolerance` fresh from that base plus the CURRENT
+    `overlaps` list, so re-running a single part later (`--part`) can never
+    compound a stale overlap verdict left over from an earlier pass -- e.g.
+    a part rejected on overlap grounds against a sibling that has since been
+    re-run and no longer overlaps is correctly un-rejected, not stuck
+    rejected forever.
+
+    Both parts in an over-tolerance pair are marked, not just one:
+    `mask_overlap_fraction` measures how much they share, not which side
+    bled into the other, so neither is treated as the innocent one -- "the
+    overlap tolerance decides, and the decision is recorded per part rather
+    than silently merged" (card's own edge-case wording)."""
+    overlapping_parts: set[str] = set()
+    for pair in overlaps:
+        if pair["exceeds_tolerance"]:
+            overlapping_parts.add(pair["part_a"])
+            overlapping_parts.add(pair["part_b"])
+
+    updated: dict[str, dict] = {}
+    for key, result in parts_by_key.items():
+        result = dict(result)
+        base_isolated = result.get("isolated_before_overlap", result["isolated"])
+        result["isolated_before_overlap"] = base_isolated
+        result["overlap_exceeds_tolerance"] = key in overlapping_parts
+        result["isolated"] = bool(base_isolated and key not in overlapping_parts)
+        updated[key] = result
+    return updated
 
 
 def main() -> None:
@@ -513,6 +560,7 @@ def main() -> None:
             masks_by_part[key] = np.array(Image.open(mask_path_for_key).convert("L")) >= 128
 
         overlaps = _evaluate_overlaps(panel_key, masks_by_part)
+        existing_parts_by_key = _apply_overlap_rejection(existing_parts_by_key, overlaps)
 
         ordered_parts = {
             k: existing_parts_by_key[k]

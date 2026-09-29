@@ -35,14 +35,21 @@ Live run against the ComfyUI host (`172.18.192.1:8188`), `sam3.1_multiplex_fp16.
 (`docs/assets/evidence/T-0337/panel_legs_before.png`, both legs genuinely exposed with wraps/coat
 draping between and around them — see that file for the source crop this card segmented).
 
-| part | present | fg_raw | fg_after_isolation | stray_fraction | degenerate | isolated |
-|---|---|---|---|---|---|---|
-| `right_upper_leg` | yes | 31,799 | 22,945 | 0.278 | no | **yes** |
-| `right_lower_leg` | yes | 18,254 | 14,170 | 0.224 | no | **yes** |
-| `right_boot` | yes | 8,673 | 6,747 | 0.222 | no | **yes** |
-| `left_upper_leg` | **no** | 0 | 0 | — | — | **no** |
-| `left_lower_leg` | **no** | 0 | 0 | — | — | **no** |
-| `left_boot` | yes | 5,505 | 5,081 | 0.077 | no | **yes** |
+| part | present | fg_raw | fg_after_isolation | stray_fraction | degenerate | overlap_exceeds_tolerance | isolated |
+|---|---|---|---|---|---|---|---|
+| `right_upper_leg` | yes | 31,799 | 22,945 | 0.278 | no | no | **yes** |
+| `right_lower_leg` | yes | 18,254 | 14,170 | 0.224 | no | no | **yes** |
+| `right_boot` | yes | 8,673 | 6,747 | 0.222 | no | no | **yes** |
+| `left_upper_leg` | **no** | 0 | 0 | — | — | no | **no** |
+| `left_lower_leg` | **no** | 0 | 0 | — | — | no | **no** |
+| `left_boot` | yes | 5,505 | 5,081 | 0.077 | no | no | **yes** |
+
+`isolated` is `_apply_overlap_rejection`'s final per-part verdict: this part's own
+present/not-degenerate/not-stray-rejected result (`isolated_before_overlap` in `part_comparison.json`)
+AND-ed against `overlap_exceeds_tolerance` below, folded back in once every part in the panel has run.
+No pair in this run exceeded tolerance, so no part is overlap-rejected here — see
+`test_apply_overlap_rejection_*` in `tests/test_gen_master_sheet_part_cutouts_T0417.py` for the case
+where a pair does exceed it and both siblings get `isolated=False`.
 
 Sibling overlap (only computed where both masks exist):
 

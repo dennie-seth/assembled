@@ -33,6 +33,8 @@
           },
           "degenerate": false,
           "stray_fraction_exceeds_tolerance": false,
+          "isolated_before_overlap": true,
+          "overlap_exceeds_tolerance": false,
           "isolated": true,
           "prompts": [
             {
@@ -125,6 +127,8 @@
           },
           "degenerate": false,
           "stray_fraction_exceeds_tolerance": false,
+          "isolated_before_overlap": true,
+          "overlap_exceeds_tolerance": false,
           "isolated": true,
           "prompts": [
             {
@@ -217,6 +221,8 @@
           },
           "degenerate": false,
           "stray_fraction_exceeds_tolerance": false,
+          "isolated_before_overlap": true,
+          "overlap_exceeds_tolerance": false,
           "isolated": true,
           "prompts": [
             {
@@ -307,6 +313,8 @@
           },
           "degenerate": null,
           "stray_fraction_exceeds_tolerance": null,
+          "isolated_before_overlap": false,
+          "overlap_exceeds_tolerance": false,
           "isolated": false,
           "prompts": [
             {
@@ -397,6 +405,8 @@
           },
           "degenerate": null,
           "stray_fraction_exceeds_tolerance": null,
+          "isolated_before_overlap": false,
+          "overlap_exceeds_tolerance": false,
           "isolated": false,
           "prompts": [
             {
@@ -489,6 +499,8 @@
           },
           "degenerate": false,
           "stray_fraction_exceeds_tolerance": false,
+          "isolated_before_overlap": true,
+          "overlap_exceeds_tolerance": false,
           "isolated": true,
           "prompts": [
             {

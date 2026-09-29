@@ -245,3 +245,116 @@ class TestBuildSam3PartWorkflowIsCalledSeparatelyPerPart:
         # six-point combined list the round-2 shape used.
         for call in call_log:
             assert len(call["positive_coords"]) == 1
+
+
+class TestApplyOverlapRejection:
+    """The half of "isolation judged on more than total area" that
+    `_evaluate_overlaps` alone doesn't finish: a per-pair overlap verdict is
+    useless to the parts compositor until it's folded back into each part's
+    own `isolated` flag. Before this fix, `_evaluate_overlaps`'s
+    `exceeds_tolerance` was written to `part_comparison.json` at panel level
+    and consumed by nothing -- no part was ever rejected for overlapping a
+    sibling, no matter how much it overlapped."""
+
+    def _part(self, key, *, isolated=True, present=True):
+        return {
+            "panel": "legs",
+            "part": key,
+            "present": present,
+            "isolated": isolated,
+            "isolated_before_overlap": isolated,
+            "overlap_exceeds_tolerance": False,
+        }
+
+    def test_no_pair_exceeds_tolerance_leaves_isolated_unchanged(self):
+        parts = {
+            "right_upper_leg": self._part("right_upper_leg"),
+            "right_lower_leg": self._part("right_lower_leg"),
+        }
+        overlaps = [
+            {
+                "part_a": "right_upper_leg",
+                "part_b": "right_lower_leg",
+                "overlap_fraction": 0.09,
+                "exceeds_tolerance": False,
+                "tolerance": 0.25,
+            }
+        ]
+        updated = gen._apply_overlap_rejection(parts, overlaps)
+        assert updated["right_upper_leg"]["isolated"] is True
+        assert updated["right_lower_leg"]["isolated"] is True
+        assert updated["right_upper_leg"]["overlap_exceeds_tolerance"] is False
+        assert updated["right_lower_leg"]["overlap_exceeds_tolerance"] is False
+
+    def test_an_exceeding_pair_rejects_BOTH_siblings_not_just_one(self):
+        # mask_overlap_fraction can't say which side bled into the other, so
+        # neither is treated as the innocent one -- this is the exact
+        # round-3 failure mode (both legs' full masks reported as separate
+        # parts, which would measure as near-total overlap).
+        parts = {
+            "right_upper_leg": self._part("right_upper_leg"),
+            "right_lower_leg": self._part("right_lower_leg"),
+            "right_boot": self._part("right_boot"),
+        }
+        overlaps = [
+            {
+                "part_a": "right_upper_leg",
+                "part_b": "right_lower_leg",
+                "overlap_fraction": 0.9,
+                "exceeds_tolerance": True,
+                "tolerance": 0.25,
+            },
+            {
+                "part_a": "right_lower_leg",
+                "part_b": "right_boot",
+                "overlap_fraction": 0.0,
+                "exceeds_tolerance": False,
+                "tolerance": 0.25,
+            },
+        ]
+        updated = gen._apply_overlap_rejection(parts, overlaps)
+        assert updated["right_upper_leg"]["isolated"] is False
+        assert updated["right_lower_leg"]["isolated"] is False
+        assert updated["right_upper_leg"]["overlap_exceeds_tolerance"] is True
+        assert updated["right_lower_leg"]["overlap_exceeds_tolerance"] is True
+        # The boot wasn't in the exceeding pair -- untouched.
+        assert updated["right_boot"]["isolated"] is True
+        assert updated["right_boot"]["overlap_exceeds_tolerance"] is False
+
+    def test_a_part_already_rejected_on_stray_fraction_stays_rejected(self):
+        # isolated_before_overlap carries the pre-overlap verdict forward --
+        # overlap rejection can only ever turn isolated=True into False, it
+        # can't paper over an existing area/stray-fragment rejection.
+        parts = {
+            "right_upper_leg": self._part("right_upper_leg", isolated=False),
+            "right_lower_leg": self._part("right_lower_leg"),
+        }
+        overlaps = []
+        updated = gen._apply_overlap_rejection(parts, overlaps)
+        assert updated["right_upper_leg"]["isolated"] is False
+        assert updated["right_lower_leg"]["isolated"] is True
+
+    def test_recomputing_from_a_stale_overlap_rejected_state_is_not_sticky(self):
+        # A part previously rejected on overlap grounds (isolated already
+        # False, overlap_exceeds_tolerance already True from a prior main()
+        # pass) must be un-rejected if the CURRENT overlaps list no longer
+        # flags it -- e.g. its sibling was re-run with `--part` and no
+        # longer overlaps. isolated_before_overlap is what makes this safe:
+        # it was never overwritten by the earlier overlap rejection.
+        stale = self._part("right_upper_leg", isolated=True)
+        stale["isolated"] = False
+        stale["overlap_exceeds_tolerance"] = True
+        parts = {"right_upper_leg": stale}
+        updated = gen._apply_overlap_rejection(parts, overlaps=[])
+        assert updated["right_upper_leg"]["isolated"] is True
+        assert updated["right_upper_leg"]["overlap_exceeds_tolerance"] is False
+
+    def test_a_part_absent_from_the_panel_is_never_checked(self):
+        # left_upper_leg/left_lower_leg have no mask (present=False) so they
+        # never appear in masks_by_part and never generate an overlap pair
+        # -- _evaluate_overlaps already skips them; this just confirms
+        # _apply_overlap_rejection doesn't require every PARTS_BY_PANEL key
+        # to be present in the dict it's given.
+        parts = {"left_boot": self._part("left_boot")}
+        updated = gen._apply_overlap_rejection(parts, overlaps=[])
+        assert updated["left_boot"]["isolated"] is True
