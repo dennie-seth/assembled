@@ -465,3 +465,314 @@ class TestMainSam3UnavailableEdgeCase:
         written = json.loads((evidence_dir / "part_comparison.json").read_text())
         assert written["sam3_availability"]["available"] is False
         assert written["panels"] == existing_panels
+
+
+class _UploadFailsStubClient:
+    """Records whether the SAM3 submission surface (`submit`/
+    `wait_for_completion`/`fetch_output`) was ever reached after
+    `upload_image` fails -- the exact question Finding 1 is about.
+    `upload_image` always raises `UploadError`; the other three methods
+    just count their own calls so a test can assert they stayed at zero."""
+
+    def __init__(self):
+        self.submit_calls = 0
+        self.wait_calls = 0
+        self.fetch_calls = 0
+
+    def upload_image(self, data: bytes, filename: str) -> None:
+        from comfy_client.errors import UploadError
+
+        raise UploadError("simulated upload failure")
+
+    def submit(self, workflow: dict) -> str:
+        self.submit_calls += 1
+        return "job-1"
+
+    def wait_for_completion(self, job_id: str, timeout: float = 60.0) -> dict:
+        self.wait_calls += 1
+        return {"job_id": job_id}
+
+    def fetch_output(self, result: dict) -> bytes:
+        self.fetch_calls += 1
+        arr = np.zeros((PANEL_SIZE, PANEL_SIZE), dtype=np.uint8)
+        buf = io.BytesIO()
+        Image.fromarray(arr, mode="L").save(buf, format="PNG")
+        return buf.getvalue()
+
+
+class TestUploadFailureAbortsThePartRequest:
+    """FIX ROUND finding 1 -- `gen_master_sheet_part_cutouts_T0417.py:330-333`
+    caught `UploadError`, printed it, and submitted the SAM3 graph anyway
+    against the fixed filename `T0417_panel_legs.png`: an upload failure
+    does not imply the submission fails, so ComfyUI could still hold a
+    PRIOR image under that name and segment stale pixels while the local
+    overlay/descent/provenance all identify the current crop. The
+    reviewer's stub raising `UploadError` confirmed the segmentation
+    runner was still called and returned a normal SAM3 result.
+
+    Reproduced directly against the production `_run_one_part` -- no local
+    stand-in for the function under test."""
+
+    def test_upload_error_aborts_before_the_runner_is_invoked(self, tmp_path, monkeypatch):
+        import pytest
+
+        evidence_dir = tmp_path / "evidence"
+        evidence_dir.mkdir()
+        monkeypatch.setattr(gen, "EVIDENCE_DIR", evidence_dir)
+
+        client = _UploadFailsStubClient()
+        crop = Image.new("RGB", (PANEL_SIZE, PANEL_SIZE), (0, 0, 0))
+        points = rig.keypoints_for("legs")
+        palette_list = [(0, 0, 0), (255, 255, 255)]
+
+        with pytest.raises(gen.Sam3SegmentationUnavailable):
+            gen._run_one_part(
+                client,
+                crop,
+                "T0417_panel_legs.png",
+                "legs",
+                "right_upper_leg",
+                points,
+                palette_list,
+                "run-1",
+            )
+
+        # The runner (submit/wait_for_completion/fetch_output) is never
+        # reached -- this is what would have caught the withdrawn shape,
+        # which called it regardless of the upload outcome.
+        assert client.submit_calls == 0
+        assert client.wait_calls == 0
+        assert client.fetch_calls == 0
+
+        # No mask, overlay, descended PNG or success-shaped provenance for
+        # this part -- an aborted request must not leave anything that
+        # looks like a real segmentation.
+        assert not (evidence_dir / "panel_legs_part_right_upper_leg_mask.png").exists()
+        assert not (evidence_dir / "panel_legs_part_right_upper_leg_sam3_after.png").exists()
+        assert not (evidence_dir / "panel_legs_part_right_upper_leg_descended.png").exists()
+        assert not (
+            evidence_dir / "panel_legs_part_right_upper_leg_descended.provenance.json"
+        ).exists()
+
+
+def _write_tiny_mask_png(path):
+    arr = np.zeros((4, 4), dtype=np.uint8)
+    arr[0:2, 0:2] = 255
+    Image.fromarray(arr, mode="L").save(path)
+
+
+class TestMainCatchesMidRunSam3Unavailable:
+    """FIX ROUND finding 2 -- `_make_part_sam3_runner` already turns a
+    submission/execution/timeout/fetch failure (or, after the finding-1
+    fix, an upload failure) into `Sam3SegmentationUnavailable`, but
+    `main()` never caught it around `_run_one_part`. A host that passes
+    the initial probe and then fails during inference used to terminate
+    the script without recording an unavailable prerequisite, leaving the
+    previous comparison on disk with `sam3_availability.available=true`
+    and older sibling results standing next to it unlabelled.
+
+    `_run_one_part` itself is monkeypatched here -- its own correctness
+    (including finding 1's abort path) is covered by
+    `TestUploadFailureAbortsThePartRequest` above; this class is only
+    about what `main()`'s driver loop does with the exception once it's
+    raised, which is a different code path from the one that raises it."""
+
+    def _patch_probe_and_argv(self, monkeypatch):
+        monkeypatch.setattr(
+            gen,
+            "_probe_sam3_availability",
+            lambda client: ({"available": True, "reason": None}, None),
+        )
+        monkeypatch.setattr(sys, "argv", ["gen_master_sheet_part_cutouts_T0417.py"])
+
+    def test_failure_on_the_first_part_records_prerequisite_no_partial_success_file(
+        self, tmp_path, monkeypatch
+    ):
+        evidence_dir = tmp_path / "evidence"
+        monkeypatch.setattr(gen, "EVIDENCE_DIR", evidence_dir)
+        self._patch_probe_and_argv(monkeypatch)
+
+        def _fail(*args, **kwargs):
+            raise gen.Sam3SegmentationUnavailable("simulated: submit failed")
+
+        monkeypatch.setattr(gen, "_run_one_part", _fail)
+
+        gen.main()
+
+        written = json.loads((evidence_dir / "part_comparison.json").read_text())
+        # Does not leave sam3_availability.available=true standing next to
+        # stale/absent results -- the initial probe passed, but this run's
+        # own comparison did not complete.
+        assert written["sam3_availability"]["available"] is False
+        assert written["sam3_mid_run_failure"]["panel"] == "legs"
+        assert written["sam3_mid_run_failure"]["part"] == "right_upper_leg"
+        assert "submit failed" in written["sam3_mid_run_failure"]["reason"]
+        # First part ever attempted failed -- no partial-success record, and
+        # specifically not an empty-but-successful-looking file (the empty
+        # panels dict is explicitly tied to a recorded mid-run failure, not
+        # silently presented as "nothing to report").
+        assert written["panels"] == {}
+        assert written["panels_historical"] is True
+
+    def test_failure_after_one_part_already_completed_retains_it_as_historical(
+        self, tmp_path, monkeypatch
+    ):
+        evidence_dir = tmp_path / "evidence"
+        evidence_dir.mkdir()
+        monkeypatch.setattr(gen, "EVIDENCE_DIR", evidence_dir)
+        self._patch_probe_and_argv(monkeypatch)
+
+        mask_path = evidence_dir / "panel_legs_part_right_upper_leg_mask.png"
+        _write_tiny_mask_png(mask_path)
+        completed_result = {
+            "panel": "legs",
+            "part": "right_upper_leg",
+            "present": True,
+            "isolated": True,
+            "isolated_before_overlap": True,
+            "overlap_exceeds_tolerance": False,
+            "mask": str(mask_path),
+        }
+        calls = {"n": 0}
+
+        def _first_ok_then_fail(
+            client, crop, image_filename, panel_key, part_key, points, palette_list, run_id
+        ):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return dict(completed_result, part=part_key)
+            raise gen.Sam3SegmentationUnavailable("simulated: fetch_output failed")
+
+        monkeypatch.setattr(gen, "_run_one_part", _first_ok_then_fail)
+
+        gen.main()
+
+        written = json.loads((evidence_dir / "part_comparison.json").read_text())
+        assert written["sam3_availability"]["available"] is False
+        assert written["sam3_mid_run_failure"]["part"] == "right_lower_leg"
+        assert "fetch_output failed" in written["sam3_mid_run_failure"]["reason"]
+        # This must NOT reintroduce the destructive overwrite round 1 fixed:
+        # the part that already completed this run stays on record...
+        assert written["panels"]["legs"]["parts"]["right_upper_leg"]["present"] is True
+        # ...but explicitly flagged historical, not silently presented as a
+        # fresh, complete comparison for this run.
+        assert written["panels_historical"] is True
+
+
+class TestAllPartPairsOverlapEvaluation:
+    """FIX ROUND finding 3 -- `SIBLING_PART_PAIRS_BY_PANEL` checked only
+    same-side `upper_leg`/`lower_leg` and `lower_leg`/`boot`. Cross-side
+    pairs and `upper_leg`/`boot` were excluded as "never physically
+    adjacent" -- and that assumption is exactly what a failed segmentation
+    violates. The reviewer's probe supplied identical left/right
+    upper-leg masks: actual overlap 1.0, `_evaluate_overlaps` returned [],
+    and both verdicts stayed `isolated=true`.
+
+    Reproduced directly against `_evaluate_overlaps` + `_apply_overlap_rejection`,
+    the same two production functions `main()` itself calls."""
+
+    def test_identical_cross_side_upper_leg_masks_are_rejected(self):
+        mask = np.zeros((64, 64), dtype=bool)
+        mask[10:40, 10:40] = True
+        masks_by_part = {
+            "right_upper_leg": mask.copy(),
+            "left_upper_leg": mask.copy(),
+        }
+
+        overlaps = gen._evaluate_overlaps("legs", masks_by_part)
+        pairs_found = {frozenset((o["part_a"], o["part_b"])) for o in overlaps}
+        target = frozenset(("right_upper_leg", "left_upper_leg"))
+        assert target in pairs_found, overlaps
+        cross_pair = next(
+            o for o in overlaps if frozenset((o["part_a"], o["part_b"])) == target
+        )
+        assert cross_pair["overlap_fraction"] == 1.0
+        assert cross_pair["exceeds_tolerance"] is True
+
+        parts = {
+            "right_upper_leg": {
+                "present": True,
+                "isolated": True,
+                "isolated_before_overlap": True,
+                "overlap_exceeds_tolerance": False,
+            },
+            "left_upper_leg": {
+                "present": True,
+                "isolated": True,
+                "isolated_before_overlap": True,
+                "overlap_exceeds_tolerance": False,
+            },
+        }
+        updated = gen._apply_overlap_rejection(parts, overlaps)
+        assert updated["right_upper_leg"]["isolated"] is False
+        assert updated["left_upper_leg"]["isolated"] is False
+
+    def test_same_side_non_adjacent_upper_leg_and_boot_pair_is_also_evaluated(self):
+        # upper_leg/boot on the SAME side never shares a joint either, so
+        # it was excluded from SIBLING_PART_PAIRS_BY_PANEL just like the
+        # cross-side pairs -- any pair outside that explicit adjacency list
+        # gets zero tolerance, not a silent skip.
+        mask_a = np.zeros((64, 64), dtype=bool)
+        mask_a[0:20, 0:20] = True
+        mask_b = np.zeros((64, 64), dtype=bool)
+        mask_b[0:20, 0:20] = True
+        masks_by_part = {"right_upper_leg": mask_a, "right_boot": mask_b}
+
+        overlaps = gen._evaluate_overlaps("legs", masks_by_part)
+        target = frozenset(("right_upper_leg", "right_boot"))
+        pair = next(o for o in overlaps if frozenset((o["part_a"], o["part_b"])) == target)
+        assert pair["tolerance"] == 0.0
+        assert pair["exceeds_tolerance"] is True
+
+    def test_three_way_mutual_overlap_rejects_every_part_involved(self):
+        # "Three or more parts overlapping mutually" edge case: every part
+        # that appears in ANY exceeding pair is rejected, not just the
+        # first pair found.
+        mask = np.zeros((64, 64), dtype=bool)
+        mask[0:20, 0:20] = True
+        masks_by_part = {
+            "right_upper_leg": mask.copy(),
+            "left_upper_leg": mask.copy(),
+            "left_lower_leg": mask.copy(),
+        }
+        overlaps = gen._evaluate_overlaps("legs", masks_by_part)
+        parts = {
+            key: {
+                "present": True,
+                "isolated": True,
+                "isolated_before_overlap": True,
+                "overlap_exceeds_tolerance": False,
+            }
+            for key in masks_by_part
+        }
+        updated = gen._apply_overlap_rejection(parts, overlaps)
+        assert updated["right_upper_leg"]["isolated"] is False
+        assert updated["left_upper_leg"]["isolated"] is False
+        assert updated["left_lower_leg"]["isolated"] is False
+
+    def test_adjacent_pair_keeps_the_existing_joint_blur_tolerance(self):
+        # A genuinely adjacent pair (thigh/lower-leg sharing the knee) keeps
+        # PART_OVERLAP_FRACTION_TOLERANCE (0.25) -- some boundary blur near
+        # the shared joint is expected and must not be rejected outright.
+        mask_a = np.zeros((64, 64), dtype=bool)
+        mask_a[0:45, :] = True  # 2880 px
+        mask_b = np.zeros((64, 64), dtype=bool)
+        mask_b[44:54, :] = True  # 640 px, overlaps mask_a in row 44 only
+        masks_by_part = {"right_upper_leg": mask_a, "right_lower_leg": mask_b}
+
+        overlaps = gen._evaluate_overlaps("legs", masks_by_part)
+        target = frozenset(("right_upper_leg", "right_lower_leg"))
+        pair = next(o for o in overlaps if frozenset((o["part_a"], o["part_b"])) == target)
+        assert pair["tolerance"] == gen.PART_OVERLAP_FRACTION_TOLERANCE
+        assert abs(pair["overlap_fraction"] - 0.1) < 1e-9
+        assert pair["exceeds_tolerance"] is False
+
+    def test_absent_part_never_appears_in_masks_by_part_is_excluded(self):
+        # "A part legitimately absent (empty mask)... it is excluded from
+        # overlap evaluation rather than counted as a 0-overlap pass" --
+        # masks_by_part only ever contains present parts (main() filters
+        # on res.get("present") before building it), so this just confirms
+        # _evaluate_overlaps doesn't require every PARTS_BY_PANEL key.
+        masks_by_part = {"right_boot": np.zeros((64, 64), dtype=bool)}
+        overlaps = gen._evaluate_overlaps("legs", masks_by_part)
+        assert overlaps == []
