@@ -15,6 +15,7 @@ ImportError.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -358,3 +359,42 @@ class TestApplyOverlapRejection:
         parts = {"left_boot": self._part("left_boot")}
         updated = gen._apply_overlap_rejection(parts, overlaps=[])
         assert updated["left_boot"]["isolated"] is True
+
+
+class TestMainSam3UnavailableEdgeCase:
+    """"SAM3 unavailable mid-run: the per-part pass reports the prerequisite
+    and performs no comparison, exactly as T-0337's availability path
+    already does; it never substitutes another model" (card's own
+    edge-case wording). Runs fully offline: no ComfyUI, no GPU -- the
+    availability probe is monkeypatched to report unavailable, before any
+    SAM3_Detect call would be reachable, and `ComfyUIClient.submit` is
+    monkeypatched to fail the test if part decomposition is attempted
+    anyway."""
+
+    def test_unavailable_prerequisite_skips_part_decomposition_entirely(
+        self, tmp_path, monkeypatch
+    ):
+        evidence_dir = tmp_path / "evidence"
+        monkeypatch.setattr(gen, "EVIDENCE_DIR", evidence_dir)
+        monkeypatch.setattr(
+            gen,
+            "_probe_sam3_availability",
+            lambda client: (
+                {"available": False, "reason": "UNETLoader missing sam3 checkpoint"},
+                None,
+            ),
+        )
+
+        from comfy_client.comfyui_client import ComfyUIClient
+
+        def _fail_if_submitted(self, workflow):
+            raise AssertionError("submit() must never be called when SAM3 is unavailable")
+
+        monkeypatch.setattr(ComfyUIClient, "submit", _fail_if_submitted)
+        monkeypatch.setattr(sys, "argv", ["gen_master_sheet_part_cutouts_T0417.py"])
+
+        gen.main()
+
+        written = json.loads((evidence_dir / "part_comparison.json").read_text())
+        assert written["sam3_availability"]["available"] is False
+        assert written["panels"] == {}
