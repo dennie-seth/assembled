@@ -110,4 +110,4 @@ def test_t0337_shaped_graph_naming_an_unregistered_checkpoint_is_refused(fake_cl
 
     with pytest.raises(CheckpointNotAllowedError):
         client.submit(graph)
-    assert responses.calls == []
+    assert len(responses.calls) == 0

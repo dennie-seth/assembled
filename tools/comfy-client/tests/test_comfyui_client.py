@@ -246,7 +246,7 @@ def test_submit_refuses_a_hand_built_graph_naming_an_unregistered_checkpoint(fak
     client = make_client(fake_clock)
     with pytest.raises(CheckpointNotAllowedError):
         client.submit(graph)
-    assert responses.calls == []
+    assert len(responses.calls) == 0
 
 
 @responses.activate
