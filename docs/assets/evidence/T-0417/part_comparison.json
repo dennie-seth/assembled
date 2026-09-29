@@ -1,0 +1,306 @@
+{
+  "sheet": "docs/assets/evidence/T-0351/attempt_19_first_per_panel_reference_run_front_back_neutral_clean_sides_malformed.png",
+  "sam3_availability": {
+    "nodes_present": true,
+    "available": true,
+    "reason": "SAM3_Detect is registered and UNETLoader lists a SAM3-compatible diffusion_models checkpoint: ('sam3.1_multiplex_fp16.safetensors',)",
+    "model_files": [
+      "sam3.1_multiplex_fp16.safetensors"
+    ]
+  },
+  "sam3_availability_probe_error": null,
+  "run_id": "T-0417-2026-09-29T13-11-56-719Z",
+  "prompt_strategy": "[T-0417] genuinely independent per-part point prompts -- one positive point per part, negatives on every sibling part's own anchor plus the panel's fixed corners/collapse point, one SAM3_Detect call per part. See gen_master_sheet_part_cutouts_T0417.part_prompt_points.",
+  "panels": {
+    "legs": {
+      "parts": {
+        "right_upper_leg": {
+          "panel": "legs",
+          "part": "right_upper_leg",
+          "method_used": "sam3",
+          "present": true,
+          "foreground_px_raw": 31799,
+          "foreground_px_after_isolation": 22945,
+          "isolation": {
+            "component_count": 49,
+            "kept_component_ids": [
+              21
+            ],
+            "foreground_px_before": 31799,
+            "foreground_px_after": 22945,
+            "stray_px": 8854,
+            "stray_fraction": 0.2784364288185163
+          },
+          "degenerate": false,
+          "prompts": [
+            {
+              "x": 358,
+              "y": 312,
+              "polarity": "positive",
+              "derivation": "right_upper_leg = midpoint(JOINT[8], JOINT[9])"
+            },
+            {
+              "x": 276,
+              "y": 757,
+              "polarity": "negative",
+              "derivation": "sibling_part:right_lower_leg"
+            },
+            {
+              "x": 225,
+              "y": 983,
+              "polarity": "negative",
+              "derivation": "sibling_part:right_boot"
+            },
+            {
+              "x": 665,
+              "y": 312,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_upper_leg"
+            },
+            {
+              "x": 747,
+              "y": 757,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_lower_leg"
+            },
+            {
+              "x": 798,
+              "y": 983,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_boot"
+            },
+            {
+              "x": 4,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_left"
+            },
+            {
+              "x": 1020,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_right"
+            },
+            {
+              "x": 4,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_left"
+            },
+            {
+              "x": 1020,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_right"
+            },
+            {
+              "x": 512,
+              "y": 25,
+              "polarity": "negative",
+              "derivation": "legs_panel_upper_body_collapse_point (NECK[1], not real anatomy on this panel)"
+            }
+          ],
+          "sam3_after": "docs/assets/evidence/T-0417/panel_legs_part_right_upper_leg_sam3_after.png",
+          "mask": "docs/assets/evidence/T-0417/panel_legs_part_right_upper_leg_mask.png",
+          "descended_part": "docs/assets/evidence/T-0417/panel_legs_part_right_upper_leg_descended.png"
+        },
+        "right_lower_leg": {
+          "panel": "legs",
+          "part": "right_lower_leg",
+          "method_used": "sam3",
+          "present": true,
+          "foreground_px_raw": 18254,
+          "foreground_px_after_isolation": 14170,
+          "isolation": {
+            "component_count": 20,
+            "kept_component_ids": [
+              17
+            ],
+            "foreground_px_before": 18254,
+            "foreground_px_after": 14170,
+            "stray_px": 4084,
+            "stray_fraction": 0.2237317848142873
+          },
+          "degenerate": false,
+          "prompts": [
+            {
+              "x": 276,
+              "y": 757,
+              "polarity": "positive",
+              "derivation": "right_lower_leg = midpoint(JOINT[9], JOINT[10])"
+            },
+            {
+              "x": 358,
+              "y": 312,
+              "polarity": "negative",
+              "derivation": "sibling_part:right_upper_leg"
+            },
+            {
+              "x": 225,
+              "y": 983,
+              "polarity": "negative",
+              "derivation": "sibling_part:right_boot"
+            },
+            {
+              "x": 665,
+              "y": 312,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_upper_leg"
+            },
+            {
+              "x": 747,
+              "y": 757,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_lower_leg"
+            },
+            {
+              "x": 798,
+              "y": 983,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_boot"
+            },
+            {
+              "x": 4,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_left"
+            },
+            {
+              "x": 1020,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_right"
+            },
+            {
+              "x": 4,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_left"
+            },
+            {
+              "x": 1020,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_right"
+            },
+            {
+              "x": 512,
+              "y": 25,
+              "polarity": "negative",
+              "derivation": "legs_panel_upper_body_collapse_point (NECK[1], not real anatomy on this panel)"
+            }
+          ],
+          "sam3_after": "docs/assets/evidence/T-0417/panel_legs_part_right_lower_leg_sam3_after.png",
+          "mask": "docs/assets/evidence/T-0417/panel_legs_part_right_lower_leg_mask.png",
+          "descended_part": "docs/assets/evidence/T-0417/panel_legs_part_right_lower_leg_descended.png"
+        },
+        "right_boot": {
+          "panel": "legs",
+          "part": "right_boot",
+          "method_used": "sam3",
+          "present": true,
+          "foreground_px_raw": 8673,
+          "foreground_px_after_isolation": 6747,
+          "isolation": {
+            "component_count": 6,
+            "kept_component_ids": [
+              6
+            ],
+            "foreground_px_before": 8673,
+            "foreground_px_after": 6747,
+            "stray_px": 1926,
+            "stray_fraction": 0.22206848841231408
+          },
+          "degenerate": false,
+          "prompts": [
+            {
+              "x": 225,
+              "y": 983,
+              "polarity": "positive",
+              "derivation": "right_boot = ANKLE[10]"
+            },
+            {
+              "x": 358,
+              "y": 312,
+              "polarity": "negative",
+              "derivation": "sibling_part:right_upper_leg"
+            },
+            {
+              "x": 276,
+              "y": 757,
+              "polarity": "negative",
+              "derivation": "sibling_part:right_lower_leg"
+            },
+            {
+              "x": 665,
+              "y": 312,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_upper_leg"
+            },
+            {
+              "x": 747,
+              "y": 757,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_lower_leg"
+            },
+            {
+              "x": 798,
+              "y": 983,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_boot"
+            },
+            {
+              "x": 4,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_left"
+            },
+            {
+              "x": 1020,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_right"
+            },
+            {
+              "x": 4,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_left"
+            },
+            {
+              "x": 1020,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_right"
+            },
+            {
+              "x": 512,
+              "y": 25,
+              "polarity": "negative",
+              "derivation": "legs_panel_upper_body_collapse_point (NECK[1], not real anatomy on this panel)"
+            }
+          ],
+          "sam3_after": "docs/assets/evidence/T-0417/panel_legs_part_right_boot_sam3_after.png",
+          "mask": "docs/assets/evidence/T-0417/panel_legs_part_right_boot_mask.png",
+          "descended_part": "docs/assets/evidence/T-0417/panel_legs_part_right_boot_descended.png"
+        }
+      },
+      "overlaps": [
+        {
+          "part_a": "right_upper_leg",
+          "part_b": "right_lower_leg",
+          "overlap_fraction": 0.0913196894848271,
+          "exceeds_tolerance": false,
+          "tolerance": 0.25
+        },
+        {
+          "part_a": "right_lower_leg",
+          "part_b": "right_boot",
+          "overlap_fraction": 0.0,
+          "exceeds_tolerance": false,
+          "tolerance": 0.25
+        }
+      ]
+    }
+  }
+}
