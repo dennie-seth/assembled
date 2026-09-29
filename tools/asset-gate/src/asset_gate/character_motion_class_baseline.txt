@@ -95,6 +95,24 @@
 # red for exactly this reason, pending T-0338's replacement walk -- see
 # `character_motion_score_binding_baseline.txt` for why that second failure
 # has no exemption of its own either.
+#
+# VERBATIM GATE OUTPUT, BEFORE AND AFTER T-0359 (command run from
+# tools/asset-gate/ with `.venv/bin/python -m asset_gate.cli character-gate
+# ../../assets/final --repo-root ../../`; prior FAIL verdicts on this card
+# rejected a prose paraphrase of this and required the literal command
+# output, so it is reproduced verbatim below, not summarised):
+#
+# BEFORE (tree state at c5d07fcc, i.e. develop immediately before this
+# card's commits -- PR #375/T-0357's baseline-exempt walk, no motion_class
+# backfilled on any sidecar yet): exit 0, zero `[FAIL]` lines in the entire
+# output. The walk's own lines were:
+#   [PASS] character_motion_class_declared: character/player_walk_sheet_hybrid.provenance.json has no motion_class recorded -- every character-generation output must declare one (T-0357) [baseline-exempt: predates T-0357 motion-class enforcement]
+#   [PASS] character_motion_fidelity: character/player_walk_sheet_hybrid.provenance.json: motion_class=None is not locomotion/transition/loop -- the pose-fidelity/identity-stability gate does not apply (idle keeps the XOR/union cap instead)
+#
+# AFTER (current HEAD, this card's changes applied): exit 1, exactly these
+# two `[FAIL]` lines in the entire output (everything else is `[PASS]`):
+#   [FAIL] character_motion_fidelity: character/player_walk_sheet_hybrid.provenance.json: motion_class='locomotion' pose-fidelity IoU floor 0.3935 < 0.7, identity-stability distance 0.3203 > 0.15 [recomputed live from the sheet's own pixels + versioned rig keypoints, not the sidecar's recorded range]
+#   [FAIL] character_motion_score_binding: character/player_walk_sheet_hybrid.provenance.json is missing or has a malformed motion-score-binding field(s): motion_score_binding, pose_fidelity_range, identity_stability_range -- a recorded locomotion/transition/loop motion score must be bound to the sheet's content hash, rig/config version, palette hash and evaluator version (T-0360)
 character/player_walk_sheet_hybrid.provenance.json
 character/player_crouch_hide_sheet_v1.provenance.json
 character/player_crouch_hide_sheet_v2.provenance.json
