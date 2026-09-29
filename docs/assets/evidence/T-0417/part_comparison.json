@@ -577,18 +577,52 @@
       },
       "overlaps": [
         {
-          "part_a": "right_upper_leg",
-          "part_b": "right_lower_leg",
-          "overlap_fraction": 0.0913196894848271,
-          "exceeds_tolerance": false,
-          "tolerance": 0.25
-        },
-        {
-          "part_a": "right_lower_leg",
+          "part_a": "left_boot",
           "part_b": "right_boot",
           "overlap_fraction": 0.0,
           "exceeds_tolerance": false,
-          "tolerance": 0.25
+          "tolerance": 0.0,
+          "adjacent": false
+        },
+        {
+          "part_a": "left_boot",
+          "part_b": "right_lower_leg",
+          "overlap_fraction": 0.0,
+          "exceeds_tolerance": false,
+          "tolerance": 0.0,
+          "adjacent": false
+        },
+        {
+          "part_a": "left_boot",
+          "part_b": "right_upper_leg",
+          "overlap_fraction": 0.0,
+          "exceeds_tolerance": false,
+          "tolerance": 0.0,
+          "adjacent": false
+        },
+        {
+          "part_a": "right_boot",
+          "part_b": "right_lower_leg",
+          "overlap_fraction": 0.0,
+          "exceeds_tolerance": false,
+          "tolerance": 0.25,
+          "adjacent": true
+        },
+        {
+          "part_a": "right_boot",
+          "part_b": "right_upper_leg",
+          "overlap_fraction": 0.0,
+          "exceeds_tolerance": false,
+          "tolerance": 0.0,
+          "adjacent": false
+        },
+        {
+          "part_a": "right_lower_leg",
+          "part_b": "right_upper_leg",
+          "overlap_fraction": 0.0913196894848271,
+          "exceeds_tolerance": false,
+          "tolerance": 0.25,
+          "adjacent": true
         }
       ]
     }

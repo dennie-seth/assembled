@@ -64,6 +64,20 @@ PART_STRAY_FRACTION_TOLERANCE = 0.35
 #: measure as near-total overlap, far above this threshold.
 PART_OVERLAP_FRACTION_TOLERANCE = 0.25
 
+#: Tolerance for a returned part pair that is NOT in a panel's own
+#: adjacency list (`SIBLING_PART_PAIRS_BY_PANEL` in
+#: `gen_master_sheet_part_cutouts_T0417.py`) -- a cross-side pair, or a
+#: same-side pair that doesn't share a joint (e.g. upper_leg/boot). None of
+#: these have a joint to blur across, so PART_OVERLAP_FRACTION_TOLERANCE's
+#: 0.25 allowance doesn't apply to them: any measured overlap between two
+#: independently-requested parts with no anatomical reason to touch means
+#: SAM3's negative prompts failed to keep them apart, which is exactly what
+#: T-0417's FIX ROUND finding 3 found -- identical right_upper_leg/
+#: left_upper_leg masks (overlap 1.0) were never evaluated at all because
+#: that pair wasn't on the adjacency list. Zero tolerance, not the joint-
+#: blur allowance.
+PART_OVERLAP_FRACTION_TOLERANCE_NON_ADJACENT = 0.0
+
 #: 4-connectivity neighbour offsets for the flood fill below.
 _NEIGHBOR_OFFSETS: tuple[tuple[int, int], ...] = ((-1, 0), (1, 0), (0, -1), (0, 1))
 

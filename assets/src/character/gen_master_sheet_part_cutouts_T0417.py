@@ -46,6 +46,7 @@ Writes (per part, when SAM3 is available):
 
 from __future__ import annotations
 
+import itertools
 import json
 import sys
 from dataclasses import dataclass
@@ -80,6 +81,7 @@ from char_gen.cutout_sam3 import (  # noqa: E402
 from char_gen.part_descend import box_descend_part  # noqa: E402
 from char_gen.part_isolation import (  # noqa: E402
     PART_OVERLAP_FRACTION_TOLERANCE,
+    PART_OVERLAP_FRACTION_TOLERANCE_NON_ADJACENT,
     exceeds_stray_fraction_tolerance,
     is_part_mask_degenerate,
     keep_components_containing_points,
@@ -156,9 +158,21 @@ PARTS_BY_PANEL: dict[str, tuple[str, ...]] = {
 }
 
 #: Adjacent, anatomically-sharing-a-joint part pairs per panel -- the pairs
-#: `mask_overlap_fraction` is actually meaningful for (thigh/lower-leg share
-#: the knee, lower-leg/boot share the ankle). Cross-side pairs are never
-#: physically adjacent on this rig and are not checked.
+#: the 0.25 joint-blur allowance (`PART_OVERLAP_FRACTION_TOLERANCE`) is
+#: actually meaningful for (thigh/lower-leg share the knee, lower-leg/boot
+#: share the ankle).
+#:
+#: [FIX ROUND finding 3] This list used to be the ONLY pairs
+#: `_evaluate_overlaps` checked -- cross-side pairs and upper_leg/boot were
+#: excluded as "never physically adjacent," which is exactly the assumption
+#: a failed segmentation violates: two independent SAM3 requests can both
+#: return (near-)identical masks for the same limb (e.g. right_upper_leg
+#: and left_upper_leg), and nothing ever compared them. `_evaluate_overlaps`
+#: now evaluates every distinct pair of PRESENT parts in the panel; this
+#: dict now only decides which pairs get the joint-blur tolerance --
+#: every other pair gets `PART_OVERLAP_FRACTION_TOLERANCE_NON_ADJACENT`
+#: (zero) instead, so a pair with no anatomical reason to touch is never
+#: silently skipped again.
 SIBLING_PART_PAIRS_BY_PANEL: dict[str, tuple[tuple[str, str], ...]] = {
     "legs": tuple(
         (f"{side}_upper_leg", f"{side}_lower_leg") for side in ("right", "left")
@@ -303,6 +317,60 @@ def _write_part_comparison(comparison: dict) -> Path:
     return path
 
 
+def _record_mid_run_sam3_failure(
+    panel_key: str,
+    part_key: str,
+    exc: Exception,
+    initial_availability: dict,
+    initial_availability_error: str | None,
+    run_id: str | None,
+) -> Path:
+    """[FIX ROUND finding 2] SAM3 passed the initial probe but then failed
+    during `part_key`'s own request -- either a submission/execution/
+    timeout/fetch failure from `_make_part_sam3_runner`'s own runner, or an
+    upload failure `_run_one_part` re-raises as `Sam3SegmentationUnavailable`
+    (finding 1). `main()` catches that exception around `_run_one_part` and
+    calls this function instead of letting the script crash silently.
+
+    Never clobbers `part_comparison.json`: reloads whatever is currently on
+    disk, which already includes every part THIS run completed before the
+    failure (each successful loop iteration in `main()` writes it
+    immediately), and writes that back verbatim under `panels` -- the same
+    "never destroy committed evidence on a failure path" rule the
+    initial-probe-unavailable branch above already follows. `panels` is
+    explicitly marked `panels_historical` so a later reader never mistakes
+    it for a fresh, complete comparison from this run. `sam3_availability`
+    is overwritten to `available: False` here -- the initial probe's own
+    result is preserved separately under `sam3_initial_probe_availability`
+    -- so nothing reads `available: true` standing next to a comparison
+    that did not actually finish."""
+    existing = _load_existing_part_comparison() or {}
+    comparison = {
+        "sheet": str(SHEET_PATH.relative_to(REPO_ROOT)),
+        "sam3_availability": {
+            "available": False,
+            "reason": f"sam3_unavailable_mid_run: {exc}",
+        },
+        "sam3_initial_probe_availability": initial_availability,
+        "sam3_availability_probe_error": initial_availability_error,
+        "sam3_mid_run_failure": {
+            "panel": panel_key,
+            "part": part_key,
+            "reason": str(exc),
+        },
+        "run_id": run_id,
+        "panels": existing.get("panels", {}),
+        "panels_historical": True,
+        "note": (
+            f"SAM3 became unavailable during {panel_key}/{part_key}, after the initial probe "
+            "passed this run -- comparison stopped, no further parts run this pass. `panels` "
+            "below is retained from before this failure (HISTORICAL -- not produced by this "
+            "run) and is never deleted on a failure path."
+        ),
+    }
+    return _write_part_comparison(comparison)
+
+
 def _run_one_part(
     client: ComfyUIClient,
     crop: Image.Image,
@@ -330,7 +398,25 @@ def _run_one_part(
     try:
         client.upload_image(_png_bytes(crop), image_filename)
     except UploadError as exc:
-        print(f"{panel_key}/{part_key}: upload failed, SAM3 request will fail to submit: {exc}")
+        # [FIX ROUND finding 1] An upload failure does NOT imply the
+        # submission fails -- ComfyUI may still hold a PRIOR image under
+        # `image_filename`, so submitting anyway would segment stale
+        # pixels while the local overlay/descent/provenance all identify
+        # the CURRENT crop. Abort this part's request before the runner is
+        # ever built: no submit/wait_for_completion/fetch_output call, no
+        # mask/overlay/descended PNG/success-shaped provenance. Raising
+        # here (rather than returning a sentinel) reuses the exact
+        # "prerequisite unmet" idiom `_make_part_sam3_runner` already uses
+        # for a submission/execution/timeout/fetch failure -- `main()`
+        # catches both the same way (finding 2), with the exception
+        # message itself distinguishing "upload failed" from "segmentation
+        # failed after a successful upload" for whoever reads the recorded
+        # reason.
+        raise Sam3SegmentationUnavailable(
+            f"{panel_key}/{part_key}: upload of {image_filename} failed -- aborting this "
+            f"part's request rather than submitting against a filename ComfyUI may still hold "
+            f"stale pixels under: {exc}"
+        ) from exc
 
     runner = _make_part_sam3_runner(
         client,
@@ -432,21 +518,38 @@ def _run_one_part(
 
 
 def _evaluate_overlaps(panel_key: str, masks_by_part: dict[str, np.ndarray]) -> list[dict]:
-    """Pairwise overlap for this panel's own sibling pairs only -- see
-    `SIBLING_PART_PAIRS_BY_PANEL`'s own docstring for why only
-    anatomically-adjacent same-side pairs are checked."""
+    """[FIX ROUND finding 3] Pairwise overlap for EVERY distinct pair of
+    PRESENT parts in this panel, not just `SIBLING_PART_PAIRS_BY_PANEL`'s
+    adjacent list -- a part absent this run (empty mask) never reaches
+    `masks_by_part` in the first place (`main()` filters on
+    `res.get("present")` before calling this), so it's excluded from
+    overlap evaluation entirely rather than counted as a 0-overlap pass.
+
+    A pair on the adjacent list gets the joint-blur allowance
+    (`PART_OVERLAP_FRACTION_TOLERANCE`, 0.25); every other pair -- cross-
+    side, or a non-adjacent same-side pair like upper_leg/boot -- gets
+    `PART_OVERLAP_FRACTION_TOLERANCE_NON_ADJACENT` (0.0), since none of
+    them have a shared joint to justify any overlap at all."""
+    adjacent_pairs = set(SIBLING_PART_PAIRS_BY_PANEL.get(panel_key, ()))
+    adjacent_pairs |= {(b, a) for a, b in adjacent_pairs}
+
     overlaps = []
-    for part_a, part_b in SIBLING_PART_PAIRS_BY_PANEL.get(panel_key, ()):
-        if part_a not in masks_by_part or part_b not in masks_by_part:
-            continue
+    for part_a, part_b in itertools.combinations(sorted(masks_by_part), 2):
+        is_adjacent = (part_a, part_b) in adjacent_pairs
+        tolerance = (
+            PART_OVERLAP_FRACTION_TOLERANCE
+            if is_adjacent
+            else PART_OVERLAP_FRACTION_TOLERANCE_NON_ADJACENT
+        )
         fraction = mask_overlap_fraction(masks_by_part[part_a], masks_by_part[part_b])
         overlaps.append(
             {
                 "part_a": part_a,
                 "part_b": part_b,
                 "overlap_fraction": fraction,
-                "exceeds_tolerance": fraction > PART_OVERLAP_FRACTION_TOLERANCE,
-                "tolerance": PART_OVERLAP_FRACTION_TOLERANCE,
+                "exceeds_tolerance": fraction > tolerance,
+                "tolerance": tolerance,
+                "adjacent": is_adjacent,
             }
         )
     return overlaps
@@ -553,9 +656,25 @@ def main() -> None:
 
     parts_to_run = [args.part] if args.part else list(PARTS_BY_PANEL[panel_key])
     for part_key in parts_to_run:
-        result = _run_one_part(
-            client, crop, image_filename, panel_key, part_key, points, palette_list, run_id
-        )
+        try:
+            result = _run_one_part(
+                client, crop, image_filename, panel_key, part_key, points, palette_list, run_id
+            )
+        except Sam3SegmentationUnavailable as exc:
+            # [FIX ROUND finding 2] SAM3 passed the initial probe (above)
+            # but failed during this specific part's own request -- catch
+            # it at the driver boundary rather than letting the script
+            # crash, which used to leave sam3_availability.available=true
+            # standing next to whatever partial/stale results were already
+            # on disk with no record of what actually happened.
+            _record_mid_run_sam3_failure(
+                panel_key, part_key, exc, availability, availability_error, run_id
+            )
+            print(
+                f"SAM3 unavailable mid-run at {panel_key}/{part_key}: {exc}; "
+                "comparison stopped"
+            )
+            return
         existing_parts_by_key[part_key] = result
 
         masks_by_part: dict[str, np.ndarray] = {}

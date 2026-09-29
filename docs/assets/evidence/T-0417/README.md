@@ -25,10 +25,16 @@ this run's own real numbers (see that module's docstrings for the full justifica
   a stray fragment, reported as `stray_fraction`.
 - **`exceeds_stray_fraction_tolerance`** (tolerance `0.35`) — rejects a part whose raw detection
   scattered too much of itself into disconnected fragments.
-- **`mask_overlap_fraction`** / overlap tolerance `0.25` — rejects a sibling pair (e.g.
-  upper_leg/lower_leg sharing the knee) whose masks overlap too much to call genuinely separated.
+- **`mask_overlap_fraction`** — measured for **every distinct pair of present parts** in the panel
+  (`_evaluate_overlaps`, FIX ROUND finding 3), not only the anatomically-adjacent pairs. A pair that
+  shares a joint (e.g. upper_leg/lower_leg at the knee) keeps the `0.25` joint-blur tolerance
+  (`PART_OVERLAP_FRACTION_TOLERANCE`); every other pair — cross-side, or a non-adjacent same-side
+  pair like upper_leg/boot — has no anatomical reason to overlap at all and gets `0.0`
+  (`PART_OVERLAP_FRACTION_TOLERANCE_NON_ADJACENT`). Before this fix, only the same-side
+  upper_leg/lower_leg and lower_leg/boot pairs were ever checked — a pair of identical
+  right_upper_leg/left_upper_leg masks (overlap `1.0`) would have passed unevaluated.
 
-## The real result — three parts isolate cleanly, two return nothing, one is untested by overlap
+## The real result — four parts isolate cleanly, two return nothing
 
 Live run against the ComfyUI host (`172.18.192.1:8188`), `sam3.1_multiplex_fp16.safetensors` via
 `UNETLoader`, against T-0351's own attempt-19 `legs` panel crop
@@ -51,17 +57,28 @@ No pair in this run exceeded tolerance, so no part is overlap-rejected here — 
 `test_apply_overlap_rejection_*` in `tests/test_gen_master_sheet_part_cutouts_T0417.py` for the case
 where a pair does exceed it and both siblings get `isolated=False`.
 
-Sibling overlap (only computed where both masks exist):
+Overlap, every distinct pair of the four **present** parts (FIX ROUND finding 3 — recomputed against
+these same already-committed masks via `_evaluate_overlaps`/`_apply_overlap_rejection`, the same
+production functions `main()` calls; no re-run against the host was needed because no verdict
+changed — see below):
 
-| pair | overlap_fraction | tolerance | exceeds |
-|---|---|---|---|
-| `right_upper_leg` / `right_lower_leg` | 0.091 | 0.25 | no |
-| `right_lower_leg` / `right_boot` | 0.0 | 0.25 | no |
+| pair | overlap_fraction | tolerance | adjacent | exceeds |
+|---|---|---|---|---|
+| `right_upper_leg` / `right_lower_leg` | 0.091 | 0.25 | yes | no |
+| `right_lower_leg` / `right_boot` | 0.0 | 0.25 | yes | no |
+| `right_upper_leg` / `right_boot` | 0.0 | 0.0 | no | no |
+| `right_upper_leg` / `left_boot` | 0.0 | 0.0 | no | no |
+| `right_lower_leg` / `left_boot` | 0.0 | 0.0 | no | no |
+| `right_boot` / `left_boot` | 0.0 | 0.0 | no | no |
 
-The two left-leg pairs (`left_upper_leg`/`left_lower_leg`, `left_lower_leg`/`left_boot`) are not
-evaluated — one sibling in each pair has no mask, and fabricating an overlap number against an
-absent mask would misrepresent what was actually measured. This is the edge case named explicitly
-in the card: *"the decision is recorded per part rather than silently merged."*
+Every pair involving `left_upper_leg` or `left_lower_leg` is still excluded, for the same reason as
+before — those two parts are absent (no mask at all), and fabricating an overlap number against an
+absent mask would misrepresent what was actually measured. This is the edge case named explicitly in
+the card: *"a part legitimately absent... is excluded from overlap evaluation rather than counted as
+a 0-overlap pass."* The four *present* parts sit far enough apart in the source crop (right leg vs.
+left boot) that none of the newly-evaluated non-adjacent pairs measure any real overlap — recomputing
+with the FIX ROUND's all-pairs logic left every `isolated`/`overlap_exceeds_tolerance` verdict in
+`part_comparison.json` unchanged from what round 1 originally recorded.
 
 **The right leg is a genuine, evidenced success**, not merely a non-degenerate whole-figure
 fraction: `right_upper_leg`/`right_lower_leg`/`right_boot` each reached their own separate
@@ -88,6 +105,29 @@ acceptable outcome... What is not acceptable is concluding either way from a com
 is exactly the kind of finding a combined six-point mask could never have surfaced — the withdrawn
 combined `legs` mask (T-0337, both legs together) was always non-empty, because five of six points
 still had a real target somewhere in that single shared segmentation.
+
+## FIX ROUND (2026-09-29, PR #423 review) — two failure-path fixes with no visible effect here
+
+Chat's review of PR #423 found two more P2 defects on the failure path, neither of which changes
+anything in the table above (this run's own upload/probe/inference all succeeded) but both matter
+for a future run that doesn't:
+
+- **Finding 1** — `_run_one_part` used to catch an `UploadError` on the crop upload, print it, and
+  submit the SAM3 graph anyway against the fixed `T0417_panel_{panel}.png` filename, risking
+  segmentation of stale pixels ComfyUI still held under that name. It now raises
+  `Sam3SegmentationUnavailable` immediately and never builds the runner — no submit, no mask, no
+  overlay, no descended PNG, no provenance for that part.
+- **Finding 2** — `main()` never caught `Sam3SegmentationUnavailable` around `_run_one_part`, so
+  SAM3 failing mid-run (after the initial probe passed — a submission/execution/timeout/fetch error,
+  or finding 1's own abort) crashed the script with no recorded prerequisite, leaving
+  `sam3_availability.available=true` standing next to whatever was already on disk. `main()` now
+  catches it, writes `sam3_mid_run_failure` (which part, which panel, why) and `panels_historical:
+  true`, and never deletes or silently re-presents prior evidence.
+
+See `TestUploadFailureAbortsThePartRequest` and `TestMainCatchesMidRunSam3Unavailable` in
+`tests/test_gen_master_sheet_part_cutouts_T0417.py` — both reproduced offline, no ComfyUI/GPU
+required, driven against the production `_run_one_part`/`main()` functions rather than a local
+stand-in.
 
 ## Left/right mirroring
 
