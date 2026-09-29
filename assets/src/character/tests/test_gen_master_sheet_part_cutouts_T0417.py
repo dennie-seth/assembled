@@ -22,10 +22,10 @@ _CHARACTER_DIR = Path(__file__).resolve().parents[1]
 if str(_CHARACTER_DIR) not in sys.path:
     sys.path.insert(0, str(_CHARACTER_DIR))
 
-from char_gen.cutout_sam3 import build_sam3_part_workflow  # noqa: E402
-
 import gen_master_sheet_part_cutouts_T0417 as gen  # noqa: E402
 import pose_rig_master_sheet_T0351 as rig  # noqa: E402
+
+from char_gen.cutout_sam3 import build_sam3_part_workflow  # noqa: E402
 
 PANEL_SIZE = gen.PANEL_SIZE
 
@@ -47,7 +47,14 @@ class TestPartsByPanelIsExplicit:
             assert f"{side}_boot" in parts
 
     def test_whole_figure_panels_have_no_parts(self):
-        for key in ("front_tpose", "back_tpose", "side_left_forward", "side_right_forward", "side_neutral"):
+        whole_figure_keys = (
+            "front_tpose",
+            "back_tpose",
+            "side_left_forward",
+            "side_right_forward",
+            "side_neutral",
+        )
+        for key in whole_figure_keys:
             assert gen.PARTS_BY_PANEL.get(key, ()) == ()
 
     def test_bounded_not_a_sweep_the_set_is_fixed_across_calls(self):
@@ -90,7 +97,14 @@ class TestPartPromptPoints:
         points = self._points()
         records = gen.part_prompt_points("legs", "right_upper_leg", points, PANEL_SIZE)
         negatives = {(r["x"], r["y"]) for r in records if r["polarity"] == "negative"}
-        for sibling in ("right_lower_leg", "right_boot", "left_upper_leg", "left_lower_leg", "left_boot"):
+        siblings = (
+            "right_lower_leg",
+            "right_boot",
+            "left_upper_leg",
+            "left_lower_leg",
+            "left_boot",
+        )
+        for sibling in siblings:
             sibling_records = gen.part_prompt_points("legs", sibling, points, PANEL_SIZE)
             sibling_anchor = next(
                 (r["x"], r["y"]) for r in sibling_records if r["polarity"] == "positive"
@@ -138,7 +152,12 @@ class TestPartPromptPoints:
             left_records = gen.part_prompt_points("legs", left_key, points, PANEL_SIZE)
             rx, ry = next((r["x"], r["y"]) for r in right_records if r["polarity"] == "positive")
             lx, ly = next((r["x"], r["y"]) for r in left_records if r["polarity"] == "positive")
-            assert lx == PANEL_SIZE - rx
+            # Within 1px of an exact mirror -- int() truncation on the two
+            # independently-averaged midpoints can round the pair to
+            # PANEL_SIZE-1 rather than PANEL_SIZE (e.g. 358 + 665 = 1023),
+            # which is a floating-point truncation artifact, not evidence
+            # the two sides used a different rule.
+            assert abs(lx - (PANEL_SIZE - rx)) <= 1
             assert ly == ry
 
 

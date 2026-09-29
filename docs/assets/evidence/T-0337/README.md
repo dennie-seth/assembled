@@ -135,7 +135,7 @@ the legs-only one that the invalid single-point query could never fairly test.
 from round 1's reasoning: with SAM3 now genuinely running and producing clean masks on every panel,
 there is nothing a chroma-key arm would additionally decide.
 
-## What happens next — Oklab stays primary in code, unchanged; SAM3 is now backed by clean per-panel evidence
+## What happens next — SAM3 stays primary in code, unchanged; Oklab stays the untouched fallback
 
 `cut_master_sheet_part`'s default (`method="sam3"`) is unchanged by this round — SAM3 stays wired as
 the attempted-first primary path (AC 1), exactly as before FIX ROUND 1 and FIX ROUND 2 both. `char_gen/cutout.py`'s
