@@ -17,26 +17,35 @@
 # backfilled by a dedicated follow-up card, never grown to silence a fresh
 # violation.
 #
-# T-0359 backfilled `motion_class` on 11 of the original 18 sidecars listed
-# here (the ones with an unambiguous idle-generation record -- each one's own
-# `generator` field names an idle-specific script, e.g.
-# `gen_arm_a_idle_T0228.py`, `gen_hybrid_idle_T0252.py`) and removed them
-# from this list; they now pass `character_motion_class_declared` on merit
-# (`motion_class: "idle"`, justified in each sidecar's own new
-# `motion_class_basis` field), not via this exemption. The 6 remaining
-# non-walk entries below (`player_crouch_hide_sheet_*`,
+# T-0359 backfilled `motion_class` on 12 of the original 18 sidecars listed
+# here and removed them from this list; they now pass
+# `character_motion_class_declared` on merit (justified in each sidecar's own
+# new `motion_class_basis` field), not via this exemption:
+#   - 11 idle sheets whose own `generator` field names an idle-specific
+#     script (e.g. `gen_arm_a_idle_T0228.py`, `gen_hybrid_idle_T0252.py`) ->
+#     `motion_class: "idle"`.
+#   - `pose_grid_stage3_T0218` -> `motion_class: "idle"` too: its own
+#     `prompt_positive` describes 9 figures "standing upright facing
+#     forward" with no frame-to-frame pose progression (its `negative_prompt`
+#     excludes "action pose"), and it is the ControlNet conditioning input
+#     for `player_idle_sheet_stage3_sdxl_T0218` -- itself labelled `idle` by
+#     this same card. A static standing reference grid depicts no motion, so
+#     it is idle, not unclassifiable, even though (like the round-1 bake-off
+#     arms above) it carries no `frame_delta_range` of its own -- that gap is
+#     `character_arm_c_baseline.txt`'s CHR-1 concern, not this file's.
+#
+# The 6 remaining non-walk entries below (`player_crouch_hide_sheet_*`,
 # `player_die_sheet_*`, `player_move_sheet_*`) are deliberately left
 # baselined: their own `synth_states.py` prompts describe real per-frame
-# motion (a crouch/hide descent, a death sequence, a stride cycle), which
-# would classify as `transition`/`locomotion`, not `idle` -- but none of them
-# carry the `layout`/`frame_generation` rig evidence T-0357's own recompute
+# motion (a crouch/hide descent, a death sequence, a stride cycle) -- unlike
+# `pose_grid_stage3_T0218`, they cannot honestly be called `idle`. They would
+# classify as `transition`/`locomotion`, not `idle` -- but none of them carry
+# the `layout`/`frame_generation` rig evidence T-0357's own recompute
 # requires, so labelling them accurately would immediately fail them for
 # missing rig evidence, a new, unreviewed CI-red consequence beyond this
 # card's own explicitly-reviewed walk exemption below. That classification
 # call (and whether these old synthetic T-0199 fixtures are even meant to be
-# held to the T-0340 bar) is left to a dedicated follow-up card. `pose_grid_stage3_T0218`
-# is also left baselined -- its own generator field names a ComfyUI workflow
-# JSON with no frame-sequence/motion description to classify from.
+# held to the T-0340 bar) is left to a dedicated follow-up card.
 #
 # ---------------------------------------------------------------------------
 # EXPLICIT INTERIM-PLACEHOLDER EXEMPTION -- @DennieSeth, 2026-09-11
@@ -69,11 +78,23 @@
 # is path-exact and that the CI command still exits non-zero for any fresh
 # failing artifact.
 #
-# KNOWN FOLLOW-ON (T-0359): this entry exempts only the missing-label check.
-# If T-0359 labels the walk `motion_class: "locomotion"`, the pose-fidelity /
-# identity-stability recompute will engage and FAIL on the numbers above, and
-# there is no motion-fidelity baseline to exempt it from. T-0359 must not land
-# before T-0338 replaces the walk, or CI goes red again.
+# KNOWN FOLLOW-ON (T-0359), RESOLVED: this entry exempted only the
+# missing-label check. T-0359 has now labelled the walk
+# `motion_class: "locomotion"` (confirmed from the sidecar's own
+# `frame_generation` rig keypoints, not asserted); this entry no longer does
+# anything for this sidecar -- `check_character_motion_class_declared`
+# passes it on merit, not via this exemption, the same way the 12 backfilled
+# entries above do. It stays listed only because removing an
+# explicitly-reviewed, still-relevant historical decision record on a
+# read-and-passes-either-way technicality would erase context a future
+# reader needs; the real, load-bearing outcome is what happened next, as
+# predicted: the pose-fidelity / identity-stability recompute engaged and
+# FAILED on the numbers above (`character_motion_fidelity`), and T-0360's
+# `character_motion_score_binding` check FAILS alongside it since no score
+# was ever self-reported to bind. Both failures are real and current CI is
+# red for exactly this reason, pending T-0338's replacement walk -- see
+# `character_motion_score_binding_baseline.txt` for why that second failure
+# has no exemption of its own either.
 character/player_walk_sheet_hybrid.provenance.json
 character/player_crouch_hide_sheet_v1.provenance.json
 character/player_crouch_hide_sheet_v2.provenance.json
@@ -81,4 +102,3 @@ character/player_die_sheet_v1.provenance.json
 character/player_die_sheet_v2.provenance.json
 character/player_move_sheet_v1.provenance.json
 character/player_move_sheet_v2.provenance.json
-character/pose_grid_stage3_T0218.provenance.json
