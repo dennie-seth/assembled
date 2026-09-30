@@ -6,6 +6,13 @@ failure modes the AssetAgent needs to react to differently: a rejected
 submission (`SubmitError`, often a bad checkpoint/node), a job that queued
 but failed during execution (`ExecutionError`, e.g. OOM), and a job that
 never completed in time (`PollTimeoutError`).
+
+`submit()` also asserts every checkpoint-bearing node in the graph against
+the license allowlist (T-0418) before ever making an HTTP call -- this is
+what closes the hand-built-graph bypass around
+`comfy_client.pipeline.generate()`'s own gate: any caller that posts a graph
+straight to this client, not only one rendered by `pipeline.generate()`, is
+checked.
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ from typing import Any
 import requests
 from gen_client_base.client import GenerationClient
 
+from comfy_client.checkpoint_gate import assert_graph_checkpoints_allowed
 from comfy_client.errors import (
     ExecutionError,
     FetchError,
@@ -48,6 +56,8 @@ class ComfyUIClient(GenerationClient):
         self._now = now
 
     def submit(self, workflow: dict[str, Any]) -> str:
+        assert_graph_checkpoints_allowed(workflow)
+
         try:
             resp = self.session.post(
                 f"{self.base_url}/prompt",
