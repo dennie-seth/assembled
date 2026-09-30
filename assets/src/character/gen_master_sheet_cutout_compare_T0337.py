@@ -110,7 +110,10 @@ SHEET_PATH = (
 EVIDENCE_DIR = REPO_ROOT / "docs" / "assets" / "evidence" / "T-0337"
 #: [FIX ROUND 2] Where the withdrawn single-neck-point run's own SAM3
 #: results are archived, relabelled -- not deleted, not presented as the
-#: anatomical-part result. See `main()`'s `_archive_initial_experiment`.
+#: anatomical-part result. Archived by a one-off `git mv` in commit
+#: `a060b469` ahead of this round's live rerun overwriting the parent
+#: directory's comparison.json -- there is no `main()` helper that performs
+#: this; it is not part of this script's own runtime behaviour.
 INITIAL_EXPERIMENT_DIR = EVIDENCE_DIR / "initial_single_point_experiment"
 GENERATOR_PATH = "assets/src/character/gen_master_sheet_cutout_compare_T0337.py"
 PANEL_SIZE = 1024
