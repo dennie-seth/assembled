@@ -8,9 +8,8 @@ values those sidecars must carry, using the SAME asset_gate.character
 recompute functions the CI gate itself runs.
 
 This is a one-shot recovery script (like the repo's other gen_*.py/
-compare_*.py one-off tools), not a reusable CLI -- see ARM_RIG_RECOVERY_
-ATTEMPT_LOG_T0419.md and docs/assets/evidence/T-0419/ for the run this
-produced.
+compare_*.py one-off tools), not a reusable CLI -- see
+docs/assets/evidence/T-0419/README.md for the run this produced.
 
 Run: .venv/bin/python recover_rig_evidence_T0419.py (from assets/src/character/)
 """
@@ -25,9 +24,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 ASSET_GATE_SRC = REPO_ROOT / "tools" / "asset-gate" / "src"
 sys.path.insert(0, str(ASSET_GATE_SRC))
 
+from asset_gate import character  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from asset_gate import character  # noqa: E402
 from char_gen.rig_recovery_T0419 import (  # noqa: E402
     crouch_hide_frame_keypoints,
     die_frame_keypoints,
