@@ -1,16 +1,16 @@
 {
-  "model": "N/A — synthetic reference image, procedurally generated (not AI-generated)",
+  "model": "N/A \u2014 synthetic reference image, procedurally generated (not AI-generated)",
   "model_license": "N/A",
   "model_hash": null,
-  "prompt": "N/A — pixel data computed programmatically by synth_states.py: die/death figure drawn from home palette indices BG=0, LEG=4, BODY=6, HEAD=10; 9-frame death sequence where head shifts right and down 2px per frame (rows 4-13 cols 16-27 at frame 0 → rows 20-29 cols 32-43 at frame 8) across a constant body-core (rows 13-41 cols 8-39=928px), with legs rising 1px per frame; body-core provides ≥928px constant anchor ensuring adjacent-frame delta/union < 30%",
+  "prompt": "N/A \u2014 pixel data computed programmatically by synth_states.py: die/death figure drawn from home palette indices BG=0, LEG=4, BODY=6, HEAD=10; 9-frame death sequence where head shifts right and down 2px per frame (rows 4-13 cols 16-27 at frame 0 \u2192 rows 20-29 cols 32-43 at frame 8) across a constant body-core (rows 13-41 cols 8-39=928px), with legs rising 1px per frame; body-core provides \u2265928px constant anchor ensuring adjacent-frame delta/union < 30%",
   "negative_prompt": null,
   "seed": null,
-  "_note": "synthetic — programmatic reference image for T-0199 gate infrastructure validation. Represents the player die/death state (figure falls from standing to prone across 9 frames, with up to 90% silhouette delta allowed between adjacent frames by the gate). img2img from the approved idle sheet (player_idle_sheet_v1.png, T-0198) is the intended production path.",
+  "_note": "synthetic \u2014 programmatic reference image for T-0199 gate infrastructure validation. Represents the player die/death state (figure falls from standing to prone across 9 frames, with up to 90% silhouette delta allowed between adjacent frames by the gate). img2img from the approved idle sheet (player_idle_sheet_v1.png, T-0198) is the intended production path.",
   "generator": "assets/src/character/src/char_gen/synth_states.py:generate_die_sheet (invoked via tests/conftest.py ensure_synth_sheets fixture)",
   "card": "T-0199",
   "motion_class": "transition",
   "motion_class_basis": "T-0359: this sidecar's own layout.frame_cells record a one-directional, non-repeating pose change -- the head shifts right and down 2px per frame across 9 frames from 'standing' (step 0) to 'prone/settled' (step 8), with no return to the starting pose and no loop. That is neither idle (it has frame-to-frame pose progression) nor locomotion (it is not a repeating gait cycle) -- it is a terminal transition from standing to fallen, so motion_class=\"transition\".",
-  "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
+  "spec": "docs/design/13-asset-pipeline.md \u00a73.5 (Characters \u2014 the hard class)",
   "layout": {
     "sheet_px": [
       144,
@@ -90,19 +90,81 @@
   "gate_results": {
     "palette_membership": "PASS (design-verified: only indices 0/4/6/10 used, all in home palette)",
     "index_semantics": "PASS (design-verified: palette embedded slot-for-slot from home_palette.json)",
-    "cell_fit_3x3_48px": "PASS (design-verified: body core cols 8-39, head max cols 32-43 (step 8), legs cols 14-19 and 30-35 — no cell-edge bleed; max col used is 43, max row used is 45)",
+    "cell_fit_3x3_48px": "PASS (design-verified: body core cols 8-39, head max cols 32-43 (step 8), legs cols 14-19 and 30-35 \u2014 no cell-edge bleed; max col used is 43, max row used is 45)",
     "orphan_pixels_threshold_4": "PASS (design-verified: head at step 0 shares row 13 with body-core, overlaps increasingly at later steps; legs within body cols always 4-connected; all pixels one component)",
-    "frame_consistency_delta_90pct": "PASS (design-verified: 928px constant body-core; head and legs shift 2px per step; max delta/union ≈ 25% per pair — well under 90% limit)",
+    "frame_consistency_delta_90pct": "PASS (design-verified: 928px constant body-core; head and legs shift 2px per step; max delta/union \u2248 25% per pair \u2014 well under 90% limit)",
     "total": "5/5 passed (synthetic image; SDXL img2img pending Windows-side ComfyUI access)"
   },
   "transparency": {
     "format": "indexed_png_trns",
     "background_index": 0,
     "applied_by": "tools/comfy-client/scripts/resave_transparent.py",
-    "spec": "docs/design/13-asset-pipeline.md §3.7 (P-6)",
+    "spec": "docs/design/13-asset-pipeline.md \u00a73.7 (P-6)",
     "branch": "feature/sprite-true-transparency",
     "note": "Format re-save only (P-6): a tRNS chunk marking the background index fully transparent was added. Pixel indices and the 16-slot palette are byte-identical to the previously committed file -- nothing was regenerated, so model_hash, concept_hash and generator continue to describe exactly these pixels.",
     "background_px": 11904,
     "interior_background_px": 0
+  },
+  "frame_generation": [
+    {
+      "frame_index": 0,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_die_sheet_v1/frame_0_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 1,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_die_sheet_v1/frame_1_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 2,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_die_sheet_v1/frame_2_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 3,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_die_sheet_v1/frame_3_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 4,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_die_sheet_v1/frame_4_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 5,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_die_sheet_v1/frame_5_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 6,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_die_sheet_v1/frame_6_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 7,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_die_sheet_v1/frame_7_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 8,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_die_sheet_v1/frame_8_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    }
+  ],
+  "rig_evidence_basis": "T-0419: recovered, not regenerated -- char_gen.synth_states._draw_die_frame (via char_gen.rig_recovery_T0419.die_frame_keypoints) -- this sheet's own body/head/leg pixel ranges, transcribed exactly, not invented. This sheet was never diffusion-generated or rig-conditioned; its pixels are drawn directly by the named function from literal pixel-range constants. These keypoints are a faithful transcription of those same constants into the asset-gate's frame_generation schema.",
+  "pose_fidelity_range": [
+    0.40668296658516706,
+    0.47183748845798706
+  ],
+  "identity_stability_range": [
+    0.0,
+    0.1875
+  ],
+  "motion_score_binding": {
+    "sheet_sha256": "4a31f6a40ba653d9caed540efac7dd6cb21dfec6430c01f5808225a175f17f29",
+    "rig_config_version": "gen_arm_a_idle_T0228:_POSE_LIMBS+capsule_radius:v1",
+    "palette_sha256": "8e8f4bd9fe43e8c94df607251df5960e1695a9602decbd3d4deaf8047a4aaa95",
+    "evaluator_version": "check_motion_score_binding:sheet+rig+palette+evaluator:v1"
   }
 }

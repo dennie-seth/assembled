@@ -791,22 +791,38 @@ def test_cli_character_gate_still_exits_zero_except_for_the_walks_known_binding_
     T-0359 also labelled the 6 remaining non-walk sidecars this file's own
     baseline used to leave exempt (`player_crouch_hide_sheet_v1`/`v2`,
     `player_die_sheet_v1`/`v2`, `player_move_sheet_v1`/`v2`) as
-    `transition`/`locomotion` from their own recorded prompts/layouts. None
-    of those 6 carry the `frame_generation` rig-keypoint evidence needed to
-    recompute a pose-fidelity score at all, so `character_motion_fidelity`
-    (T-0357) and `character_part_identity` (T-0361) FAIL on each of them
-    with a `missing_rig_evidence` reason before a recompute ever happens --
-    this check's own binding logic explicitly only fires once a recompute
-    has succeeded (`check_motion_score_binding`'s own docstring), so none of
-    those 6 add a `character_motion_score_binding` failure of their own; 12
-    new `character_motion_fidelity`/`character_part_identity` FAIL lines,
+    `transition`/`locomotion` from their own recorded prompts/layouts. At
+    that point none of those 6 carried the `frame_generation` rig-keypoint
+    evidence needed to recompute a pose-fidelity score at all, so
+    `character_motion_fidelity` (T-0357) and `character_part_identity`
+    (T-0361) FAILed on each of them with a `missing_rig_evidence` reason
+    before a recompute ever happened -- this check's own binding logic
+    explicitly only fires once a recompute has succeeded
+    (`check_motion_score_binding`'s own docstring), so none of those 6 added
+    a `character_motion_score_binding` failure of their own; 12 FAIL lines,
     not a regression.
 
+    T-0419 recovered genuine `frame_generation` rig evidence for the 3 `v1`
+    sheets from their own `char_gen.synth_states` drawing formulas (see
+    `assets/src/character/src/char_gen/rig_recovery_T0419.py`), which makes
+    this check's recompute succeed for all 3 -- and it PASSES for all 3: a
+    real `motion_score_binding` (sheet content hash, rig/config version,
+    palette hash, evaluator version) is bound, and the recorded
+    `pose_fidelity_range`/`identity_stability_range` agree with the live
+    recompute, exactly as `assets/src/character/recover_rig_evidence_T0419.py`
+    wrote them. The 3 `v2` sheets (SDXL tiled, prompt-only, never
+    rig-conditioned) still have no rig to recover, so their recompute still
+    never succeeds and this check still never fires for them -- unchanged.
+    `player_die_sheet_v1` also now genuinely PASSES `character_part_identity`
+    on merit (worst per-region distance 0.2689 <= the 0.40 cap) -- one fewer
+    FAIL line, the real, intended outcome of recovering real evidence.
+
     So this test no longer asserts a clean exit -- it asserts the exit is
-    non-zero for EXACTLY the 14 already-known, already-documented reasons
+    non-zero for EXACTLY the 13 already-known, already-documented reasons
     (this check's own missing-binding FAIL and T-0357's fidelity-floor FAIL
-    on the walk, plus the 12 lines above) and nothing else, so it still
-    catches a genuine NEW regression anywhere else in the committed tree."""
+    on the walk, plus the remaining lines above) and nothing else, so it
+    still catches a genuine NEW regression anywhere else in the committed
+    tree."""
     import os
     import re
     import subprocess
@@ -843,7 +859,6 @@ def test_cli_character_gate_still_exits_zero_except_for_the_walks_known_binding_
         ("character_motion_fidelity", "character/player_crouch_hide_sheet_v2.provenance.json"),
         ("character_part_identity", "character/player_crouch_hide_sheet_v2.provenance.json"),
         ("character_motion_fidelity", "character/player_die_sheet_v1.provenance.json"),
-        ("character_part_identity", "character/player_die_sheet_v1.provenance.json"),
         ("character_motion_fidelity", "character/player_die_sheet_v2.provenance.json"),
         ("character_part_identity", "character/player_die_sheet_v2.provenance.json"),
         ("character_motion_fidelity", "character/player_move_sheet_v1.provenance.json"),

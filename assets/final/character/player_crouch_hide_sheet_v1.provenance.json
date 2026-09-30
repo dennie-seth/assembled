@@ -1,16 +1,16 @@
 {
-  "model": "N/A — synthetic reference image, procedurally generated (not AI-generated)",
+  "model": "N/A \u2014 synthetic reference image, procedurally generated (not AI-generated)",
   "model_license": "N/A",
   "model_hash": null,
-  "prompt": "N/A — pixel data computed programmatically by synth_states.py: crouch-hide figure drawn from home palette indices BG=0, LEG=4, BODY=6, HEAD=10; 9-frame crouch sequence where head descends 2px per frame (rows 4-14 at frame 0 to rows 20-30 at frame 8) into a constant body-core (rows 20-41, cols 10-37), with legs sliding up 1px per frame; neck bridge ensures 4-connectivity when head is above body",
+  "prompt": "N/A \u2014 pixel data computed programmatically by synth_states.py: crouch-hide figure drawn from home palette indices BG=0, LEG=4, BODY=6, HEAD=10; 9-frame crouch sequence where head descends 2px per frame (rows 4-14 at frame 0 to rows 20-30 at frame 8) into a constant body-core (rows 20-41, cols 10-37), with legs sliding up 1px per frame; neck bridge ensures 4-connectivity when head is above body",
   "negative_prompt": null,
   "seed": null,
-  "_note": "synthetic — programmatic reference image for T-0199 gate infrastructure validation. Represents the player crouch-hide state (figure progressively compresses from standing height ~40px to crouched ~24px). img2img from the approved idle sheet (player_idle_sheet_v1.png, T-0198) is the intended production path.",
+  "_note": "synthetic \u2014 programmatic reference image for T-0199 gate infrastructure validation. Represents the player crouch-hide state (figure progressively compresses from standing height ~40px to crouched ~24px). img2img from the approved idle sheet (player_idle_sheet_v1.png, T-0198) is the intended production path.",
   "generator": "assets/src/character/src/char_gen/synth_states.py:generate_crouch_hide_sheet (invoked via tests/conftest.py ensure_synth_sheets fixture)",
   "card": "T-0199",
   "motion_class": "transition",
   "motion_class_basis": "T-0359: this sidecar's own prompt and layout.frame_cells record a one-directional, non-repeating pose change -- the head descends 2px per frame across 9 frames (rows 4:14 at frame 0 to rows 20:30 at frame 8) from standing to fully crouched/hidden, with no return to the starting pose and no loop. That is neither idle (it has frame-to-frame pose progression) nor locomotion (it is not a repeating gait cycle) -- it is a transition between two poses, so motion_class=\"transition\".",
-  "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
+  "spec": "docs/design/13-asset-pipeline.md \u00a73.5 (Characters \u2014 the hard class)",
   "layout": {
     "sheet_px": [
       144,
@@ -83,19 +83,81 @@
   "gate_results": {
     "palette_membership": "PASS (design-verified: only indices 0/4/6/10 used, all in home palette)",
     "index_semantics": "PASS (design-verified: palette embedded slot-for-slot from home_palette.json)",
-    "cell_fit_3x3_48px": "PASS (design-verified: body cols 10-37, head cols 16-27, legs cols 14-19 and 30-35, neck cols 20-27 — no cell-edge bleed at cols 0/47 or rows 0/47)",
+    "cell_fit_3x3_48px": "PASS (design-verified: body cols 10-37, head cols 16-27, legs cols 14-19 and 30-35, neck cols 20-27 \u2014 no cell-edge bleed at cols 0/47 or rows 0/47)",
     "orphan_pixels_threshold_4": "PASS (design-verified: head connects to body via neck bridge or direct overlap; all parts 4-connected through body-core; no isolated blobs)",
-    "frame_consistency_delta_65pct": "PASS (design-verified: adjacent frames shift head 2px, legs 1px; delta/union < 8% per pair — well under 65% limit)",
+    "frame_consistency_delta_65pct": "PASS (design-verified: adjacent frames shift head 2px, legs 1px; delta/union < 8% per pair \u2014 well under 65% limit)",
     "total": "5/5 passed (synthetic image; SDXL img2img pending Windows-side ComfyUI access)"
   },
   "transparency": {
     "format": "indexed_png_trns",
     "background_index": 0,
     "applied_by": "tools/comfy-client/scripts/resave_transparent.py",
-    "spec": "docs/design/13-asset-pipeline.md §3.7 (P-6)",
+    "spec": "docs/design/13-asset-pipeline.md \u00a73.7 (P-6)",
     "branch": "feature/sprite-true-transparency",
     "note": "Format re-save only (P-6): a tRNS chunk marking the background index fully transparent was added. Pixel indices and the 16-slot palette are byte-identical to the previously committed file -- nothing was regenerated, so model_hash, concept_hash and generator continue to describe exactly these pixels.",
     "background_px": 14304,
     "interior_background_px": 0
+  },
+  "frame_generation": [
+    {
+      "frame_index": 0,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_crouch_hide_sheet_v1/frame_0_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 1,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_crouch_hide_sheet_v1/frame_1_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 2,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_crouch_hide_sheet_v1/frame_2_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 3,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_crouch_hide_sheet_v1/frame_3_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 4,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_crouch_hide_sheet_v1/frame_4_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 5,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_crouch_hide_sheet_v1/frame_5_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 6,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_crouch_hide_sheet_v1/frame_6_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 7,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_crouch_hide_sheet_v1/frame_7_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    },
+    {
+      "frame_index": 8,
+      "pose_keypoints_file": "assets/src/character/pose_rig_recovered_T0419/player_crouch_hide_sheet_v1/frame_8_keypoints.json",
+      "generation_mode": "recovered_from_synthetic_generator"
+    }
+  ],
+  "rig_evidence_basis": "T-0419: recovered, not regenerated -- char_gen.synth_states._draw_crouch_frame (via char_gen.rig_recovery_T0419.crouch_hide_frame_keypoints) -- this sheet's own body/head/leg pixel ranges, transcribed exactly, not invented. This sheet was never diffusion-generated or rig-conditioned; its pixels are drawn directly by the named function from literal pixel-range constants. These keypoints are a faithful transcription of those same constants into the asset-gate's frame_generation schema.",
+  "pose_fidelity_range": [
+    0.4486486486486487,
+    0.4851351351351351
+  ],
+  "identity_stability_range": [
+    0.125,
+    0.875
+  ],
+  "motion_score_binding": {
+    "sheet_sha256": "7a106ef252605c82ee3847e86f7aac80585bec7c11bf5715fc30599395a4eb32",
+    "rig_config_version": "gen_arm_a_idle_T0228:_POSE_LIMBS+capsule_radius:v1",
+    "palette_sha256": "8e8f4bd9fe43e8c94df607251df5960e1695a9602decbd3d4deaf8047a4aaa95",
+    "evaluator_version": "check_motion_score_binding:sheet+rig+palette+evaluator:v1"
   }
 }

@@ -541,14 +541,30 @@ def test_cli_character_gate_still_exits_zero_except_for_the_walks_known_fidelity
     `player_die_sheet_v1`/`v2`, `player_move_sheet_v1`/`v2`) as
     `transition`/`locomotion` from their own recorded prompts/layouts --
     accurately, per `character_motion_class_baseline.txt`'s own updated
-    comment. None of those 6 carry the `frame_generation` rig-keypoint
-    evidence this module's recompute requires, so each now FAILS
+    comment. At that point none of those 6 carried the `frame_generation`
+    rig-keypoint evidence this module's recompute requires, so each FAILED
     `character_motion_fidelity` with a `missing_rig_evidence` reason, and
     (T-0361) `character_part_identity` alongside it for the same reason --
-    12 new, expected FAIL lines, not a regression.
+    12 FAIL lines, not a regression.
+
+    T-0419 recovered genuine `frame_generation` rig evidence for the 3 `v1`
+    sheets (`player_crouch_hide_sheet_v1`, `player_die_sheet_v1`,
+    `player_move_sheet_v1`) from their own `char_gen.synth_states` drawing
+    formulas -- see `assets/src/character/src/char_gen/rig_recovery_T0419.py`
+    and `ASSET_PROVENANCE.md`'s own T-0419 addendum row. The `v2` sheets
+    (SDXL tiled, prompt-only, never rig-conditioned) still have no rig to
+    recover; their `missing_rig_evidence` FAILs are unchanged and still
+    expected here. Of the 3 recovered `v1` sheets, every one still fails
+    `character_motion_fidelity` on merit (a block-figure synthetic sheet's
+    real geometry does not match a capsule-rig prediction well), and
+    `character_part_identity` fails on merit for `player_crouch_hide_sheet_v1`
+    and `player_move_sheet_v1` -- but genuinely PASSES on merit for
+    `player_die_sheet_v1` (worst per-region distance 0.2689 <= the 0.40 cap).
+    That one fewer FAIL line is the real, intended outcome of recovering real
+    evidence, not a regression.
 
     So this test no longer asserts a clean exit -- it asserts the exit is
-    non-zero for EXACTLY those 14 already-known, already-documented reasons
+    non-zero for EXACTLY these 13 already-known, already-documented reasons
     and nothing else, so it still catches a genuine NEW regression anywhere
     else in the committed tree."""
     import os
@@ -588,7 +604,6 @@ def test_cli_character_gate_still_exits_zero_except_for_the_walks_known_fidelity
         ("character_motion_fidelity", "character/player_crouch_hide_sheet_v2.provenance.json"),
         ("character_part_identity", "character/player_crouch_hide_sheet_v2.provenance.json"),
         ("character_motion_fidelity", "character/player_die_sheet_v1.provenance.json"),
-        ("character_part_identity", "character/player_die_sheet_v1.provenance.json"),
         ("character_motion_fidelity", "character/player_die_sheet_v2.provenance.json"),
         ("character_part_identity", "character/player_die_sheet_v2.provenance.json"),
         ("character_motion_fidelity", "character/player_move_sheet_v1.provenance.json"),
