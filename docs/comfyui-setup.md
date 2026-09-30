@@ -311,3 +311,29 @@ round 9's baseline non-cached recompute (attempt 54) ran in `gpu_seconds`
 `gpu_seconds` 60.1 — roughly +11%, on different seeds and not a controlled
 A/B. It played no part in the baseline decision above and is retained only
 as a stray data point, not a cost that was ever paid.
+
+## Thermal cooler gate (T-0422)
+
+The T-0419 incident: a retry loop submitted ComfyUI work with the cooler
+off. Per-job interruption caught the running job every time
+(`POST /interrupt`, `POST /queue {"clear": true}`, `POST /free` all
+returned 200) but the loop just resubmitted — by the time the board run
+itself was cancelled, ComfyUI's history showed 39 jobs had run and the GPU
+had climbed from 81 to 87°C. `ComfyUIClient.submit()`
+(`tools/comfy-client/src/comfy_client/comfyui_client.py`) now refuses every
+submission — including hand-built graphs that skip
+`comfy_client.pipeline.generate()` entirely — unless
+[`tools/board/ops/cooler-state.json`](../tools/board/ops/cooler-state.json)
+says the cooler is on **and** a live `nvidia-smi` reading is under the
+ceiling in `comfy_client.thermal_gate.TEMPERATURE_CEILING_C`. See that
+module's docstring for the full policy (missing/malformed file, multi-GPU,
+timeout, etc.) and `tools/comfy-client/tests/test_thermal_gate.py` /
+`test_comfyui_client.py` for the tests.
+
+**To flip it:** edit `"cooler"` in `tools/board/ops/cooler-state.json` to
+`"OFF"` (the only other accepted value is `"ON"` — anything else refuses,
+it is not read as on). The change takes effect on the very next
+`ComfyUIClient.submit()` call — no restart of ComfyUI, the board, or any
+process is needed, since the gate reads the file fresh on every submission.
+There is deliberately no bypass/force flag (see the card's "Do not" list):
+turning it back `"ON"` is the only way to resume submissions.

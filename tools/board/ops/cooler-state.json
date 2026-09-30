@@ -1,0 +1,6 @@
+{
+  "cooler": "ON",
+  "decidedBy": "@DennieSeth (via T-0422)",
+  "decidedDate": "2026-09-30",
+  "reason": "T-0419: a retry loop submitted 39 ComfyUI jobs with the cooler off (GPU 81-87C) before the board run itself was cancelled -- per-job interruption (POST /interrupt, POST /queue clear, POST /free) worked every time but the loop just resubmitted. This file is the one thing every ComfyUIClient.submit() call reads before POSTing to ComfyUI (tools/comfy-client/src/comfy_client/thermal_gate.py); see docs/comfyui-setup.md#thermal-cooler-gate-t-0422 for how to flip it. ON reflects the current real state -- the cooler is running -- so this does not block legitimate GPU work the moment T-0422 merges."
+}
