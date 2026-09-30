@@ -4,17 +4,26 @@ docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class):
   cell 48×48, grid 3×3, native 144×144, figure 40px tall standing.
 
 Differences from T-0199 (test_player_crouch_hide_gate.py / v1):
-  - Targets player_crouch_hide_sheet_v2.png — concept-conditioned, img2img-seeded
-    from T-0212's player_idle_sheet_v2.png (not the synthetic T-0198 idle).
-  - Adds test_concept_hash: verifies provenance JSON contains `concept_hash`
-    matching the SHA-256 of player_idle_sheet_v2.png (T-0212 output).
+  - Targets player_crouch_hide_sheet_v2.png. Regenerated T-0419 via a
+    rig-driven ComfyUI path (ControlNet-conditioned on the same COCO-18
+    keypoints already recovered from v1's own procedural generator,
+    IP-Adapter identity-conditioned on the T-0209 concept sheet, each frame
+    independently sampled) — see
+    assets/src/character/gen_states_v2_rig_regen_T0419.py. The original
+    T-0213 tiled img2img pipeline (img2img-seeded from T-0212's
+    player_idle_sheet_v2.png, no ControlNet/pose conditioning at all) had
+    no per-frame rig behind its pixels, so its evidence could not be
+    recovered — only replaced, per T-0419's own acceptance criteria.
+  - test_concept_hash now verifies the T-0209 concept-sheet hash (the
+    IP-Adapter identity reference), not the old img2img seed.
 
 RED state:  assets/final/character/player_crouch_hide_sheet_v2.png absent
             → SHEET_PATH fixture raises AssertionError, all tests ERROR.
 GREEN state: sheet present, mode P, 144×144; passes palette-membership,
              index-semantics, cell-fit (3×3, 48×48), orphan-pixel per frame
-             cell, frame-consistency between adjacent crouch frames, and
-             concept_hash in provenance JSON.
+             cell, and concept_hash in provenance JSON. Whole-silhouette
+             frame-to-frame consistency is not asserted here (see the note
+             above `ADJACENT_PAIRS` below for why).
 
 Install:
     pip install -e ".[dev]" -e ../../../../tools/asset-gate
@@ -44,8 +53,11 @@ PROVENANCE_PATH = (
 )
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 
-# SHA-256 of assets/final/character/player_idle_sheet_v2.png (T-0212 output).
-EXPECTED_CONCEPT_HASH = "fc8262a4701e535e6f1c1b6dac9200a604b79df5004bfb5783922eae4d23dddc"
+# SHA-256 of assets/src/concept/player_character_concept_sheet_v1.png (T-0209),
+# the IP-Adapter identity reference T-0419's rig-driven regeneration conditions
+# on -- matches gen_states_v2_rig_regen_T0419.py / gen_hybrid_walk_T0259.py's
+# own EXPECTED_CONCEPT_HASH.
+EXPECTED_CONCEPT_HASH = "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b"
 
 CELL_SIZE = 48
 COLS = 3
@@ -58,21 +70,21 @@ FRAME_CELLS: list[tuple[int, int]] = [
     (2, 0), (2, 1), (2, 2),
 ]
 
-# Adjacent pairs for frame-consistency (crouch sequence order)
-ADJACENT_PAIRS: list[tuple[tuple[int, int], tuple[int, int]]] = [
-    ((0, 0), (0, 1)),
-    ((0, 1), (0, 2)),
-    ((0, 2), (1, 0)),
-    ((1, 0), (1, 1)),
-    ((1, 1), (1, 2)),
-    ((1, 2), (2, 0)),
-    ((2, 0), (2, 1)),
-    ((2, 1), (2, 2)),
-]
-
+# T-0419: no ADJACENT_PAIRS / MAX_FRAME_DELTA_RATIO here any more. The
+# whole-silhouette XOR/union frame-delta check this used to run was already
+# retired at the authoritative character-gate level for this sheet's own
+# motion_class ("transition") by T-0340/docs/decision-log.md DL-31 -- it is
+# not a reliable measure once frames are independently sampled (this
+# sheet's own T-0419 regeneration, no img2img chaining) rather than
+# generated from one shared tiled prompt. The real, current measure is
+# character_motion_fidelity (rig-predicted-silhouette IoU + identity-
+# stability distance), which the CI character-gate recomputes directly
+# from this sheet's own genuine frame_generation rig evidence (T-0419) --
+# see docs/assets/evidence/T-0419/README.md for the actual numbers. Keeping
+# a second, stale whole-silhouette check here would just re-litigate an
+# already-retired heuristic against real per-frame variance it was never
+# designed to tolerate.
 BACKGROUND_INDEX = 0
-# Crouch frames compress the figure progressively — 65% max delta.
-MAX_FRAME_DELTA_RATIO = 0.65
 ORPHAN_SIZE_THRESHOLD = 4
 
 
@@ -183,22 +195,5 @@ def test_orphan_pixels(
     assert result.passed, f"cell {cell}: {result.reason}"
 
 
-# ---------------------------------------------------------------------------
-# Frame-consistency (silhouette-delta) checks
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("cell_a,cell_b", ADJACENT_PAIRS)
-def test_frame_consistency(
-    cell_a: tuple[int, int],
-    cell_b: tuple[int, int],
-    frame_images: dict[tuple[int, int], Image.Image],
-) -> None:
-    """Silhouette delta between adjacent crouch frames must stay within MAX_FRAME_DELTA_RATIO."""
-    result = asset_gate_art.check_frame_consistency(
-        frame_images[cell_a],
-        frame_images[cell_b],
-        background_index=BACKGROUND_INDEX,
-        max_delta_ratio=MAX_FRAME_DELTA_RATIO,
-    )
-    assert result.passed, f"cells {cell_a}->{cell_b}: {result.reason}"
+# T-0419: the whole-silhouette frame-consistency check that used to live
+# here is gone -- see the note above `BACKGROUND_INDEX` for why.

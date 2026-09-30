@@ -1,36 +1,212 @@
 {
-  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (weight 0.7)",
-  "model_license": "CreativeML Open RAIL++-M (base) / CreativeML OpenRAIL++-M (LoRA)",
+  "model": "sd_xl_base_1.0.safetensors + LoRA soviet_brutalism_style_v1.safetensors (style, weight 0.7) + LoRA player_identity_v2.safetensors (player identity, weight 0.5) + IP-Adapter ip-adapter-plus_sdxl_vit-h.safetensors (weight 0.6) + ControlNet controlnet-openpose-sdxl-1.0_xinsir.safetensors -- each frame independently sampled (denoise 1.0), no img2img chain",
+  "model_license": "CreativeML Open RAIL++-M",
   "model_hash": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
-  "lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
-  "prompt": "pixel art death animation sprite sheet, Soviet brutalist soldier in standard military uniform, flat side-on orthographic side view, nine frame cells arranged in a 3x3 grid, same single character in every cell, progressive death fall sequence across frames from standing to collapsed, figure gradually falls sideways and collapses to ground across frames, figure becomes horizontal by final frames, dramatic fall animation, institutional grey concrete background, muted olive-green and grey military palette, value-separated pixel art silhouette, clean readable pixel outline, no perspective, no vanishing point, no action poses other than falling, no multiple characters, no UI, no text",
-  "negative_prompt": "multiple characters, different costumes, costume sheet, turnaround, perspective, three-quarter view, vanishing point, diagonal composition, depth of field, atmospheric haze, blurry, low quality, photorealistic, watermark, text, UI, background clutter, bright colours, neon",
-  "seed": 31419,
+  "style_lora_name": "soviet_brutalism_style_v1.safetensors",
+  "style_lora_hash": "2dab82287f6d36a98a142dae5199df47e001d86d4c9507a0524742b4d34f2b9f",
+  "style_lora_weight": 0.7,
+  "style_lora_license": "CreativeML OpenRAIL++-M",
+  "identity_lora_name": "player_identity_v2.safetensors",
+  "identity_lora_hash": "fc447cfb886cb6a694c52ae21c9d172bae696ebc175f8daa7d6ecfd22eac36b4",
+  "identity_lora_weight": 0.5,
+  "identity_lora_license": "CreativeML OpenRAIL++-M",
+  "identity_lora_provenance": "assets/final/lora/player_identity_v2.provenance.json",
+  "ip_adapter": "ip-adapter-plus_sdxl_vit-h.safetensors",
+  "ip_adapter_weight": 0.6,
+  "controlnet": "controlnet-openpose-sdxl-1.0_xinsir.safetensors",
+  "controlnet_strength": 1.0,
+  "controlnet_end_percent": 1.0,
+  "prompt": "sbrutalistplayer, pixel art death-fall animation frame, single figure matching the pose skeleton exactly, Soviet brutalist soldier in standard military uniform, flat side-on orthographic view, same uniform and same equipment loadout in every frame, value-separated pixel art silhouette, clean readable pixel outline, solid flat black background, no perspective, no vanishing point, no text, no UI",
+  "negative_prompt": "perspective, three-quarter view, vanishing point, diagonal, depth of field, blurry, low quality, text, watermark, multiple different characters, two figures, duplicate figure, twins, doubled character, group of people, action pose, background clutter, background texture, background detail, concrete background, grey background, patterned background, bright colours, photorealistic, character sheet, multi-angle turnaround, different viewing angles, costume variants, different uniform, different equipment, inconsistent identity, grid, panels, contact sheet, multiple frames, skeleton, wireframe",
+  "pose_source": "char_gen.rig_recovery_T0419.die_frame_keypoints -- the SAME per-frame COCO-18 keypoints already recovered (T-0419) from player_die_sheet_v1's own procedural drawing formula, reused here as this sheet's ControlNet pose source. Not a newly-authored pose: this is v1's own already-verified-genuine rig, driving a fresh SDXL generation for v2.",
+  "rig_evidence_basis": "T-0419: v2's original generator (gen_states_v2_tiled.py, T-0213) used a single tiled img2img prompt with no ControlNet/pose conditioning of any kind -- no rig ever produced its pixels, so there was nothing to recover. This provenance replaces those pixels via a genuine rig-driven regeneration (per this card's own edge case), conditioned on v1's own already-recovered, already-verified rig keypoints -- never an invented pose.",
+  "seed": 31421,
   "steps": 30,
   "cfg": 7.0,
-  "width": 1152,
-  "height": 1152,
-  "concept_hash": "fc8262a4701e535e6f1c1b6dac9200a604b79df5004bfb5783922eae4d23dddc",
-  "concept_source": "assets/final/character/player_idle_sheet_v2.png",
-  "concept_card": "T-0212",
-  "method": "img2img concept-conditioned via ComfyUI HTTP API (SDXL KSampler, euler/normal, denoise=0.85); single idle frame cell (0,0) cropped from T-0212 idle-sheet-v2 (player_idle_sheet_v2.png), scaled and tiled to 3x3 at 1152x1152 as img2img template so character identity is preserved across all cells while diffusion introduces die-specific pose variation per frame. ComfyUI workflow: assets/src/character/gen_states_v2_tiled.py",
-  "img2img_denoise": 0.85,
-  "idle_v2_crop": [
-    0,
-    0,
-    48,
-    48
+  "width": 384,
+  "height": 384,
+  "concept_hash": "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b",
+  "concept_source": "assets/src/concept/player_character_concept_sheet_v1.png",
+  "concept_card": "T-0209",
+  "ip_adapter_reference_crop_box": [
+    8,
+    298,
+    195,
+    498
   ],
-  "tile_grid": "3x3 (384x384px per cell)",
-  "lora_name": "soviet_brutalism_style_v1.safetensors",
-  "lora_weight": 0.7,
-  "lora_license": "CreativeML OpenRAIL++-M",
-  "comfyui_prompt_id": "5ec16a7d-cad8-4913-b496-31d23d4d8b37",
-  "generator": "assets/src/character/gen_states_v2_tiled.py",
-  "card": "T-0213",
+  "frame_generation": [
+    {
+      "frame_index": 0,
+      "cell": [
+        0,
+        0
+      ],
+      "comfyui_prompt_id": "d7b91fc7-d3ae-4baa-8c40-4c1ffd2cb7f0",
+      "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_0_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_0_pose_skeleton_384.png",
+      "background_cutout_applied": true,
+      "cutout_method": "Per-frame border-connected background classification in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image: every distinct colour on the frame's own border is reduced to a small set of representatives via greedy set cover over border pixel mass -- covering at least 95% of the frame's own border pixels, most-frequent-colour-first (T-0315) -- each pixel qualifies as background by its own absolute Oklab distance to the NEAREST representative (never by a hop-to-hop tolerance test against whatever neighbour it grew from), and background is the border-connected region of qualifying pixels -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it later quantizes to. The resulting foreground is reduced to every connected component whose OWN area sits at least 50% inside a keypoints hint region (T-0315 round 4 -- a plain 'any overlap counts' rule let a large, genuinely disjoint background-panel component survive in full on a mere sliver of incidental overlap), falling back to every component with any overlap at all, then to the single largest component, when nothing clears that majority bar -- a content-aware selection (T-0272 round 4, refined T-0315 round 4) that supersedes the original hard 'outside this frame's own keypoint bbox is background' clip, which could zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0.",
+      "cutout_oklab_tolerance": 0.03,
+      "cutout_bbox_margin_frac": 0.14,
+      "generation_mode": "fresh",
+      "chained_from_frame": null,
+      "denoise": 1.0
+    },
+    {
+      "frame_index": 1,
+      "cell": [
+        0,
+        1
+      ],
+      "comfyui_prompt_id": "53977099-11d2-4545-aee3-722da16a5bd4",
+      "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_1_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_1_pose_skeleton_384.png",
+      "background_cutout_applied": true,
+      "cutout_method": "Per-frame border-connected background classification in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image: every distinct colour on the frame's own border is reduced to a small set of representatives via greedy set cover over border pixel mass -- covering at least 95% of the frame's own border pixels, most-frequent-colour-first (T-0315) -- each pixel qualifies as background by its own absolute Oklab distance to the NEAREST representative (never by a hop-to-hop tolerance test against whatever neighbour it grew from), and background is the border-connected region of qualifying pixels -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it later quantizes to. The resulting foreground is reduced to every connected component whose OWN area sits at least 50% inside a keypoints hint region (T-0315 round 4 -- a plain 'any overlap counts' rule let a large, genuinely disjoint background-panel component survive in full on a mere sliver of incidental overlap), falling back to every component with any overlap at all, then to the single largest component, when nothing clears that majority bar -- a content-aware selection (T-0272 round 4, refined T-0315 round 4) that supersedes the original hard 'outside this frame's own keypoint bbox is background' clip, which could zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0.",
+      "cutout_oklab_tolerance": 0.03,
+      "cutout_bbox_margin_frac": 0.14,
+      "generation_mode": "fresh",
+      "chained_from_frame": null,
+      "denoise": 1.0
+    },
+    {
+      "frame_index": 2,
+      "cell": [
+        0,
+        2
+      ],
+      "comfyui_prompt_id": "99d7b76e-95cf-4ce0-aca8-84adf2e4e5f4",
+      "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_2_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_2_pose_skeleton_384.png",
+      "background_cutout_applied": true,
+      "cutout_method": "Per-frame border-connected background classification in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image: every distinct colour on the frame's own border is reduced to a small set of representatives via greedy set cover over border pixel mass -- covering at least 95% of the frame's own border pixels, most-frequent-colour-first (T-0315) -- each pixel qualifies as background by its own absolute Oklab distance to the NEAREST representative (never by a hop-to-hop tolerance test against whatever neighbour it grew from), and background is the border-connected region of qualifying pixels -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it later quantizes to. The resulting foreground is reduced to every connected component whose OWN area sits at least 50% inside a keypoints hint region (T-0315 round 4 -- a plain 'any overlap counts' rule let a large, genuinely disjoint background-panel component survive in full on a mere sliver of incidental overlap), falling back to every component with any overlap at all, then to the single largest component, when nothing clears that majority bar -- a content-aware selection (T-0272 round 4, refined T-0315 round 4) that supersedes the original hard 'outside this frame's own keypoint bbox is background' clip, which could zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0.",
+      "cutout_oklab_tolerance": 0.03,
+      "cutout_bbox_margin_frac": 0.14,
+      "generation_mode": "fresh",
+      "chained_from_frame": null,
+      "denoise": 1.0
+    },
+    {
+      "frame_index": 3,
+      "cell": [
+        1,
+        0
+      ],
+      "comfyui_prompt_id": "f2922d35-42d2-4416-a514-9cdc9f23c78e",
+      "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_3_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_3_pose_skeleton_384.png",
+      "background_cutout_applied": true,
+      "cutout_method": "Per-frame border-connected background classification in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image: every distinct colour on the frame's own border is reduced to a small set of representatives via greedy set cover over border pixel mass -- covering at least 95% of the frame's own border pixels, most-frequent-colour-first (T-0315) -- each pixel qualifies as background by its own absolute Oklab distance to the NEAREST representative (never by a hop-to-hop tolerance test against whatever neighbour it grew from), and background is the border-connected region of qualifying pixels -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it later quantizes to. The resulting foreground is reduced to every connected component whose OWN area sits at least 50% inside a keypoints hint region (T-0315 round 4 -- a plain 'any overlap counts' rule let a large, genuinely disjoint background-panel component survive in full on a mere sliver of incidental overlap), falling back to every component with any overlap at all, then to the single largest component, when nothing clears that majority bar -- a content-aware selection (T-0272 round 4, refined T-0315 round 4) that supersedes the original hard 'outside this frame's own keypoint bbox is background' clip, which could zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0.",
+      "cutout_oklab_tolerance": 0.03,
+      "cutout_bbox_margin_frac": 0.14,
+      "generation_mode": "fresh",
+      "chained_from_frame": null,
+      "denoise": 1.0
+    },
+    {
+      "frame_index": 4,
+      "cell": [
+        1,
+        1
+      ],
+      "comfyui_prompt_id": "b36c1852-e82c-4410-b29b-94610b9ceb11",
+      "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_4_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_4_pose_skeleton_384.png",
+      "background_cutout_applied": true,
+      "cutout_method": "Per-frame border-connected background classification in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image: every distinct colour on the frame's own border is reduced to a small set of representatives via greedy set cover over border pixel mass -- covering at least 95% of the frame's own border pixels, most-frequent-colour-first (T-0315) -- each pixel qualifies as background by its own absolute Oklab distance to the NEAREST representative (never by a hop-to-hop tolerance test against whatever neighbour it grew from), and background is the border-connected region of qualifying pixels -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it later quantizes to. The resulting foreground is reduced to every connected component whose OWN area sits at least 50% inside a keypoints hint region (T-0315 round 4 -- a plain 'any overlap counts' rule let a large, genuinely disjoint background-panel component survive in full on a mere sliver of incidental overlap), falling back to every component with any overlap at all, then to the single largest component, when nothing clears that majority bar -- a content-aware selection (T-0272 round 4, refined T-0315 round 4) that supersedes the original hard 'outside this frame's own keypoint bbox is background' clip, which could zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0.",
+      "cutout_oklab_tolerance": 0.03,
+      "cutout_bbox_margin_frac": 0.14,
+      "generation_mode": "fresh",
+      "chained_from_frame": null,
+      "denoise": 1.0
+    },
+    {
+      "frame_index": 5,
+      "cell": [
+        1,
+        2
+      ],
+      "comfyui_prompt_id": "2ec23f00-300b-4c36-a261-9cd7dc85c751",
+      "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_5_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_5_pose_skeleton_384.png",
+      "background_cutout_applied": true,
+      "cutout_method": "Per-frame border-connected background classification in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image: every distinct colour on the frame's own border is reduced to a small set of representatives via greedy set cover over border pixel mass -- covering at least 95% of the frame's own border pixels, most-frequent-colour-first (T-0315) -- each pixel qualifies as background by its own absolute Oklab distance to the NEAREST representative (never by a hop-to-hop tolerance test against whatever neighbour it grew from), and background is the border-connected region of qualifying pixels -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it later quantizes to. The resulting foreground is reduced to every connected component whose OWN area sits at least 50% inside a keypoints hint region (T-0315 round 4 -- a plain 'any overlap counts' rule let a large, genuinely disjoint background-panel component survive in full on a mere sliver of incidental overlap), falling back to every component with any overlap at all, then to the single largest component, when nothing clears that majority bar -- a content-aware selection (T-0272 round 4, refined T-0315 round 4) that supersedes the original hard 'outside this frame's own keypoint bbox is background' clip, which could zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0.",
+      "cutout_oklab_tolerance": 0.03,
+      "cutout_bbox_margin_frac": 0.14,
+      "generation_mode": "fresh",
+      "chained_from_frame": null,
+      "denoise": 1.0
+    },
+    {
+      "frame_index": 6,
+      "cell": [
+        2,
+        0
+      ],
+      "comfyui_prompt_id": "0295f149-2dc3-4850-ae33-a767a8380ce3",
+      "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_6_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_6_pose_skeleton_384.png",
+      "background_cutout_applied": true,
+      "cutout_method": "Per-frame border-connected background classification in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image: every distinct colour on the frame's own border is reduced to a small set of representatives via greedy set cover over border pixel mass -- covering at least 95% of the frame's own border pixels, most-frequent-colour-first (T-0315) -- each pixel qualifies as background by its own absolute Oklab distance to the NEAREST representative (never by a hop-to-hop tolerance test against whatever neighbour it grew from), and background is the border-connected region of qualifying pixels -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it later quantizes to. The resulting foreground is reduced to every connected component whose OWN area sits at least 50% inside a keypoints hint region (T-0315 round 4 -- a plain 'any overlap counts' rule let a large, genuinely disjoint background-panel component survive in full on a mere sliver of incidental overlap), falling back to every component with any overlap at all, then to the single largest component, when nothing clears that majority bar -- a content-aware selection (T-0272 round 4, refined T-0315 round 4) that supersedes the original hard 'outside this frame's own keypoint bbox is background' clip, which could zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0.",
+      "cutout_oklab_tolerance": 0.03,
+      "cutout_bbox_margin_frac": 0.14,
+      "generation_mode": "fresh",
+      "chained_from_frame": null,
+      "denoise": 1.0
+    },
+    {
+      "frame_index": 7,
+      "cell": [
+        2,
+        1
+      ],
+      "comfyui_prompt_id": "f362706b-573a-469b-82b1-2df879a486f0",
+      "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_7_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_7_pose_skeleton_384.png",
+      "background_cutout_applied": true,
+      "cutout_method": "Per-frame border-connected background classification in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image: every distinct colour on the frame's own border is reduced to a small set of representatives via greedy set cover over border pixel mass -- covering at least 95% of the frame's own border pixels, most-frequent-colour-first (T-0315) -- each pixel qualifies as background by its own absolute Oklab distance to the NEAREST representative (never by a hop-to-hop tolerance test against whatever neighbour it grew from), and background is the border-connected region of qualifying pixels -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it later quantizes to. The resulting foreground is reduced to every connected component whose OWN area sits at least 50% inside a keypoints hint region (T-0315 round 4 -- a plain 'any overlap counts' rule let a large, genuinely disjoint background-panel component survive in full on a mere sliver of incidental overlap), falling back to every component with any overlap at all, then to the single largest component, when nothing clears that majority bar -- a content-aware selection (T-0272 round 4, refined T-0315 round 4) that supersedes the original hard 'outside this frame's own keypoint bbox is background' clip, which could zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0.",
+      "cutout_oklab_tolerance": 0.03,
+      "cutout_bbox_margin_frac": 0.14,
+      "generation_mode": "fresh",
+      "chained_from_frame": null,
+      "denoise": 1.0
+    },
+    {
+      "frame_index": 8,
+      "cell": [
+        2,
+        2
+      ],
+      "comfyui_prompt_id": "85d2f9ac-7c4a-4520-8d92-c5f8a4f9bcad",
+      "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_8_keypoints.json",
+      "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/die/frame_8_pose_skeleton_384.png",
+      "background_cutout_applied": true,
+      "cutout_method": "Per-frame border-connected background classification in Oklab space (tolerance=0.03) over that frame's own 384x384 sampled/held image: every distinct colour on the frame's own border is reduced to a small set of representatives via greedy set cover over border pixel mass -- covering at least 95% of the frame's own border pixels, most-frequent-colour-first (T-0315) -- each pixel qualifies as background by its own absolute Oklab distance to the NEAREST representative (never by a hop-to-hop tolerance test against whatever neighbour it grew from), and background is the border-connected region of qualifying pixels -- removes background clutter connected to the frame edge regardless of how many distinct palette indices it later quantizes to. The resulting foreground is reduced to every connected component whose OWN area sits at least 50% inside a keypoints hint region (T-0315 round 4 -- a plain 'any overlap counts' rule let a large, genuinely disjoint background-panel component survive in full on a mere sliver of incidental overlap), falling back to every component with any overlap at all, then to the single largest component, when nothing clears that majority bar -- a content-aware selection (T-0272 round 4, refined T-0315 round 4) that supersedes the original hard 'outside this frame's own keypoint bbox is background' clip, which could zero or clip a real figure whose rendered pose deviates from its own ControlNet skeleton. Applied to each frame's own image and downscaled alongside it BEFORE the frames are assembled into the sheet -- not to the assembled sheet. Character-foreground pixels keep their quantized palette index; every other pixel is forced to background_index=0.",
+      "cutout_oklab_tolerance": 0.03,
+      "cutout_bbox_margin_frac": 0.14,
+      "generation_mode": "fresh",
+      "chained_from_frame": null,
+      "denoise": 1.0
+    }
+  ],
+  "method": "char_gen.rig_recovery_T0419.die_frame_keypoints supplies this sheet's per-frame COCO-18 keypoints -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each frame's skeleton (384x384) -> ControlNetApplyAdvanced (xinsir OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v2, chained) -> IPAdapterAdvanced (PLUS, T-0209 concept) -> KSampler (denoise 1.0, independent per frame) -> per-frame area descent to 48x48 -> per-frame background cutout (this frame's own keypoint bbox) -> frames assembled into the sheet -> Oklab-nearest palette quantization -> orphan cleanup -> true-RGBA sprite write. Documented spare/blank cells (move only) get no ComfyUI call -- pure background, per move_frame_keypoints' own convention.",
+  "generator": "assets/src/character/gen_states_v2_rig_regen_T0419.py",
+  "card": "T-0419",
+  "run_id": "T-0419-2026-09-30T11-44-52-737Z",
   "motion_class": "transition",
-  "motion_class_basis": "T-0359: this sidecar's own prompt explicitly describes a 'progressive death fall sequence across frames from standing to collapsed' -- a one-directional, non-repeating pose change ending horizontal, with no return to the starting pose. That is neither idle (it has frame-to-frame pose progression by the prompt's own description) nor locomotion (it is not a repeating gait cycle) -- it is a terminal transition from standing to fallen, so motion_class=\"transition\".",
-  "spec": "docs/design/13-asset-pipeline.md \u00a73.5 (Characters \u2014 the hard class) + \u00a76 (archetype-first coherence guard)",
+  "spec": "docs/design/13-asset-pipeline.md \u00a73.5 (Characters -- the hard class) + \u00a76",
+  "comfyui_prompt_ids": [
+    "d7b91fc7-d3ae-4baa-8c40-4c1ffd2cb7f0",
+    "53977099-11d2-4545-aee3-722da16a5bd4",
+    "99d7b76e-95cf-4ce0-aca8-84adf2e4e5f4",
+    "f2922d35-42d2-4416-a514-9cdc9f23c78e",
+    "b36c1852-e82c-4410-b29b-94610b9ceb11",
+    "2ec23f00-300b-4c36-a261-9cd7dc85c751",
+    "0295f149-2dc3-4850-ae33-a767a8380ce3",
+    "f362706b-573a-469b-82b1-2df879a486f0",
+    "85d2f9ac-7c4a-4520-8d92-c5f8a4f9bcad"
+  ],
+  "gpu_seconds": 847.5,
   "layout": {
     "sheet_px": [
       144,
@@ -39,37 +215,61 @@
     "cell_px": 48,
     "cols": 3,
     "rows": 3,
-    "figure_height_px": 40,
     "frame_cells": [
-      {
-        "cell": "(0,0)"
-      },
-      {
-        "cell": "(0,1)"
-      },
-      {
-        "cell": "(0,2)"
-      },
-      {
-        "cell": "(1,0)"
-      },
-      {
-        "cell": "(1,1)"
-      },
-      {
-        "cell": "(1,2)"
-      },
-      {
-        "cell": "(2,0)"
-      },
-      {
-        "cell": "(2,1)"
-      },
-      {
-        "cell": "(2,2)"
-      }
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        1,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        0
+      ],
+      [
+        2,
+        1
+      ],
+      [
+        2,
+        2
+      ]
     ],
-    "spare_cells": []
+    "spare_cells": [],
+    "loop": false
   },
-  "palette_source": "assets/final/palette/home_palette.json"
+  "palette_source": "assets/final/palette/home_palette.json",
+  "promoted": true,
+  "pose_fidelity_range": [
+    0.26263297872340424,
+    0.33815028901734107
+  ],
+  "identity_stability_range": [
+    0.265625,
+    0.6640625
+  ],
+  "motion_score_binding": {
+    "sheet_sha256": "f83fd61228cf6071f572fe555b8861accd7900cef10a07ea5e0fc2b5c5b53e0c",
+    "rig_config_version": "gen_arm_a_idle_T0228:_POSE_LIMBS+capsule_radius:v1",
+    "palette_sha256": "8e8f4bd9fe43e8c94df607251df5960e1695a9602decbd3d4deaf8047a4aaa95",
+    "evaluator_version": "check_motion_score_binding:sheet+rig+palette+evaluator:v1"
+  }
 }

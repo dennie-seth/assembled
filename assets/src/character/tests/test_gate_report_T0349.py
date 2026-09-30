@@ -76,6 +76,15 @@ def report(sheet: Image.Image, provenance: dict) -> dict:
         rows=ROWS,
         cell_px=CELL_PX,
         sheet_name="player_walk_sheet_hybrid.png",
+        # T-0419: explicit, not the default "." -- build_character_gate_report
+        # resolves frame_generation[i].pose_keypoints_file (a repo-relative
+        # path) against repo_root to recompute motion fidelity now that this
+        # sheet's own motion_class is 'locomotion' (T-0359), not None.
+        # REPO_ROOT (module-level, from this file's own path) is the same
+        # root the CLI's own --repo-root is pointed at when regenerating the
+        # committed report, so a fresh computation here matches it regardless
+        # of pytest's cwd.
+        repo_root=REPO_ROOT,
     )
 
 

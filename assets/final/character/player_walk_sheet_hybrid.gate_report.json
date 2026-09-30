@@ -39,9 +39,10 @@
       ]
     ]
   },
-  "motion_class": null,
+  "motion_class": "locomotion",
   "thresholds": {
-    "frame_delta_cap": 0.3,
+    "frame_delta_cap": 0.5,
+    "frame_delta_cap_diagnostic_only": true,
     "arm_c_benchmark": [
       0.072,
       0.112
@@ -195,7 +196,19 @@
     },
     "character_frame_delta_cap": {
       "passed": true,
-      "reason": "player_walk_sheet_hybrid.png: motion_class=None frame-delta upper bound 0.2532 <= cap 0.3"
+      "reason": "player_walk_sheet_hybrid.png: motion_class='locomotion' -- the whole-silhouette XOR/union frame-delta cap is retired for locomotion/transition/loop (T-0340, docs/decision-log.md DL-31); see check_character_motion_fidelity"
+    },
+    "character_motion_fidelity": {
+      "passed": false,
+      "reason": "player_walk_sheet_hybrid.png: motion_class='locomotion' pose-fidelity IoU floor 0.3935 < 0.7, identity-stability distance 0.3203 > 0.15 [recomputed live from the sheet's own pixels + versioned rig keypoints, not the sidecar's recorded range]"
+    },
+    "character_part_identity": {
+      "passed": true,
+      "reason": "player_walk_sheet_hybrid.png: worst per-region palette-histogram distance vs frame 0's own per-part pixels 0.3516 <= cap 0.4 [recomputed live from the sheet's own pixels + versioned rig keypoints, per named region (head/torso/near_limb/far_limb), each frame compared against frame 0's own real per-part pixels -- never a rig silhouette]"
+    },
+    "character_motion_score_binding": {
+      "passed": false,
+      "reason": "player_walk_sheet_hybrid.png is missing or has a malformed motion-score-binding field(s): motion_score_binding, pose_fidelity_range, identity_stability_range -- a recorded locomotion/transition/loop motion score must be bound to the sheet's content hash, rig/config version, palette hash and evaluator version (T-0360)"
     }
   }
 }

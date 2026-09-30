@@ -4,10 +4,18 @@ docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class):
   cell 48×48, grid 3×3, native 144×144, figure 40px tall standing.
 
 Differences from T-0199 (test_player_die_gate.py / v1):
-  - Targets player_die_sheet_v2.png — concept-conditioned, img2img-seeded
-    from T-0212's player_idle_sheet_v2.png (not the synthetic T-0198 idle).
-  - Adds test_concept_hash: verifies provenance JSON contains `concept_hash`
-    matching the SHA-256 of player_idle_sheet_v2.png (T-0212 output).
+  - Targets player_die_sheet_v2.png. Regenerated T-0419 via a rig-driven
+    ComfyUI path (ControlNet-conditioned on the same COCO-18 keypoints
+    already recovered from v1's own procedural generator, IP-Adapter
+    identity-conditioned on the T-0209 concept sheet, each frame
+    independently sampled) — see
+    assets/src/character/gen_states_v2_rig_regen_T0419.py. The original
+    T-0213 tiled img2img pipeline (img2img-seeded from T-0212's
+    player_idle_sheet_v2.png, no ControlNet/pose conditioning at all) had
+    no per-frame rig behind its pixels, so its evidence could not be
+    recovered — only replaced, per T-0419's own acceptance criteria.
+  - test_concept_hash now verifies the T-0209 concept-sheet hash (the
+    IP-Adapter identity reference), not the old img2img seed.
 
 RED state:  assets/final/character/player_die_sheet_v2.png absent
             → SHEET_PATH fixture raises AssertionError, all tests ERROR.
@@ -38,8 +46,11 @@ PROVENANCE_PATH = (
 )
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 
-# SHA-256 of assets/final/character/player_idle_sheet_v2.png (T-0212 output).
-EXPECTED_CONCEPT_HASH = "fc8262a4701e535e6f1c1b6dac9200a604b79df5004bfb5783922eae4d23dddc"
+# SHA-256 of assets/src/concept/player_character_concept_sheet_v1.png (T-0209),
+# the IP-Adapter identity reference T-0419's rig-driven regeneration conditions
+# on -- matches gen_states_v2_rig_regen_T0419.py / gen_hybrid_walk_T0259.py's
+# own EXPECTED_CONCEPT_HASH.
+EXPECTED_CONCEPT_HASH = "4f82e3c42dbc0d4ba6960144f6507c5d6dbd7fb0945c54558532d922c9c0251b"
 
 CELL_SIZE = 48
 COLS = 3
