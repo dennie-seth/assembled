@@ -46,8 +46,8 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 #: T-0419 ran at 81-87C; this host's idle baseline (checkpoint loaded, no
 #: generation in flight) is 56-64C. The ceiling sits well above idle

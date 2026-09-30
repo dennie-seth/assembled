@@ -10,6 +10,7 @@ import responses
 from gen_client_base.license_allowlist import CheckpointNotAllowedError
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
+from comfy_client import thermal_gate
 from comfy_client.comfyui_client import ComfyUIClient
 from comfy_client.errors import (
     ExecutionError,
@@ -18,7 +19,7 @@ from comfy_client.errors import (
     SubmitError,
     UploadError,
 )
-from comfy_client.thermal_gate import ThermalGateRefused
+from comfy_client.thermal_gate import ThermalGateRefused, assert_thermal_gate_open
 
 BASE_URL = "http://172.18.192.1:8188"
 
@@ -304,6 +305,28 @@ def _refusing_thermal_gate():
 
 
 @responses.activate
+def test_submit_refuses_via_the_real_default_gate_when_the_cooler_state_file_says_off(
+    fake_clock, monkeypatch, tmp_path
+):
+    """The literally bare path: ComfyUIClient constructed with no
+    thermal_gate override at all, so submit() runs the real
+    assert_thermal_gate_open against DEFAULT_COOLER_STATE_PATH -- proven by
+    pointing that default at an OFF file, not by injecting a stub gate
+    callable. This is the regression test for the T-0419 incident itself:
+    the cooler flag alone, with zero special construction, must stop a
+    submission."""
+    off_state = tmp_path / "cooler-state.json"
+    off_state.write_text('{"cooler": "OFF"}')
+    monkeypatch.setattr(thermal_gate, "DEFAULT_COOLER_STATE_PATH", off_state)
+
+    client = make_client(fake_clock)
+    graph = {"1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}}}
+    with pytest.raises(ThermalGateRefused):
+        client.submit(graph)
+    assert len(responses.calls) == 0
+
+
+@responses.activate
 def test_submit_refuses_a_bare_hand_built_graph_when_the_cooler_is_off(fake_clock):
     """The T-0419 regression: a hand-built graph posted straight to
     ComfyUIClient.submit() (never through pipeline.generate()) must be
@@ -328,9 +351,13 @@ def test_submit_refuses_a_bare_hand_built_graph_when_the_cooler_is_off(fake_cloc
 
 
 @responses.activate
-def test_submit_allows_when_cooler_is_on_and_temperature_is_under_the_ceiling(fake_clock):
+def test_submit_allows_when_cooler_is_on_and_temperature_is_under_the_ceiling(fake_clock, tmp_path):
     """A gate that is never open is not a gate: prove the allow path fires
-    too, with an explicit (injected) cooler-ON/under-ceiling thermal_gate."""
+    too, through the real assert_thermal_gate_open (a real ON cooler-state
+    file + an injected under-ceiling reading), not a trivial always-allow
+    stub."""
+    cooler_state = tmp_path / "cooler-state.json"
+    cooler_state.write_text('{"cooler": "ON"}')
     responses.add(
         responses.POST,
         f"{BASE_URL}/prompt",
@@ -341,7 +368,9 @@ def test_submit_allows_when_cooler_is_on_and_temperature_is_under_the_ceiling(fa
         base_url=BASE_URL,
         sleep=fake_clock.sleep,
         now=fake_clock.now,
-        thermal_gate=lambda: None,
+        thermal_gate=lambda: assert_thermal_gate_open(
+            cooler_state_path=cooler_state, temperature_reader=lambda: 60.0
+        ),
     )
     graph = {"1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}}}
     assert client.submit(graph) == "thermal-ok"
