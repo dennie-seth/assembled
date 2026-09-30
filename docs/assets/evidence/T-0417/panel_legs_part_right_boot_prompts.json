@@ -1,0 +1,68 @@
+[
+  {
+    "x": 225,
+    "y": 983,
+    "polarity": "positive",
+    "derivation": "right_boot = ANKLE[10]"
+  },
+  {
+    "x": 358,
+    "y": 312,
+    "polarity": "negative",
+    "derivation": "sibling_part:right_upper_leg"
+  },
+  {
+    "x": 276,
+    "y": 757,
+    "polarity": "negative",
+    "derivation": "sibling_part:right_lower_leg"
+  },
+  {
+    "x": 665,
+    "y": 312,
+    "polarity": "negative",
+    "derivation": "sibling_part:left_upper_leg"
+  },
+  {
+    "x": 747,
+    "y": 757,
+    "polarity": "negative",
+    "derivation": "sibling_part:left_lower_leg"
+  },
+  {
+    "x": 798,
+    "y": 983,
+    "polarity": "negative",
+    "derivation": "sibling_part:left_boot"
+  },
+  {
+    "x": 4,
+    "y": 4,
+    "polarity": "negative",
+    "derivation": "corner_top_left"
+  },
+  {
+    "x": 1020,
+    "y": 4,
+    "polarity": "negative",
+    "derivation": "corner_top_right"
+  },
+  {
+    "x": 4,
+    "y": 1020,
+    "polarity": "negative",
+    "derivation": "corner_bottom_left"
+  },
+  {
+    "x": 1020,
+    "y": 1020,
+    "polarity": "negative",
+    "derivation": "corner_bottom_right"
+  },
+  {
+    "x": 512,
+    "y": 25,
+    "polarity": "negative",
+    "derivation": "legs_panel_upper_body_collapse_point (NECK[1], not real anatomy on this panel)"
+  }
+]
