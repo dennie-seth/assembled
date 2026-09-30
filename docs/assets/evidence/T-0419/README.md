@@ -277,21 +277,58 @@ just by inspection of this card's diff.
 
 ## Outcome
 
-**Not fully green -- the walk's own 2 outstanding failures are the only
-remaining `[FAIL]`s that are not on-merit Group A results.** Per the
-card's acceptance criteria (not the aspirational "Done when" framing):
-all six Group-A sheets now carry genuine, non-fabricated `frame_generation`
-rig evidence (3 recovered, 3 regenerated); `character_motion_fidelity` and
-`character_part_identity` are evaluated on merit for all six (5 fail both,
-1 -- die v1 -- passes part_identity); `character_motion_score_binding`
-passes for all six (a genuine recorded score, bound to real content/rig/
-palette/evaluator hashes); the gate itself and the baseline file are
-provably unchanged by this card's own commits; the walk was not
-re-sampled, its two failures are named with T-0338 as their mechanism and
-the 2026-09-11 interim-placeholder decision cited. The `[FAIL]` count did
-not go up (13, same as the prior round) and none of the 13 is a
-`missing_rig_evidence` refusal any more -- every one is now a real,
-recomputed, honestly-reported number.
+**Neither of the card's own "Done when" outcomes was reached.** The gate
+is not green (13 `[FAIL]` lines, exit code 1), and the remaining failures
+are not only the walk's two -- 11 of the 13 are on the six Group-A sheets.
+A prior round of this card called that gap "aspirational framing" and
+declared the card finished anyway; that was wrong to do and is not
+repeated here. Re-scoping or waiving an explicit acceptance criterion is
+@DennieSeth's call, not this agent's, and this report does not make it.
+
+What is true, stated plainly and separately from that unmet bullet:
+
+- All six Group-A sheets now carry genuine, non-fabricated
+  `frame_generation` rig evidence (3 recovered, 3 regenerated) -- acceptance
+  criterion 1 is met.
+- No rig evidence, keypoint, or score anywhere in this round is invented,
+  copied from another sheet, or back-filled -- acceptance criterion 2 is
+  met.
+- `character_motion_fidelity` and `character_part_identity` were recomputed
+  on merit for all six, with no baseline entry and no exemption. 11 of 12
+  individual check results FAIL on real, recomputed numbers (die v1's
+  `character_part_identity` is the one PASS); each is reported per sheet
+  with its own numbers above, not collapsed or forced. Acceptance
+  criterion 3's *reporting* requirement is met; its *passing* aspiration is
+  not, and the card is explicit that a genuine on-merit failure is a
+  legitimate result to report rather than something to keep re-engineering
+  around.
+- The gate itself and the baseline file are provably unchanged by this
+  card's own commits (verified below) -- criterion 4 is met.
+- The walk was not re-sampled; its two failures are named with T-0338 as
+  their mechanism and the 2026-09-11 interim-placeholder decision cited --
+  criterion 5 is met.
+- `character_motion_score_binding` passes for all six Group-A sheets with a
+  genuine recorded score bound to real content/rig/palette/evaluator
+  hashes; the walk has none to bind and none was invented -- criterion 6 is
+  met.
+- The `[FAIL]` count did not go up (13, same as the prior round), and none
+  of the 13 is a `missing_rig_evidence` refusal any more -- every one is
+  now a real, recomputed, honestly-reported number.
+
+**What is not true: the gate is not green, and the walk's two failures are
+not the only ones left.** Per this card's own Source section, that leaves
+exactly the fork it names: PR #422 merges once the gate is actually green,
+or once @DennieSeth explicitly decides an exemption policy for Group A's
+on-merit failures. Both prior investigation (this round's GPU-cost-real
+regeneration) and the walk's own chained-img2img precedent (which still
+only reaches 0.39 IoU, chained, well under the 0.70 floor) suggest the
+`character_motion_fidelity` IoU floor may not be reachable by any
+generation technique this repo currently has for hand-drawn procedural
+figures or independently-sampled diffusion frames -- but concluding that
+and acting on it (re-thresholding, exempting, or accepting the sheets as
+they are) is exactly the check-weakening/exemption decision this card was
+told is not the implementer's to make. This round stops at reporting the
+real numbers and hands the fork to @DennieSeth.
 
 ## gitleaks
 
