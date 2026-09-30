@@ -114,6 +114,45 @@ acceptance criterion 1 unmet (all six sheets must carry genuine
   Fixed by passing the file's own already-computed `REPO_ROOT` constant
   explicitly.
 
+## Freshness re-invocation (this round)
+
+This round resumed a card whose Group A rig-recovery and v2 regeneration
+work was already complete and already reviewed as substantively correct on
+merit. This round's own reviewable contribution is narrower: the prior
+round's own `player_crouch_hide_sheet_v2` regeneration commit predates this
+attempt's own start, so the board's artifact-freshness gate
+(`tools/board/src/lib/artifactFreshness.js`, T-0354) correctly refuses to
+treat an earlier attempt's commit as evidence *this* attempt invoked the
+model -- a deliberate anti-staleness mechanism, not a bug to route around.
+
+To satisfy it honestly rather than fabricate freshness, this round cleared
+the gitignored `assets/out/rig_regen_v2/crouch_hide/` intermediate
+directory (the previous attempt's cached per-frame outputs, which persist
+on disk across sessions even though `assets/out/` is never committed) and
+re-ran `gen_states_v2_rig_regen_T0419.py --sheet crouch_hide` to completion
+against the live ComfyUI host (`172.18.192.1:8188`, confirmed reachable):
+9 real ComfyUI generations, none skipped, in 3 chunked foreground calls.
+The result is genuinely fresh -- every `comfyui_prompt_id` in
+`player_crouch_hide_sheet_v2.provenance.json` is a new job id from this
+round, `sheet_sha256` changed (`16a1dca8...` -> `dbe6fef7...`), and the PNG
+bytes changed (`git diff --stat` shows both files modified). The recomputed
+numbers moved only marginally (`character_part_identity`'s worst per-region
+distance: 0.8359 -> 0.8203) -- the same rig, prompt, seed and model
+produce the same *kind* of result, as expected; this was a freshness
+re-invocation, not a re-tuning attempt, and no parameter was changed to
+chase a different number.
+
+**Only `crouch_hide` was re-invoked, not `die`/`move` too.** The freshness
+check passes on any one of a card's verified deliverable paths being
+touched by a commit made since this attempt started -- it does not require
+every verified path to be fresh, and `die`/`move` v2's own prior-round
+generation is unchanged, already-reviewed, and correct as it stands.
+Re-running all three would have been three times the GPU cost for zero
+additional evidence value; this card's own "no unrelated sheet is
+re-exported, re-promoted or regenerated as a side effect" bars *unrelated*
+regeneration, not narrowing *which* related sheet a mechanical freshness
+gate actually requires touching.
+
 ## After (this card's own HEAD)
 
 **13 `[FAIL]` lines**, exit code 1 (same count as the prior round's `[FAIL]`
@@ -130,7 +169,7 @@ line touching a Group A sheet or the walk, captured verbatim:
 [FAIL] character_part_identity: character/player_crouch_hide_sheet_v1.provenance.json: worst per-region palette-histogram distance vs frame 0's own per-part pixels 0.8750 > cap 0.4 [recomputed live from the sheet's own pixels + versioned rig keypoints, per named region (head/torso/near_limb/far_limb), each frame compared against frame 0's own real per-part pixels -- never a rig silhouette]
 [PASS] character_motion_score_binding: character/player_crouch_hide_sheet_v1.provenance.json: motion_score_binding matches the sheet's current content, rig/config version, palette and evaluator, and the recorded score agrees with a fresh pixel recompute
 [FAIL] character_motion_fidelity: character/player_crouch_hide_sheet_v2.provenance.json: motion_class='transition' pose-fidelity IoU floor 0.0855 < 0.7, identity-stability distance 0.9453 > 0.15 [recomputed live from the sheet's own pixels + versioned rig keypoints, not the sidecar's recorded range]
-[FAIL] character_part_identity: character/player_crouch_hide_sheet_v2.provenance.json: worst per-region palette-histogram distance vs frame 0's own per-part pixels 0.8359 > cap 0.4 [recomputed live from the sheet's own pixels + versioned rig keypoints, per named region (head/torso/near_limb/far_limb), each frame compared against frame 0's own real per-part pixels -- never a rig silhouette]
+[FAIL] character_part_identity: character/player_crouch_hide_sheet_v2.provenance.json: worst per-region palette-histogram distance vs frame 0's own per-part pixels 0.8203 > cap 0.4 [recomputed live from the sheet's own pixels + versioned rig keypoints, per named region (head/torso/near_limb/far_limb), each frame compared against frame 0's own real per-part pixels -- never a rig silhouette]
 [PASS] character_motion_score_binding: character/player_crouch_hide_sheet_v2.provenance.json: motion_score_binding matches the sheet's current content, rig/config version, palette and evaluator, and the recorded score agrees with a fresh pixel recompute
 [FAIL] character_motion_fidelity: character/player_die_sheet_v1.provenance.json: motion_class='transition' pose-fidelity IoU floor 0.4067 < 0.7, identity-stability distance 0.1875 > 0.15 [recomputed live from the sheet's own pixels + versioned rig keypoints, not the sidecar's recorded range]
 [PASS] character_part_identity: character/player_die_sheet_v1.provenance.json: worst per-region palette-histogram distance vs frame 0's own per-part pixels 0.2689 <= cap 0.4 [recomputed live from the sheet's own pixels + versioned rig keypoints, per named region (head/torso/near_limb/far_limb), each frame compared against frame 0's own real per-part pixels -- never a rig silhouette]
@@ -193,10 +232,12 @@ above is an unrelated `[PASS]` this card did not touch.
   (1.0000 > 0.40) for the identical reason -- the blank frames' named
   regions have no content to compare against frame 0's real content.
   `character_motion_score_binding` PASSES.
-- **`player_crouch_hide_sheet_v2`** -- regenerated rig evidence (T-0419).
+- **`player_crouch_hide_sheet_v2`** -- regenerated rig evidence (T-0419;
+  re-regenerated this round, see "Freshness re-invocation" below --
+  numbers below are this round's own fresh recompute, not carried over).
   `character_motion_fidelity` FAILS (IoU floor 0.0855 < 0.70; identity
   distance 0.9453 > 0.15 -- worse than v1's own crouch-hide). `character_part_identity`
-  FAILS (worst per-region distance 0.8359 > 0.40). `character_motion_score_binding`
+  FAILS (worst per-region distance 0.8203 > 0.40). `character_motion_score_binding`
   PASSES. **Why it fails on merit:** each of the 9 frames is independently
   sampled by SDXL (no img2img chaining), so costume/silhouette identity is
   held only by the IP-Adapter + identity LoRA conditioning, not by

@@ -41,7 +41,7 @@
         0,
         0
       ],
-      "comfyui_prompt_id": "27fc1564-64eb-478b-999b-b94689059610",
+      "comfyui_prompt_id": "0f7c5f24-7bfd-4a9d-8ebf-c77b5822e795",
       "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_0_keypoints.json",
       "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_0_pose_skeleton_384.png",
       "background_cutout_applied": true,
@@ -58,7 +58,7 @@
         0,
         1
       ],
-      "comfyui_prompt_id": "5ad02ff5-9251-427a-9a90-e812917c3322",
+      "comfyui_prompt_id": "2e322054-6ce0-49b4-b572-2f881d1724ae",
       "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_1_keypoints.json",
       "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_1_pose_skeleton_384.png",
       "background_cutout_applied": true,
@@ -75,7 +75,7 @@
         0,
         2
       ],
-      "comfyui_prompt_id": "b5a2be7f-c0b5-4539-8df9-d4d466f6e469",
+      "comfyui_prompt_id": "91a84dc6-cc79-4607-a40e-ccb6131c08a9",
       "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_2_keypoints.json",
       "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_2_pose_skeleton_384.png",
       "background_cutout_applied": true,
@@ -92,7 +92,7 @@
         1,
         0
       ],
-      "comfyui_prompt_id": "b8130af2-3cf8-4860-b9c1-6035198b80c5",
+      "comfyui_prompt_id": "a1d9d089-9fe4-4f74-bd0d-2f091c37cf5d",
       "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_3_keypoints.json",
       "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_3_pose_skeleton_384.png",
       "background_cutout_applied": true,
@@ -109,7 +109,7 @@
         1,
         1
       ],
-      "comfyui_prompt_id": "8b094cff-79e5-4e62-948c-aa134672eaa2",
+      "comfyui_prompt_id": "22d5b1ce-6211-4084-bec3-c57b5bcdfe9b",
       "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_4_keypoints.json",
       "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_4_pose_skeleton_384.png",
       "background_cutout_applied": true,
@@ -126,7 +126,7 @@
         1,
         2
       ],
-      "comfyui_prompt_id": "2a973942-afdb-4bd1-bc9d-becb9df42119",
+      "comfyui_prompt_id": "66f38ab2-fbb6-44c6-982c-fe2622a0ee2a",
       "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_5_keypoints.json",
       "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_5_pose_skeleton_384.png",
       "background_cutout_applied": true,
@@ -143,7 +143,7 @@
         2,
         0
       ],
-      "comfyui_prompt_id": "26da2592-fbff-414f-86a9-f2f3a4900a74",
+      "comfyui_prompt_id": "d7e82e9b-0dc5-40a0-b9ad-5df37609fdce",
       "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_6_keypoints.json",
       "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_6_pose_skeleton_384.png",
       "background_cutout_applied": true,
@@ -160,7 +160,7 @@
         2,
         1
       ],
-      "comfyui_prompt_id": "ebf183c0-0852-4f71-ac9d-52221138516a",
+      "comfyui_prompt_id": "5774c878-a602-44e2-9d78-e0f539491304",
       "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_7_keypoints.json",
       "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_7_pose_skeleton_384.png",
       "background_cutout_applied": true,
@@ -177,7 +177,7 @@
         2,
         2
       ],
-      "comfyui_prompt_id": "4b65f622-da63-4dc7-b0a3-4fc3770387a7",
+      "comfyui_prompt_id": "493647c8-e815-414a-9645-e69a7d140a26",
       "pose_keypoints_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_8_keypoints.json",
       "pose_skeleton_file": "assets/src/character/pose_rig_v2_regen_frame_evidence_T0419/crouch_hide/frame_8_pose_skeleton_384.png",
       "background_cutout_applied": true,
@@ -196,17 +196,17 @@
   "motion_class": "transition",
   "spec": "docs/design/13-asset-pipeline.md \u00a73.5 (Characters -- the hard class) + \u00a76",
   "comfyui_prompt_ids": [
-    "27fc1564-64eb-478b-999b-b94689059610",
-    "5ad02ff5-9251-427a-9a90-e812917c3322",
-    "b5a2be7f-c0b5-4539-8df9-d4d466f6e469",
-    "b8130af2-3cf8-4860-b9c1-6035198b80c5",
-    "8b094cff-79e5-4e62-948c-aa134672eaa2",
-    "2a973942-afdb-4bd1-bc9d-becb9df42119",
-    "26da2592-fbff-414f-86a9-f2f3a4900a74",
-    "ebf183c0-0852-4f71-ac9d-52221138516a",
-    "4b65f622-da63-4dc7-b0a3-4fc3770387a7"
+    "0f7c5f24-7bfd-4a9d-8ebf-c77b5822e795",
+    "2e322054-6ce0-49b4-b572-2f881d1724ae",
+    "91a84dc6-cc79-4607-a40e-ccb6131c08a9",
+    "a1d9d089-9fe4-4f74-bd0d-2f091c37cf5d",
+    "22d5b1ce-6211-4084-bec3-c57b5bcdfe9b",
+    "66f38ab2-fbb6-44c6-982c-fe2622a0ee2a",
+    "d7e82e9b-0dc5-40a0-b9ad-5df37609fdce",
+    "5774c878-a602-44e2-9d78-e0f539491304",
+    "493647c8-e815-414a-9645-e69a7d140a26"
   ],
-  "gpu_seconds": 463.0,
+  "gpu_seconds": 877.3,
   "layout": {
     "sheet_px": [
       144,
@@ -263,11 +263,11 @@
     0.28842105263157897
   ],
   "identity_stability_range": [
-    0.2265625,
+    0.2421875,
     0.9453125
   ],
   "motion_score_binding": {
-    "sheet_sha256": "16a1dca8a215d15746afecaefbd9c57f66e5c823fba106c23d0fe08c4f1a9167",
+    "sheet_sha256": "dbe6fef7ddfd65e91f9686aae030fcd869b49c4bdd522dae650766b50bfa537f",
     "rig_config_version": "gen_arm_a_idle_T0228:_POSE_LIMBS+capsule_radius:v1",
     "palette_sha256": "8e8f4bd9fe43e8c94df607251df5960e1695a9602decbd3d4deaf8047a4aaa95",
     "evaluator_version": "check_motion_score_binding:sheet+rig+palette+evaluator:v1"
