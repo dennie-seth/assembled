@@ -18,6 +18,7 @@ from comfy_client.errors import (
     SubmitError,
     UploadError,
 )
+from comfy_client.thermal_gate import ThermalGateRefused
 
 BASE_URL = "http://172.18.192.1:8188"
 
@@ -292,3 +293,71 @@ def test_generate_end_to_end(sample_graph, fake_clock):
     client = make_client(fake_clock)
     data = client.generate(sample_graph, timeout=30, poll_interval=1.0)
     assert data == b"PNGDATA"
+
+
+# ---- T-0422: the thermal/cooler gate fires on the direct-submit path, not --
+# only through some caller that remembers to check first ---------------------
+
+
+def _refusing_thermal_gate():
+    raise ThermalGateRefused("cooler is OFF per stub -- refusing submission")
+
+
+@responses.activate
+def test_submit_refuses_a_bare_hand_built_graph_when_the_cooler_is_off(fake_clock):
+    """The T-0419 regression: a hand-built graph posted straight to
+    ComfyUIClient.submit() (never through pipeline.generate()) must be
+    refused when the cooler is off, exactly like the checkpoint gate already
+    covers a hand-built graph naming a disallowed checkpoint. No responses.add()
+    is registered for /prompt -- if the gate didn't fire first and the code
+    actually tried the HTTP call, this would fail with a connection error,
+    not a ThermalGateRefused."""
+    graph = {
+        "1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}},
+        "3": {"class_type": "SAM3_Detect", "inputs": {"image": ["1", 0], "threshold": 0.5}},
+    }
+    client = ComfyUIClient(
+        base_url=BASE_URL,
+        sleep=fake_clock.sleep,
+        now=fake_clock.now,
+        thermal_gate=_refusing_thermal_gate,
+    )
+    with pytest.raises(ThermalGateRefused):
+        client.submit(graph)
+    assert len(responses.calls) == 0
+
+
+@responses.activate
+def test_submit_allows_when_cooler_is_on_and_temperature_is_under_the_ceiling(fake_clock):
+    """A gate that is never open is not a gate: prove the allow path fires
+    too, with an explicit (injected) cooler-ON/under-ceiling thermal_gate."""
+    responses.add(
+        responses.POST,
+        f"{BASE_URL}/prompt",
+        json={"prompt_id": "thermal-ok", "node_errors": {}},
+        status=200,
+    )
+    client = ComfyUIClient(
+        base_url=BASE_URL,
+        sleep=fake_clock.sleep,
+        now=fake_clock.now,
+        thermal_gate=lambda: None,
+    )
+    graph = {"1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}}}
+    assert client.submit(graph) == "thermal-ok"
+
+
+@responses.activate
+def test_submit_with_no_thermal_override_still_submits_ordinary_mocked_http_flows(fake_clock):
+    """The default (uninjected) thermal_gate must not break an ordinary
+    mocked-HTTP submit -- this is what keeps the rest of this file's 244
+    pre-existing tests green without any of them knowing this gate exists."""
+    responses.add(
+        responses.POST,
+        f"{BASE_URL}/prompt",
+        json={"prompt_id": "default-ok", "node_errors": {}},
+        status=200,
+    )
+    client = make_client(fake_clock)
+    graph = {"1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}}}
+    assert client.submit(graph) == "default-ok"
