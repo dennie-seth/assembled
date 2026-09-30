@@ -390,3 +390,40 @@ def test_submit_with_no_thermal_override_still_submits_ordinary_mocked_http_flow
     client = make_client(fake_clock)
     graph = {"1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}}}
     assert client.submit(graph) == "default-ok"
+
+
+# ---- T-0422 round 2, finding 1: the cooler decision is ONE authoritative --
+# state shared by every worktree's own ComfyUIClient, not one flag per -------
+# checkout -- and client construction must not cache it ---------------------
+
+
+@responses.activate
+def test_two_linked_worktree_clients_both_see_a_flip_made_after_construction(
+    fake_clock, monkeypatch, tmp_path
+):
+    """The exact regression the round-2 review asked for: two ComfyUIClient
+    instances -- standing in for two board task worktrees' own clients,
+    each already constructed -- must both read the SAME authoritative
+    cooler-state file (round 1's bug was a path derived from each
+    checkout's own `__file__`, giving each worktree its own copy). Flip the
+    shared file to OFF only *after* both clients already exist, then assert
+    the very next submission from BOTH refuses and that no HTTP call left
+    either client -- proving neither client cached the ON decision at
+    construction time."""
+    shared_state = tmp_path / "shared-cooler-state.json"
+    shared_state.write_text('{"cooler": "ON"}')
+    monkeypatch.setattr(thermal_gate, "DEFAULT_COOLER_STATE_PATH", shared_state)
+    monkeypatch.setattr(thermal_gate, "_shell_nvidia_smi_temperature_c", lambda **_: 60.0)
+
+    worktree_a_client = ComfyUIClient(base_url=BASE_URL, sleep=fake_clock.sleep, now=fake_clock.now)
+    worktree_b_client = ComfyUIClient(base_url=BASE_URL, sleep=fake_clock.sleep, now=fake_clock.now)
+
+    # Flip AFTER both clients already exist -- construction must not cache.
+    shared_state.write_text('{"cooler": "OFF"}')
+
+    graph = {"1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}}}
+    with pytest.raises(ThermalGateRefused):
+        worktree_a_client.submit(graph)
+    with pytest.raises(ThermalGateRefused):
+        worktree_b_client.submit(graph)
+    assert len(responses.calls) == 0

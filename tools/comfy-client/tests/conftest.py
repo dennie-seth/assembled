@@ -52,14 +52,17 @@ def _safe_default_thermal_reading(tmp_path, monkeypatch):
     ~244 pre-existing tests -- none of which know this gate exists -- would
     each try to shell out to a real `nvidia-smi` the sandbox this suite runs
     in doesn't have (refusing every one of them, since an unreadable/failing
-    nvidia-smi refuses by design), AND would each read the real, committed
-    `tools/board/ops/cooler-state.json` off disk on every submit() call.
+    nvidia-smi refuses by design), AND would each read the real
+    `~/.local/share/assembled-board/cooler-state.json` off disk on every
+    submit() call (the one authoritative location as of round 2 -- round 1
+    committed this file inside the repo at `tools/board/ops/cooler-state.json`,
+    which no longer exists).
 
     Both are stubbed here: the low-level shell-out is replaced with a fixed
     in-ceiling reading, and `DEFAULT_COOLER_STATE_PATH` is repointed at a
     private tmp-path file this fixture writes as `{"cooler": "ON"}` --
-    *not* the real repo file, which a pre-existing test must never touch
-    (a prior review round flagged exactly this: patching only the
+    *not* the real out-of-repo file, which a pre-existing test must never
+    touch (a prior review round flagged exactly this: patching only the
     shell-out left every one of the ~244 tests still reading the real
     file and passing only because that file currently happens to say ON).
     This gives every test a safe reading with no subprocess ever spawned
