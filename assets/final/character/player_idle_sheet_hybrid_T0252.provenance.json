@@ -105,6 +105,8 @@
   "total_comfyui_generations": 1,
   "generator": "assets/src/character/gen_hybrid_idle_T0252.py",
   "card": "T-0252",
+  "motion_class": "idle",
+  "motion_class_basis": "T-0359: this sidecar's own (top-level) generator field names gen_hybrid_idle_T0252.py -- an idle-pose generation script -- not a walk-gait or transition rig; also the identity_anchor the walk sheet's own sidecar cites as its canonical idle keyframe",
   "bake_off_arm": "round 2, hybrid (HANDOFF §24-e) -- not a new bake-off arm competing on DL-21's original criteria, a mechanism change layered on top of the round-1 result",
   "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §3.5",
   "attempt": 3,

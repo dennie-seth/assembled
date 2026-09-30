@@ -771,11 +771,44 @@ def test_cli_character_gate_fails_when_binding_missing_on_a_fresh_recomputable_s
     assert "fresh_walk.provenance.json" in proc.stdout
 
 
-def test_cli_character_gate_still_exits_zero_on_the_committed_asset_tree():
-    """T-0360 must not regress the committed tree: no committed sidecar
-    declares a locomotion/transition/loop motion_class today, so the new
-    binding check never fires against anything real yet."""
+def test_cli_character_gate_still_exits_zero_except_for_the_walks_known_binding_gap():
+    """T-0360 must not regress the committed tree with a NEW, unexpected
+    failure mode.
+
+    T-0359 changed this test's own premise: the shipped walk now DOES
+    declare `motion_class: "locomotion"` (confirmed from its own
+    `frame_generation` rig keypoints, docs/decision-log.md DL-31), so the
+    binding check DOES fire against it -- and correctly FAILs, because the
+    walk's sidecar has never self-reported a `pose_fidelity_range` /
+    `identity_stability_range` / `motion_score_binding` to bind in the first
+    place (`character_motion_fidelity`'s own live recompute is what reports
+    the real pose-IoU/identity-stability numbers; this check only grades a
+    self-reported score's freshness once claimed, and none has been). That
+    is a real, accurately-surfaced gap, not a regression -- see
+    `character_motion_class_baseline.txt`'s "EXPLICIT INTERIM-PLACEHOLDER
+    EXEMPTION" note.
+
+    T-0359 also labelled the 6 remaining non-walk sidecars this file's own
+    baseline used to leave exempt (`player_crouch_hide_sheet_v1`/`v2`,
+    `player_die_sheet_v1`/`v2`, `player_move_sheet_v1`/`v2`) as
+    `transition`/`locomotion` from their own recorded prompts/layouts. None
+    of those 6 carry the `frame_generation` rig-keypoint evidence needed to
+    recompute a pose-fidelity score at all, so `character_motion_fidelity`
+    (T-0357) and `character_part_identity` (T-0361) FAIL on each of them
+    with a `missing_rig_evidence` reason before a recompute ever happens --
+    this check's own binding logic explicitly only fires once a recompute
+    has succeeded (`check_motion_score_binding`'s own docstring), so none of
+    those 6 add a `character_motion_score_binding` failure of their own; 12
+    new `character_motion_fidelity`/`character_part_identity` FAIL lines,
+    not a regression.
+
+    So this test no longer asserts a clean exit -- it asserts the exit is
+    non-zero for EXACTLY the 14 already-known, already-documented reasons
+    (this check's own missing-binding FAIL and T-0357's fidelity-floor FAIL
+    on the walk, plus the 12 lines above) and nothing else, so it still
+    catches a genuine NEW regression anywhere else in the committed tree."""
     import os
+    import re
     import subprocess
     import sys
 
@@ -797,4 +830,28 @@ def test_cli_character_gate_still_exits_zero_on_the_committed_asset_tree():
         env=env,
     )
 
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    fail_lines = [line for line in proc.stdout.splitlines() if line.startswith("[FAIL]")]
+    failures = set()
+    for line in fail_lines:
+        match = re.match(r"\[FAIL\] (\S+): (\S+)", line)
+        assert match, f"unparseable FAIL line: {line!r}"
+        failures.add((match.group(1), match.group(2).rstrip(":")))
+
+    expected_failures = {
+        ("character_motion_fidelity", "character/player_crouch_hide_sheet_v1.provenance.json"),
+        ("character_part_identity", "character/player_crouch_hide_sheet_v1.provenance.json"),
+        ("character_motion_fidelity", "character/player_crouch_hide_sheet_v2.provenance.json"),
+        ("character_part_identity", "character/player_crouch_hide_sheet_v2.provenance.json"),
+        ("character_motion_fidelity", "character/player_die_sheet_v1.provenance.json"),
+        ("character_part_identity", "character/player_die_sheet_v1.provenance.json"),
+        ("character_motion_fidelity", "character/player_die_sheet_v2.provenance.json"),
+        ("character_part_identity", "character/player_die_sheet_v2.provenance.json"),
+        ("character_motion_fidelity", "character/player_move_sheet_v1.provenance.json"),
+        ("character_part_identity", "character/player_move_sheet_v1.provenance.json"),
+        ("character_motion_fidelity", "character/player_move_sheet_v2.provenance.json"),
+        ("character_part_identity", "character/player_move_sheet_v2.provenance.json"),
+        ("character_motion_fidelity", "character/player_walk_sheet_hybrid.provenance.json"),
+        ("character_motion_score_binding", "character/player_walk_sheet_hybrid.provenance.json"),
+    }
+    assert failures == expected_failures, proc.stdout + proc.stderr
+    assert proc.returncode == 1, proc.stdout + proc.stderr

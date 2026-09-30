@@ -28,6 +28,8 @@
   "comfyui_prompt_id": "54584bf0-1368-4bd5-8039-36325cd1bbc1",
   "generator": "assets/src/character/gen_idle_v3_tiled.py",
   "card": "T-0212",
+  "motion_class": "idle",
+  "motion_class_basis": "T-0359: this sidecar's own generator field names gen_idle_v3_tiled.py -- an idle-pose generation script -- not a walk-gait or transition rig",
   "spec": "docs/design/13-asset-pipeline.md \u00a73.5 (Characters \u2014 the hard class) + \u00a76 (archetype-first coherence guard)",
   "layout": {
     "sheet_px": [

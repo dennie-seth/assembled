@@ -29,6 +29,8 @@
   "method": "Procedurally drawn OpenPose-format skeleton (single 336x336 cell, PIL, 18-keypoint COCO layout) tiled bit-for-bit identical into a 1008x1008 pose grid -> ControlNetApplyAdvanced (xinsir OpenPose) + LoraLoader(soviet_brutalism_style_v1) -> LoraLoader(player_identity_v1, chained) -> KSampler 1008x1008 -> area downscale to 144x144 -> Oklab-nearest palette quantization (dithering off, §3.1) -> orphan cleanup. No IP-Adapter node -- identity comes from the trained LoRA (§6.14 stage 2).",
   "generator": "assets/src/character/gen_arm_b_idle_T0229.py",
   "card": "T-0229",
+  "motion_class": "idle",
+  "motion_class_basis": "T-0359: this sidecar's own generator field names gen_arm_b_idle_T0229.py -- an idle-pose generation script -- not a walk-gait or transition rig",
   "bake_off_arm": "B (§23-e)",
   "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §6.14 stage 2",
   "comfyui_prompt_id": "6c74fbf5-964e-4714-8d52-5dc85bbfbcdd",
