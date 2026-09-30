@@ -13,12 +13,19 @@ what closes the hand-built-graph bypass around
 `comfy_client.pipeline.generate()`'s own gate: any caller that posts a graph
 straight to this client, not only one rendered by `pipeline.generate()`, is
 checked.
+
+`submit()` also asserts the thermal/cooler gate (T-0422) right after the
+checkpoint gate, before the same POST /prompt call: the cooler must be ON
+and the GPU under its temperature ceiling, or the submission is refused.
+See `comfy_client.thermal_gate` for why (the T-0419 incident: a retry loop
+resubmitted past per-job interruption 39 times with the cooler off).
 """
 
 from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 import requests
@@ -32,6 +39,7 @@ from comfy_client.errors import (
     SubmitError,
     UploadError,
 )
+from comfy_client.thermal_gate import assert_thermal_gate_open
 
 DEFAULT_TIMEOUT = 300.0
 DEFAULT_POLL_INTERVAL = 1.0
@@ -47,6 +55,7 @@ class ComfyUIClient(GenerationClient):
         request_timeout: float = 30.0,
         sleep=time.sleep,
         now=time.monotonic,
+        thermal_gate: Callable[[], None] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.session = session or requests.Session()
@@ -54,9 +63,11 @@ class ComfyUIClient(GenerationClient):
         self.request_timeout = request_timeout
         self._sleep = sleep
         self._now = now
+        self._thermal_gate = thermal_gate or assert_thermal_gate_open
 
     def submit(self, workflow: dict[str, Any]) -> str:
         assert_graph_checkpoints_allowed(workflow)
+        self._thermal_gate()
 
         try:
             resp = self.session.post(
