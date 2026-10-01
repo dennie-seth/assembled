@@ -1,0 +1,62 @@
+[
+  {
+    "x": 510,
+    "y": 399,
+    "polarity": "positive",
+    "derivation": "torso = midpoint(JOINT[1], midpoint(JOINT[8], JOINT[11]))"
+  },
+  {
+    "x": 435,
+    "y": 102,
+    "polarity": "negative",
+    "derivation": "sibling_part:head"
+  },
+  {
+    "x": 448,
+    "y": 230,
+    "polarity": "negative",
+    "derivation": "sibling_part:left_upper_arm"
+  },
+  {
+    "x": 322,
+    "y": 230,
+    "polarity": "negative",
+    "derivation": "sibling_part:left_lower_arm"
+  },
+  {
+    "x": 4,
+    "y": 4,
+    "polarity": "negative",
+    "derivation": "corner_top_left"
+  },
+  {
+    "x": 1020,
+    "y": 4,
+    "polarity": "negative",
+    "derivation": "corner_top_right"
+  },
+  {
+    "x": 4,
+    "y": 1020,
+    "polarity": "negative",
+    "derivation": "corner_bottom_left"
+  },
+  {
+    "x": 1020,
+    "y": 1020,
+    "polarity": "negative",
+    "derivation": "corner_bottom_right"
+  },
+  {
+    "x": 583,
+    "y": 921,
+    "polarity": "negative",
+    "derivation": "side_left_forward_panel_leg_region (right ANKLE[10], not decomposed by this card)"
+  },
+  {
+    "x": 307,
+    "y": 634,
+    "polarity": "negative",
+    "derivation": "side_left_forward_panel_leg_region (left ANKLE[13], not decomposed by this card)"
+  }
+]
