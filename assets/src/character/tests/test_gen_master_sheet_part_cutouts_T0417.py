@@ -63,9 +63,17 @@ class _StubComfyClient:
 class TestPartsByPanelIsExplicit:
     """"A panel that is not a parts panel (a whole-figure t-pose): it is not
     forced through part decomposition -- the set of parts per panel is
-    explicit." Only "legs" -- the panel the round-3 review actually
-    flagged -- has a part decomposition; every other panel's own set is
-    empty, not derived, not guessed."""
+    explicit." At T-0417's own scope, only "legs" -- the panel the round-3
+    review actually flagged -- had a part decomposition; every other
+    panel's own set was empty, not derived, not guessed.
+
+    [T-0423] extended `PARTS_BY_PANEL` to the five whole-figure panels by
+    explicit card instruction ("`PARTS_BY_PANEL`... gain[s] entries for all
+    five figure panels"), superseding the "whole-figure panels have no
+    parts" invariant this class originally pinned -- see
+    `test_gen_master_sheet_part_cutouts_T0423.TestPartsByPanelExplicitPerFigurePanel`
+    for that card's own explicit-per-panel-set tests. What this class still
+    pins, unchanged, is that "legs" itself is untouched by that extension."""
 
     def test_legs_panel_has_six_bounded_parts(self):
         parts = gen.PARTS_BY_PANEL["legs"]
@@ -75,17 +83,6 @@ class TestPartsByPanelIsExplicit:
             assert f"{side}_upper_leg" in parts
             assert f"{side}_lower_leg" in parts
             assert f"{side}_boot" in parts
-
-    def test_whole_figure_panels_have_no_parts(self):
-        whole_figure_keys = (
-            "front_tpose",
-            "back_tpose",
-            "side_left_forward",
-            "side_right_forward",
-            "side_neutral",
-        )
-        for key in whole_figure_keys:
-            assert gen.PARTS_BY_PANEL.get(key, ()) == ()
 
     def test_bounded_not_a_sweep_the_set_is_fixed_across_calls(self):
         first = gen.PARTS_BY_PANEL["legs"]

@@ -102,8 +102,17 @@ SAM3_UNET_CHECKPOINT = compare_t0337.SAM3_UNET_CHECKPOINT
 _NECK = compare_t0337._NECK
 _R_HIP, _R_KNEE, _R_ANKLE = compare_t0337._R_HIP, compare_t0337._R_KNEE, compare_t0337._R_ANKLE
 _L_HIP, _L_KNEE, _L_ANKLE = compare_t0337._L_HIP, compare_t0337._L_KNEE, compare_t0337._L_ANKLE
-_LEGS_ONLY_PANEL_KEYS = compare_t0337._LEGS_ONLY_PANEL_KEYS
 _px = compare_t0337._px
+
+# ── [T-0423] Additional standard 18-keypoint COCO/OpenPose joint indices,
+# needed for the figure panels' head/torso/arm parts but not previously
+# imported here -- mirrored (not imported), same rationale compare_t0337.py
+# itself already gives for duplicating _NECK/_WRIST/_HIP/_KNEE/_ANKLE from
+# pose_rig_master_sheet_T0351.py's own private numbering rather than
+# reaching into that module's private attributes a second time.
+_NOSE = 0
+_R_SHOULDER, _R_ELBOW, _R_WRIST = 2, 3, 4
+_L_SHOULDER, _L_ELBOW, _L_WRIST = 5, 6, 7
 _midpoint = compare_t0337._midpoint
 _sam3_model_loader = compare_t0337._sam3_model_loader
 _panel_crop = compare_t0337._panel_crop
@@ -116,15 +125,28 @@ GENERATOR_PATH = "assets/src/character/gen_master_sheet_part_cutouts_T0417.py"
 
 @dataclass(frozen=True)
 class PartSpec:
-    """One anatomical part's own derivation rule: its positive anchor is
-    `joint_a` alone (`joint_b is None`, e.g. a boot at the ankle) or the
-    midpoint of `joint_a`/`joint_b` (e.g. an upper leg at hip-knee)."""
+    """One anatomical part's own derivation rule. Its positive anchor is one
+    of three shapes:
+
+    - `joint_a` alone (`joint_b is None`, `joint_b_pair is None` -- e.g. a
+      boot at the ankle, or the head at the nose).
+    - the midpoint of `joint_a`/`joint_b` (e.g. an upper leg at hip-knee).
+    - [T-0423] a DERIVED anchor, `midpoint(joint_a, midpoint(*joint_b_pair))`,
+      when `joint_b_pair` is set. This is the torso's own design decision:
+      its natural anchor is NECK to the *hip midpoint*, and the hip midpoint
+      is itself the midpoint of `_R_HIP`/`_L_HIP` -- a three-point
+      derivation the plain `joint_a`/`joint_b` pair can't express. Extending
+      `PartSpec` with this named third field (rather than silently reusing
+      `joint_b` for one hip and discarding the other, or anchoring on NECK
+      alone) keeps the derivation honest about what it actually measures:
+      the torso/coat center line, not one hip's position."""
 
     part_key: str
     side: str
     label: str
     joint_a: int
-    joint_b: int | None
+    joint_b: int | None = None
+    joint_b_pair: tuple[int, int] | None = None
 
 
 def _build_legs_part_specs() -> tuple[PartSpec, ...]:
@@ -149,12 +171,85 @@ def _build_legs_part_specs() -> tuple[PartSpec, ...]:
 _LEGS_PART_SPECS: tuple[PartSpec, ...] = _build_legs_part_specs()
 _LEGS_PART_SPECS_BY_KEY: dict[str, PartSpec] = {spec.part_key: spec for spec in _LEGS_PART_SPECS}
 
+
+def _build_figure_part_specs() -> tuple[PartSpec, ...]:
+    """[T-0423] Beside `_build_legs_part_specs()` -- the figure panels'
+    counterpart. Two single-instance parts (head, torso) plus one rule
+    generated for both sides (arms), not four independently hand-typed arm
+    specs. `head`/`torso` carry `side=""`: they have no anatomical side to
+    record, unlike every leg/arm part.
+
+    - `head` anchors on NOSE alone (`joint_b=None`) -- T-0338's own
+      part-to-joint chain names "head", and NOSE is the rig's own facial
+      anchor (`pose_rig_master_sheet_T0351`'s COCO-18 layout).
+    - `torso` anchors on NECK to the hip midpoint -- see `PartSpec`'s own
+      docstring for the `joint_b_pair` design decision this needed.
+    - `upper_arm`/`lower_arm` mirror `_build_legs_part_specs`'s own
+      `for side, hip_idx, knee_idx, ankle_idx in (...)` shape exactly, one
+      `(shoulder, elbow, wrist)` triple per side."""
+    specs: list[PartSpec] = [
+        PartSpec("head", "", "head", _NOSE),
+        PartSpec("torso", "", "torso_coat", _NECK, joint_b_pair=(_R_HIP, _L_HIP)),
+    ]
+    for side, shoulder_idx, elbow_idx, wrist_idx in (
+        ("right", _R_SHOULDER, _R_ELBOW, _R_WRIST),
+        ("left", _L_SHOULDER, _L_ELBOW, _L_WRIST),
+    ):
+        specs.append(PartSpec(f"{side}_upper_arm", side, "upper_arm", shoulder_idx, elbow_idx))
+        specs.append(PartSpec(f"{side}_lower_arm", side, "lower_arm_hand", elbow_idx, wrist_idx))
+    return tuple(specs)
+
+
+_FIGURE_PART_SPECS: tuple[PartSpec, ...] = _build_figure_part_specs()
+_FIGURE_PART_SPECS_BY_KEY: dict[str, PartSpec] = {
+    spec.part_key: spec for spec in _FIGURE_PART_SPECS
+}
+
+#: [T-0423] The five whole-figure panels this card decomposes -- every panel
+#: in `gen_master_sheet_cutout_compare_T0337.PANEL_KEYS` except "legs".
+_FIGURE_PANEL_KEYS: tuple[str, ...] = (
+    "front_tpose",
+    "back_tpose",
+    "side_left_forward",
+    "side_right_forward",
+    "side_neutral",
+)
+
 #: Explicit, bounded, per-panel part sets -- "the set of parts per panel is
 #: explicit" (card's own edge-case wording). A panel absent from this dict
-#: (every whole-figure panel) is never forced through part decomposition;
-#: `.get(key, ())` is how callers read that.
+#: is never forced through part decomposition; `.get(key, ())` is how
+#: callers read that.
+#:
+#: [T-0423] front_tpose/back_tpose show both arms spread clear of the
+#: torso -- all six parts. The three profile panels only show their own
+#: near-side arm (`pose_rig_master_sheet_T0351`'s own docstring: the far
+#: arm is "held back close to the body" on side_right_forward/
+#: side_left_forward; side_neutral copies side_right_forward's own head
+#: keypoints verbatim, i.e. the same near-right-side camera convention) --
+#: the far arm is excluded from the panel's own set up front, never
+#: requested and reported empty (the card's own "a part the panel cannot
+#: show" edge case).
 PARTS_BY_PANEL: dict[str, tuple[str, ...]] = {
     "legs": tuple(spec.part_key for spec in _LEGS_PART_SPECS),
+    "front_tpose": (
+        "head",
+        "torso",
+        "right_upper_arm",
+        "right_lower_arm",
+        "left_upper_arm",
+        "left_lower_arm",
+    ),
+    "back_tpose": (
+        "head",
+        "torso",
+        "right_upper_arm",
+        "right_lower_arm",
+        "left_upper_arm",
+        "left_lower_arm",
+    ),
+    "side_right_forward": ("head", "torso", "right_upper_arm", "right_lower_arm"),
+    "side_left_forward": ("head", "torso", "left_upper_arm", "left_lower_arm"),
+    "side_neutral": ("head", "torso", "right_upper_arm", "right_lower_arm"),
 }
 
 #: Adjacent, anatomically-sharing-a-joint part pairs per panel -- the pairs
@@ -173,16 +268,99 @@ PARTS_BY_PANEL: dict[str, tuple[str, ...]] = {
 #: every other pair gets `PART_OVERLAP_FRACTION_TOLERANCE_NON_ADJACENT`
 #: (zero) instead, so a pair with no anatomical reason to touch is never
 #: silently skipped again.
+def _figure_sibling_pairs(parts: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+    """[T-0423] The figure panels' own adjacency rule, restricted to
+    whichever parts THIS panel's own `PARTS_BY_PANEL` entry actually lists
+    (a profile panel's missing far arm never generates a pair) -- head/torso
+    share the neck, torso/upper_arm share the shoulder, upper_arm/lower_arm
+    share the elbow. Cross-side pairs are never adjacent (no shared joint),
+    same as legs' own right/left pairs being absent from this list."""
+    pairs: list[tuple[str, str]] = []
+    if "head" in parts and "torso" in parts:
+        pairs.append(("head", "torso"))
+    for side in ("right", "left"):
+        upper_arm, lower_arm = f"{side}_upper_arm", f"{side}_lower_arm"
+        if "torso" in parts and upper_arm in parts:
+            pairs.append(("torso", upper_arm))
+        if upper_arm in parts and lower_arm in parts:
+            pairs.append((upper_arm, lower_arm))
+    return tuple(pairs)
+
+
+#: Adjacent, anatomically-sharing-a-joint part pairs per panel -- the pairs
+#: the 0.25 joint-blur allowance (`PART_OVERLAP_FRACTION_TOLERANCE`) is
+#: actually meaningful for (thigh/lower-leg share the knee, lower-leg/boot
+#: share the ankle; [T-0423] head/torso share the neck, torso/upper_arm
+#: share the shoulder, upper_arm/lower_arm share the elbow).
+#:
+#: [FIX ROUND finding 3] This list used to be the ONLY pairs
+#: `_evaluate_overlaps` checked -- cross-side pairs and upper_leg/boot were
+#: excluded as "never physically adjacent," which is exactly the assumption
+#: a failed segmentation violates: two independent SAM3 requests can both
+#: return (near-)identical masks for the same limb (e.g. right_upper_leg
+#: and left_upper_leg), and nothing ever compared them. `_evaluate_overlaps`
+#: now evaluates every distinct pair of PRESENT parts in the panel; this
+#: dict now only decides which pairs get the joint-blur tolerance --
+#: every other pair gets `PART_OVERLAP_FRACTION_TOLERANCE_NON_ADJACENT`
+#: (zero) instead, so a pair with no anatomical reason to touch is never
+#: silently skipped again.
 SIBLING_PART_PAIRS_BY_PANEL: dict[str, tuple[tuple[str, str], ...]] = {
     "legs": tuple(
         (f"{side}_upper_leg", f"{side}_lower_leg") for side in ("right", "left")
     )
     + tuple((f"{side}_lower_leg", f"{side}_boot") for side in ("right", "left")),
+    **{
+        panel_key: _figure_sibling_pairs(PARTS_BY_PANEL[panel_key])
+        for panel_key in _FIGURE_PANEL_KEYS
+    },
+}
+
+#: [T-0423] Per-panel "real anatomy, not decomposed by this card" negative
+#: points -- generalizes the legs-only NECK collapse-point special case
+#: (previously a hardcoded `if panel_key in _LEGS_ONLY_PANEL_KEYS` branch,
+#: see `part_prompt_points` below) into a stated rule per panel rather than
+#: a branch on one frozen set:
+#:
+#: - "legs": NECK is this panel's own collapsed upper-body placeholder --
+#:   not real anatomy AT ALL on this waist-down crop (unchanged from
+#:   T-0417; same derivation text).
+#: - the five figure panels: both ANKLEs are real anatomy ON the panel (a
+#:   full/near-full figure), but legs are not one of THIS card's parts
+#:   (head/torso/arms only, per the card's own scope) -- same purpose as
+#:   the legs panel's own collapse point (keep a part mask from bleeding
+#:   into anatomy this card isn't requesting), different reason
+#:   (real-but-out-of-scope, not not-real).
+_NON_PART_NEGATIVE_JOINTS_BY_PANEL: dict[str, tuple[tuple[int, str], ...]] = {
+    "legs": (
+        (
+            _NECK,
+            "legs_panel_upper_body_collapse_point (NECK[1], not real anatomy on this panel)",
+        ),
+    ),
+    **{
+        panel_key: (
+            (
+                _R_ANKLE,
+                f"{panel_key}_panel_leg_region (right ANKLE[{_R_ANKLE}], "
+                "not decomposed by this card)",
+            ),
+            (
+                _L_ANKLE,
+                f"{panel_key}_panel_leg_region (left ANKLE[{_L_ANKLE}], "
+                "not decomposed by this card)",
+            ),
+        )
+        for panel_key in _FIGURE_PANEL_KEYS
+    },
 }
 
 
 def _part_anchor_norm(spec: PartSpec, points_norm: dict[int, tuple[float, float]]):
     a = points_norm[spec.joint_a]
+    if spec.joint_b_pair is not None:
+        j1, j2 = spec.joint_b_pair
+        b = _midpoint(points_norm[j1], points_norm[j2])
+        return _midpoint(a, b)
     if spec.joint_b is None:
         return a
     return _midpoint(a, points_norm[spec.joint_b])
@@ -216,11 +394,16 @@ def part_prompt_points(
     records: list[dict] = []
     px, py = anchors_px[part_key]
     spec = specs_by_key[part_key]
-    derivation = (
-        f"{spec.part_key} = ANKLE[{spec.joint_a}]"
-        if spec.joint_b is None
-        else f"{spec.part_key} = midpoint(JOINT[{spec.joint_a}], JOINT[{spec.joint_b}])"
-    )
+    if spec.joint_b_pair is not None:
+        j1, j2 = spec.joint_b_pair
+        derivation = (
+            f"{spec.part_key} = midpoint(JOINT[{spec.joint_a}], "
+            f"midpoint(JOINT[{j1}], JOINT[{j2}]))"
+        )
+    elif spec.joint_b is None:
+        derivation = f"{spec.part_key} = JOINT[{spec.joint_a}]"
+    else:
+        derivation = f"{spec.part_key} = midpoint(JOINT[{spec.joint_a}], JOINT[{spec.joint_b}])"
     records.append({"x": px, "y": py, "polarity": "positive", "derivation": derivation})
 
     for other_key, (ox, oy) in anchors_px.items():
@@ -245,19 +428,9 @@ def part_prompt_points(
             "derivation": "corner_bottom_right",
         }
     )
-    if panel_key in _LEGS_ONLY_PANEL_KEYS:
-        collapse_x, collapse_y = _px(points_norm[_NECK], panel_size)
-        records.append(
-            {
-                "x": collapse_x,
-                "y": collapse_y,
-                "polarity": "negative",
-                "derivation": (
-                    f"{panel_key}_panel_upper_body_collapse_point "
-                    "(NECK[1], not real anatomy on this panel)"
-                ),
-            }
-        )
+    for joint_idx, derivation_text in _NON_PART_NEGATIVE_JOINTS_BY_PANEL.get(panel_key, ()):
+        jx, jy = _px(points_norm[joint_idx], panel_size)
+        records.append({"x": jx, "y": jy, "polarity": "negative", "derivation": derivation_text})
 
     return records
 
@@ -265,6 +438,8 @@ def part_prompt_points(
 def _specs_for_panel(panel_key: str) -> dict[str, PartSpec]:
     if panel_key == "legs":
         return _LEGS_PART_SPECS_BY_KEY
+    if panel_key in _FIGURE_PANEL_KEYS:
+        return {key: _FIGURE_PART_SPECS_BY_KEY[key] for key in PARTS_BY_PANEL[panel_key]}
     return {}
 
 

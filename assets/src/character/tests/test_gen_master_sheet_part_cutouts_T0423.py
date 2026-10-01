@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 _CHARACTER_DIR = Path(__file__).resolve().parents[1]
 if str(_CHARACTER_DIR) not in sys.path:
@@ -304,15 +305,22 @@ class TestBackTposeHandednessConvention:
     on some future, asymmetric back-view rig."""
 
     def test_front_and_back_tpose_keypoints_are_numerically_identical(self):
+        # Within float round-trip tolerance of a double x -> 1-x -> 1-(1-x)
+        # mirror, not bit-identical -- mirror_keypoints_lr flips x twice
+        # (once per mirrored pair member) to get from front to back.
         front = rig.keypoints_for("front_tpose")
         back = rig.keypoints_for("back_tpose")
-        assert front == back
+        assert front.keys() == back.keys()
+        for idx in front:
+            assert front[idx] == pytest.approx(back[idx])
 
     def test_front_and_back_tpose_produce_identical_part_anchors(self):
         front_points = rig.keypoints_for("front_tpose")
         back_points = rig.keypoints_for("back_tpose")
         for part_key in gen.PARTS_BY_PANEL["front_tpose"]:
-            front_records = gen.part_prompt_points("front_tpose", part_key, front_points, PANEL_SIZE)
+            front_records = gen.part_prompt_points(
+                "front_tpose", part_key, front_points, PANEL_SIZE
+            )
             back_records = gen.part_prompt_points("back_tpose", part_key, back_points, PANEL_SIZE)
             front_positive = next(
                 (r["x"], r["y"]) for r in front_records if r["polarity"] == "positive"
