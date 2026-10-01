@@ -138,6 +138,44 @@ analog of `cpp.md`/`js.md`/etc. for `tasks/*.md` instead of source.
   rewritten or extended during a given pass, don't rewrite it solely to
   bolt one on — say so explicitly in the run's own summary instead of
   silently leaving the card without one.
+- **Verify every stateful claim against the card's OWN base branch before
+  encoding it.** Counts, "before" states, "N failures currently", "the
+  suite reports X" — run the command on the branch the card will actually
+  be cut from, and quote what you saw. Never lift a number out of a review
+  or an earlier card's report without checking which branch it was measured
+  on. T-0424's acceptance said "14 before, 2 after" and stopped its own run
+  twice: the 14 was real, but only on `feature/T-0359`, whose sidecar
+  labelling is what creates those failures. On `develop` the same gate
+  reports 0, so the criterion was unsatisfiable on any branch the card
+  could be cut from.
+- **Prefer branch-relative invariants over hardcoded values.** "Nothing
+  that passed before now fails", "this asset's own result is identical
+  before and after", "no `[FAIL]` line references a path this card moved"
+  hold on every base; "14 → 2" holds on exactly one. An invariant also
+  states what you actually care about, so a reviewer checks the intent
+  rather than a number that has drifted. Where a count genuinely matters,
+  require the observed before/after to be *recorded* and the branch's world
+  identified — don't assert the count in advance.
+- **Phrase a constraint as its real intent, never as a mechanical proxy for
+  it.** A proxy is easy to check and easy to get wrong in the forbidding
+  direction: it blocks legitimate work the intent never meant to block.
+  T-0424's "the `tools/asset-gate/src/` diff is empty" was a proxy for "no
+  threshold, check or logic changed" — and it forbade the one correct fix
+  (re-keying an *existing* exemption line to the same asset's new path,
+  which adds no exemption and changes no threshold), deadlocking the card
+  until a human re-scoped it. Write the intent, then name the specific
+  permitted exceptions if it needs them.
+- **Never write a criterion the in-run agent structurally cannot satisfy.**
+  The class is defined once in
+  `tools/board/src/runner/structuralUnsatisfiability.js` and read by both
+  `impossibleAcceptancePreflight.js` and `reviewerPrompt.js`: anything
+  depending on the pushed remote's head, on a PR body or its checks
+  passing, on an edit under `.claude/**`, on authoring part of the card
+  body, or on a named human's approval. An agent cannot make any of those
+  true of itself, so grading a run on one burns attempts that no amount of
+  correct work can clear — see T-0409 for the class, and T-0233 for the
+  approval shape. Phrase such work as "produce it and park for
+  @DennieSeth" instead.
 
 ## Grounding in docs
 
