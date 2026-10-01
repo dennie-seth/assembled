@@ -42,7 +42,7 @@
         "assets/final/character/player_crouch_hide_sheet_v2.png",
         "assets/final/character/player_die_sheet_v2.png"
       ],
-      "note": "T-0226's parent card (this one) describes this sheet as '(approved; also Track 1's shared reference for all three arms)'. No decision-log entry recording an actual human verdict was found. Downstream sprite generation (T-0212 and later) already happened against it. Recorded here as pending, not approved, until a human confirms on this card -- the parent card's prose is not itself the recorded verdict this AC requires."
+      "note": "T-0226's parent card (this one) describes this sheet as '(approved; also Track 1's shared reference for all three arms)'. No decision-log entry recording an actual human verdict was found. Downstream sprite generation (T-0212 and later) already happened against it. Recorded here as pending, not approved, until a human confirms on this card -- the parent card's prose is not itself the recorded verdict this AC requires. T-0424 (2026-10-01): three of the four downstream_already_generated paths above (player_move_sheet_v2.png, player_crouch_hide_sheet_v2.png, player_die_sheet_v2.png) measurably failed the character gate and were archived to assets/archive/character/ -- see docs/decision-log.md DL-32. This field is a historical record of what was generated against this concept sheet at the time of the T-0226 audit and is left as-written rather than rewritten; it is not a live manifest of assets/final/ contents."
     },
     {
       "asset_set": "foreign_entities",
