@@ -457,6 +457,7 @@ def _make_part_sam3_runner(
 
     def _run() -> np.ndarray:
         from comfy_client.errors import ExecutionError, PollTimeoutError, SubmitError
+        from comfy_client.thermal_gate import ThermalGateRefused
 
         workflow = build_sam3_part_workflow(
             image_filename,
@@ -468,7 +469,14 @@ def _make_part_sam3_runner(
         try:
             job_id = client.submit(workflow)
             result = client.wait_for_completion(job_id, timeout=60.0)
-        except (SubmitError, ExecutionError, PollTimeoutError) as exc:
+        except (SubmitError, ExecutionError, PollTimeoutError, ThermalGateRefused) as exc:
+            # [T-0423 FIX ROUND] ThermalGateRefused (T-0422) is a plain
+            # RuntimeError, not a ComfyClientError subtype -- uncaught here
+            # it would crash the whole script instead of going through
+            # main()'s existing "SAM3 unavailable mid-run" recording path.
+            # The gate itself is never touched or bypassed: submit() still
+            # refused, nothing was submitted to ComfyUI -- this only makes
+            # sure that refusal is recorded, not crashed on.
             raise Sam3SegmentationUnavailable(str(exc)) from exc
         try:
             png_bytes = client.fetch_output(result)

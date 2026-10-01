@@ -467,6 +467,41 @@ class TestOverlapRejectionAppliesToFigurePanels:
         assert pair["exceeds_tolerance"] is False
 
 
+class TestThermalGateRefusalIsRecordedNotCrashed:
+    """[T-0423 FIX ROUND] Found running this card's own live evidence
+    generation against the real ComfyUI host: the thermal gate (T-0422)
+    raises `ThermalGateRefused` at `client.submit()`'s own choke point -- a
+    plain `RuntimeError`, not one of the `ComfyClientError` subtypes
+    (`SubmitError`/`ExecutionError`/`PollTimeoutError`)
+    `_make_part_sam3_runner`'s own `_run()` closure already catches.
+    Uncaught, it crashed the whole script with a bare traceback instead of
+    going through the existing "SAM3 unavailable mid-run" recording path
+    this card's own edge case says "applies unchanged" -- `main()` never
+    got the chance to call `_record_mid_run_sam3_failure`, and a part
+    already completed earlier in the same run was at risk of never being
+    committed if the crash happened before that commit.
+
+    This never touches or weakens the gate itself: `submit()` still
+    refuses, no workflow is ever submitted to ComfyUI either way -- this
+    only makes sure that refusal is RECORDED through the pre-existing
+    driver-boundary path, not crashed on."""
+
+    def test_thermal_gate_refusal_is_wrapped_as_sam3_unavailable(self):
+        from comfy_client.thermal_gate import ThermalGateRefused
+
+        class _ThermalRefusingClient:
+            def submit(self, workflow):
+                raise ThermalGateRefused(
+                    "GPU temperature 75.0C is at or above the 75.0C ceiling"
+                )
+
+        runner = gen._make_part_sam3_runner(
+            _ThermalRefusingClient(), "panel_front_tpose.png", [], [], filename_prefix="x"
+        )
+        with pytest.raises(gen.Sam3SegmentationUnavailable):
+            runner()
+
+
 class TestT0417RegressionUnaffected:
     """T-0417's own behaviour on the legs panel must not change: same six
     parts, same anchors, same negative rule, same overlap tolerances."""
