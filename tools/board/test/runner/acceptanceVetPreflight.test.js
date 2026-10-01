@@ -151,6 +151,16 @@ describe("checkAcceptanceAuthoringPreflight -- Class C, hardcoded count/before-s
   });
 });
 
+describe("checkAcceptanceAuthoringPreflight -- only ## Acceptance itself is graded", () => {
+  it("ignores a hardcoded count living in a Context/background section, not ## Acceptance", () => {
+    const body =
+      "## Context\n\nThe gate currently reports 14 failures before this card's change.\n\n" +
+      "## Acceptance\n\n- [ ] Fix the underlying bug.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toEqual([]);
+  });
+});
+
 describe("checkAcceptanceAuthoringPreflight -- negated/quoted mentions must not flag", () => {
   it("does not flag this very card's own Edge-cases bullet quoting a 'Do not' line as an example", () => {
     // Pinned from T-0425's own body: the edge-case bullet quotes "nothing depends on a PR body"
