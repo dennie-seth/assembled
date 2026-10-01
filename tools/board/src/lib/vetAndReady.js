@@ -1,6 +1,5 @@
 import { SATISFIED_DEP_STATUSES } from "../runner/autoLaunchPoller.js";
 import { ACCEPTANCE_HEADING_TEXT_SRC } from "./acceptanceCriteria.js";
-import { checkAcceptanceAuthoringPreflight } from "../runner/acceptanceVetPreflight.js";
 
 /**
  * The mechanical vetting rules for T-0384's nightly vet-and-ready job, ported from the external
@@ -274,13 +273,34 @@ export async function mergedWorkCheck({ task, gitLogGrep }) {
  * never changes a card's verdict (see the dedicated vetAndReady.test.js describe block pinning
  * that "a card carrying every flag class this check can raise is still readied").
  *
- * Wrapped in its own try/catch (the "check unavailable" edge case): an import error or a bug in
- * the preflight itself must degrade to a single "not run" flag, never fail the whole vet pass --
- * dependency/superseded/merged-work rules above have already decided this card's verdict by the
- * time this runs, and that decision must not be put at risk by this strictly-additional read.
+ * FIX ROUND (reviewer FAIL, 2026-10-01): this used to be a static top-level
+ * `import { checkAcceptanceAuthoringPreflight } from "../runner/acceptanceVetPreflight.js"`, with
+ * the try/catch living only inside this function body. That cannot catch a genuine "import error"
+ * (the edge case's own words) -- a failure during MODULE EVALUATION of acceptanceVetPreflight.js
+ * (or either of its transitive deps) throws synchronously at the `import` statement itself, which
+ * aborts evaluation of vetAndReady.js before this function is ever defined, let alone called. The
+ * whole nightly vet job would crash on load, not degrade.
+ *
+ * The fix: load acceptanceVetPreflight.js via a lazy, cached dynamic `import()` instead, inside
+ * this try/catch. A dynamic import's rejection is an ordinary promise rejection this `catch` can
+ * observe, whether it fails on the very first card or every subsequent one -- the module promise
+ * is cached (success or failure alike) so a broken dependency is attempted once per process, not
+ * re-imported per card. See vetAndReady.acceptancePreflightImportError.test.js (true module-load
+ * failure) and vetAndReady.acceptancePreflightUnavailable.test.js (a successfully-loaded module
+ * whose exported function itself throws) -- both must degrade to a "not run" flag, never crash.
  */
-function computeAcceptanceFlags(task) {
+let acceptanceAuthoringPreflightModulePromise;
+
+function loadAcceptanceAuthoringPreflightModule() {
+  if (!acceptanceAuthoringPreflightModulePromise) {
+    acceptanceAuthoringPreflightModulePromise = import("../runner/acceptanceVetPreflight.js");
+  }
+  return acceptanceAuthoringPreflightModulePromise;
+}
+
+async function computeAcceptanceFlags(task) {
   try {
+    const { checkAcceptanceAuthoringPreflight } = await loadAcceptanceAuthoringPreflightModule();
     return checkAcceptanceAuthoringPreflight(task, { agentName: task.agent, taskStoreKind: "db" }).flags;
   } catch (err) {
     return [{ text: null, reasons: [`acceptance-authoring preflight check not run (degraded): ${err.message}`] }];
@@ -302,7 +322,7 @@ export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
   const eligible = tasks.filter(isEligibleAtAll);
   const decided = [];
 
-  function skip(task, rule, check) {
+  async function skip(task, rule, check) {
     decided.push({
       id: task.id,
       title: task.title,
@@ -311,7 +331,7 @@ export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
       rule,
       reason: check.reason,
       evidence: check.evidence,
-      acceptanceFlags: computeAcceptanceFlags(task)
+      acceptanceFlags: await computeAcceptanceFlags(task)
     });
   }
 
@@ -319,21 +339,21 @@ export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
   for (const task of eligible) {
     const check = dependencyCheck(task, byId);
     if (check.ok) passRule1.push(task);
-    else skip(task, "1-dependency", check);
+    else await skip(task, "1-dependency", check);
   }
 
   const passRule3 = [];
   for (const task of passRule1) {
     const check = supersededCheck(task);
     if (check.ok) passRule3.push(task);
-    else skip(task, "3-superseded", check);
+    else await skip(task, "3-superseded", check);
   }
 
   const passRule2 = [];
   for (const task of passRule3) {
     const check = await mergedWorkCheck({ task, gitLogGrep });
     if (check.ok) passRule2.push(task);
-    else skip(task, "2-merged", check);
+    else await skip(task, "2-merged", check);
   }
 
   const sorted = [...passRule2].sort((a, b) => priorityRank(a) - priorityRank(b) || numericId(a) - numericId(b));
@@ -349,7 +369,7 @@ export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
       rule: "5-cap-ok",
       reason: `every rule passed; readied (priority ${task.priority}, within the cap of ${effectiveCap})`,
       evidence: "",
-      acceptanceFlags: computeAcceptanceFlags(task),
+      acceptanceFlags: await computeAcceptanceFlags(task),
       // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #1): the ORIGINAL, selection-time snapshot
       // of this card -- the one every rule above actually vetted -- carried forward so the caller
       // can compare it against a fresh re-fetch immediately before the write (see
@@ -360,7 +380,7 @@ export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
     });
   }
   for (const task of overflow) {
-    skip(task, "5-cap", {
+    await skip(task, "5-cap", {
       reason: `every other rule passed, but the per-run cap of ${effectiveCap} was already filled by higher-priority/earlier-id candidates`,
       evidence: ""
     });
