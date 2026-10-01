@@ -2038,3 +2038,96 @@ which the same walk's own DL-26 characterisation already predicts it should.
 
 **Touched docs (this entry):**
 - `docs/decision-log.md` — this entry (DL-31)
+
+---
+
+## DL-32 — Six legacy crouch_hide/die/move sheets archived, not deleted: `assets/final/` narrows by moving files, never by editing the gate (T-0424)
+
+**Date:** 2026-10-01
+**Raised by:** @DennieSeth, after a read-only investigation of the character gate's actual
+scoping confirmed `tools/asset-gate/src/asset_gate/character.py`'s four sweeps
+(`sweep_character_arm_c_provenance`, `sweep_character_frame_delta_cap`,
+`sweep_character_motion_fidelity`, `sweep_character_motion_class_declared`) have no manifest
+and no hardcoded sheet list — each walks `root_path.rglob("*.provenance.json")` against
+whatever root the CLI is given (`assets/final`). Moving a sidecar out of `assets/final/`
+removes it from the gate's scope by construction, not by touching a threshold, a check, or
+`character_motion_class_baseline.txt`.
+**Resolved by:** T-0424 (`git mv` of twelve files to `assets/archive/character/`;
+`assets/archive/README.md` establishes the convention this entry is an example of)
+
+### What moved, and why, per sheet (measured against the 0.70 pose-fidelity IoU floor / 0.15
+identity-stability cap from DL-31)
+
+| sheet | pose IoU | identity | verdict |
+|---|---|---|---|
+| `player_move_sheet_v1` | 0.0000 | 1.0000 | fails by a wide margin |
+| `player_move_sheet_v2` | 0.0000 | 0.8828 | fails by a wide margin |
+| `player_crouch_hide_sheet_v2` | 0.0855 | 0.9453 | fails by a wide margin |
+| `player_die_sheet_v2` | 0.2626 | 0.6641 | fails by a wide margin |
+| `player_crouch_hide_sheet_v1` | 0.4486 | 0.8750 | fails |
+| `player_die_sheet_v1` | 0.4067 | 0.1875 | fails |
+
+These are not near-misses on either measure. [T-0419](T-0419) also *regenerated* the three v2
+sheets on GPU (39 jobs) and they came back worse on pose fidelity — "generate better ones" was
+already tried and failed empirically, not merely assumed to be hopeless.
+
+**Nothing in `client/` loads any of the six** — `git grep -n
+'player_crouch_hide_sheet\|player_die_sheet\|player_move_sheet' -- client/` returns no files.
+They were pipeline artifacts, never shipped game assets.
+
+**The poses are not abandoned.** Every P0 successor already `depends_on: ['T-0338']` and
+names it as the replacement: [T-0260](T-0260)/[T-0261](T-0261) (hide/action),
+[T-0267](T-0267)/[T-0268](T-0268)/[T-0269](T-0269) (sitting) — `move` is T-0338's own primary
+deliverable.
+
+### Precedent
+
+Commit `70a0f0a7` removed LoRA checkpoints from `assets/final/lora/` for the identical reason:
+an asset that should not be a *final* asset is moved out of `assets/final/`, not deleted and not
+patched around in the gate. This is the same move applied to `character/`.
+
+### Why this is not [T-0419](T-0419)'s gate-weakening mistake
+
+T-0419's reviewer correctly failed a change that deleted `test_frame_consistency` so regenerated
+pixels would pass — editing the *check* to fit the asset. This card does the opposite: the asset
+moves, the check is provably untouched (`git diff develop...HEAD -- tools/asset-gate/src/` is
+empty), and `character_motion_class_baseline.txt` gains zero entries. The gate's scope narrows
+because its own root argument (`assets/final`) no longer contains these six sidecars — a
+property of where the CLI is pointed, not of what the gate enforces.
+
+### Measured before/after (this branch, cut from `develop`)
+
+`cd tools/asset-gate && .venv/bin/python -m asset_gate.cli character-gate ../../assets/final
+--repo-root ../../`:
+
+- **Before:** 133 result lines, **0 `[FAIL]`**.
+- **After:** 103 result lines (exactly 30 fewer — 6 sheets × 5 checks each), **0 `[FAIL]`**.
+- `player_walk_sheet_hybrid`'s own five result lines are byte-identical before and after.
+
+This branch has no sidecar under `assets/final/character/` carrying a `motion_class` key (the
+labelling that would make `character_motion_fidelity`/`character_part_identity` actually engage
+lives on the unmerged `feature/T-0359`, PR #422), so every check reports "not applicable" and
+passes regardless of the measured numbers above. **On `develop` this card is asset hygiene with
+no immediate gate effect** — the 14→2 FAIL-count improvement the numbers above would otherwise
+produce materialises once PR #422 merges and the motion-class labelling meets the now-narrower
+`assets/final/character/` scope. That sequencing is a decision @DennieSeth made knowingly, not an
+oversight.
+
+### Not touched
+
+- **`player_walk_sheet_hybrid`.** Not moved, not relabelled, not re-evaluated — its own gate
+  result is identical before and after this card, by direct measurement above.
+- **Any gate threshold, check, or `character_motion_class_baseline.txt` entry.** The six
+  archived sidecars' existing baseline-exemption lines in that file are left as-is (removing
+  them would itself be a diff under `tools/asset-gate/src/`, which this card's own acceptance
+  criteria forbids) — a stale exemption for a path no sweep will ever walk again is inert, not a
+  liability.
+- **`gen_states_v2_tiled.py` / `gen_states_v2_comfyui.js`.** Both still write their v2 outputs to
+  `assets/final/character/` unchanged — re-running either would silently re-create an archived
+  sheet and undo this card. Documented as a prominent hazard in both files' own headers rather
+  than repointed, since repointing a generation script's output path without a GPU run to verify
+  it is itself a change this card's "no GPU work" constraint can't validate.
+
+**Touched docs (this entry):**
+- `docs/decision-log.md` — this entry (DL-32)
+- `assets/archive/README.md` — the convention this entry is the worked example of
