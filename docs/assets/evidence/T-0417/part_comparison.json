@@ -2287,6 +2287,412 @@
           "adjacent": true
         }
       ]
+    },
+    "side_left_forward": {
+      "parts": {
+        "head": {
+          "panel": "side_left_forward",
+          "part": "head",
+          "method_used": "sam3",
+          "present": true,
+          "foreground_px_raw": 5301,
+          "foreground_px_after_isolation": 4391,
+          "isolation": {
+            "component_count": 30,
+            "kept_component_ids": [
+              1
+            ],
+            "foreground_px_before": 5301,
+            "foreground_px_after": 4391,
+            "stray_px": 910,
+            "stray_fraction": 0.17166572344840597
+          },
+          "degenerate": false,
+          "stray_fraction_exceeds_tolerance": false,
+          "isolated_before_overlap": true,
+          "overlap_exceeds_tolerance": true,
+          "isolated": false,
+          "prompts": [
+            {
+              "x": 435,
+              "y": 102,
+              "polarity": "positive",
+              "derivation": "head = JOINT[0]"
+            },
+            {
+              "x": 510,
+              "y": 399,
+              "polarity": "negative",
+              "derivation": "sibling_part:torso"
+            },
+            {
+              "x": 448,
+              "y": 230,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_upper_arm"
+            },
+            {
+              "x": 322,
+              "y": 230,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_lower_arm"
+            },
+            {
+              "x": 4,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_left"
+            },
+            {
+              "x": 1020,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_right"
+            },
+            {
+              "x": 4,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_left"
+            },
+            {
+              "x": 1020,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_right"
+            },
+            {
+              "x": 583,
+              "y": 921,
+              "polarity": "negative",
+              "derivation": "side_left_forward_panel_leg_region (right ANKLE[10], not decomposed by this card)"
+            },
+            {
+              "x": 307,
+              "y": 634,
+              "polarity": "negative",
+              "derivation": "side_left_forward_panel_leg_region (left ANKLE[13], not decomposed by this card)"
+            }
+          ],
+          "sam3_after": "docs/assets/evidence/T-0417/panel_side_left_forward_part_head_sam3_after.png",
+          "mask": "docs/assets/evidence/T-0417/panel_side_left_forward_part_head_mask.png",
+          "descended_part": "docs/assets/evidence/T-0417/panel_side_left_forward_part_head_descended.png"
+        },
+        "torso": {
+          "panel": "side_left_forward",
+          "part": "torso",
+          "method_used": "sam3",
+          "present": true,
+          "foreground_px_raw": 37987,
+          "foreground_px_after_isolation": 36653,
+          "isolation": {
+            "component_count": 27,
+            "kept_component_ids": [
+              5
+            ],
+            "foreground_px_before": 37987,
+            "foreground_px_after": 36653,
+            "stray_px": 1334,
+            "stray_fraction": 0.035117276963171615
+          },
+          "degenerate": false,
+          "stray_fraction_exceeds_tolerance": false,
+          "isolated_before_overlap": true,
+          "overlap_exceeds_tolerance": true,
+          "isolated": false,
+          "prompts": [
+            {
+              "x": 510,
+              "y": 399,
+              "polarity": "positive",
+              "derivation": "torso = midpoint(JOINT[1], midpoint(JOINT[8], JOINT[11]))"
+            },
+            {
+              "x": 435,
+              "y": 102,
+              "polarity": "negative",
+              "derivation": "sibling_part:head"
+            },
+            {
+              "x": 448,
+              "y": 230,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_upper_arm"
+            },
+            {
+              "x": 322,
+              "y": 230,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_lower_arm"
+            },
+            {
+              "x": 4,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_left"
+            },
+            {
+              "x": 1020,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_right"
+            },
+            {
+              "x": 4,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_left"
+            },
+            {
+              "x": 1020,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_right"
+            },
+            {
+              "x": 583,
+              "y": 921,
+              "polarity": "negative",
+              "derivation": "side_left_forward_panel_leg_region (right ANKLE[10], not decomposed by this card)"
+            },
+            {
+              "x": 307,
+              "y": 634,
+              "polarity": "negative",
+              "derivation": "side_left_forward_panel_leg_region (left ANKLE[13], not decomposed by this card)"
+            }
+          ],
+          "sam3_after": "docs/assets/evidence/T-0417/panel_side_left_forward_part_torso_sam3_after.png",
+          "mask": "docs/assets/evidence/T-0417/panel_side_left_forward_part_torso_mask.png",
+          "descended_part": "docs/assets/evidence/T-0417/panel_side_left_forward_part_torso_descended.png"
+        },
+        "left_upper_arm": {
+          "panel": "side_left_forward",
+          "part": "left_upper_arm",
+          "method_used": "sam3",
+          "present": true,
+          "foreground_px_raw": 10546,
+          "foreground_px_after_isolation": 7560,
+          "isolation": {
+            "component_count": 24,
+            "kept_component_ids": [
+              3
+            ],
+            "foreground_px_before": 10546,
+            "foreground_px_after": 7560,
+            "stray_px": 2986,
+            "stray_fraction": 0.2831405272141096
+          },
+          "degenerate": false,
+          "stray_fraction_exceeds_tolerance": false,
+          "isolated_before_overlap": true,
+          "overlap_exceeds_tolerance": true,
+          "isolated": false,
+          "prompts": [
+            {
+              "x": 448,
+              "y": 230,
+              "polarity": "positive",
+              "derivation": "left_upper_arm = midpoint(JOINT[5], JOINT[6])"
+            },
+            {
+              "x": 435,
+              "y": 102,
+              "polarity": "negative",
+              "derivation": "sibling_part:head"
+            },
+            {
+              "x": 510,
+              "y": 399,
+              "polarity": "negative",
+              "derivation": "sibling_part:torso"
+            },
+            {
+              "x": 322,
+              "y": 230,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_lower_arm"
+            },
+            {
+              "x": 4,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_left"
+            },
+            {
+              "x": 1020,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_right"
+            },
+            {
+              "x": 4,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_left"
+            },
+            {
+              "x": 1020,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_right"
+            },
+            {
+              "x": 583,
+              "y": 921,
+              "polarity": "negative",
+              "derivation": "side_left_forward_panel_leg_region (right ANKLE[10], not decomposed by this card)"
+            },
+            {
+              "x": 307,
+              "y": 634,
+              "polarity": "negative",
+              "derivation": "side_left_forward_panel_leg_region (left ANKLE[13], not decomposed by this card)"
+            }
+          ],
+          "sam3_after": "docs/assets/evidence/T-0417/panel_side_left_forward_part_left_upper_arm_sam3_after.png",
+          "mask": "docs/assets/evidence/T-0417/panel_side_left_forward_part_left_upper_arm_mask.png",
+          "descended_part": "docs/assets/evidence/T-0417/panel_side_left_forward_part_left_upper_arm_descended.png"
+        },
+        "left_lower_arm": {
+          "panel": "side_left_forward",
+          "part": "left_lower_arm",
+          "method_used": "sam3",
+          "present": true,
+          "foreground_px_raw": 11176,
+          "foreground_px_after_isolation": 11158,
+          "isolation": {
+            "component_count": 5,
+            "kept_component_ids": [
+              4
+            ],
+            "foreground_px_before": 11176,
+            "foreground_px_after": 11158,
+            "stray_px": 18,
+            "stray_fraction": 0.0016105941302791697
+          },
+          "degenerate": false,
+          "stray_fraction_exceeds_tolerance": false,
+          "isolated_before_overlap": true,
+          "overlap_exceeds_tolerance": false,
+          "isolated": true,
+          "prompts": [
+            {
+              "x": 322,
+              "y": 230,
+              "polarity": "positive",
+              "derivation": "left_lower_arm = midpoint(JOINT[6], JOINT[7])"
+            },
+            {
+              "x": 435,
+              "y": 102,
+              "polarity": "negative",
+              "derivation": "sibling_part:head"
+            },
+            {
+              "x": 510,
+              "y": 399,
+              "polarity": "negative",
+              "derivation": "sibling_part:torso"
+            },
+            {
+              "x": 448,
+              "y": 230,
+              "polarity": "negative",
+              "derivation": "sibling_part:left_upper_arm"
+            },
+            {
+              "x": 4,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_left"
+            },
+            {
+              "x": 1020,
+              "y": 4,
+              "polarity": "negative",
+              "derivation": "corner_top_right"
+            },
+            {
+              "x": 4,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_left"
+            },
+            {
+              "x": 1020,
+              "y": 1020,
+              "polarity": "negative",
+              "derivation": "corner_bottom_right"
+            },
+            {
+              "x": 583,
+              "y": 921,
+              "polarity": "negative",
+              "derivation": "side_left_forward_panel_leg_region (right ANKLE[10], not decomposed by this card)"
+            },
+            {
+              "x": 307,
+              "y": 634,
+              "polarity": "negative",
+              "derivation": "side_left_forward_panel_leg_region (left ANKLE[13], not decomposed by this card)"
+            }
+          ],
+          "sam3_after": "docs/assets/evidence/T-0417/panel_side_left_forward_part_left_lower_arm_sam3_after.png",
+          "mask": "docs/assets/evidence/T-0417/panel_side_left_forward_part_left_lower_arm_mask.png",
+          "descended_part": "docs/assets/evidence/T-0417/panel_side_left_forward_part_left_lower_arm_descended.png"
+        }
+      },
+      "overlaps": [
+        {
+          "part_a": "head",
+          "part_b": "left_lower_arm",
+          "overlap_fraction": 0.0,
+          "exceeds_tolerance": false,
+          "tolerance": 0.0,
+          "adjacent": false
+        },
+        {
+          "part_a": "head",
+          "part_b": "left_upper_arm",
+          "overlap_fraction": 0.007970849464814394,
+          "exceeds_tolerance": true,
+          "tolerance": 0.0,
+          "adjacent": false
+        },
+        {
+          "part_a": "head",
+          "part_b": "torso",
+          "overlap_fraction": 0.0,
+          "exceeds_tolerance": false,
+          "tolerance": 0.25,
+          "adjacent": true
+        },
+        {
+          "part_a": "left_lower_arm",
+          "part_b": "left_upper_arm",
+          "overlap_fraction": 0.0,
+          "exceeds_tolerance": false,
+          "tolerance": 0.25,
+          "adjacent": true
+        },
+        {
+          "part_a": "left_lower_arm",
+          "part_b": "torso",
+          "overlap_fraction": 0.0,
+          "exceeds_tolerance": false,
+          "tolerance": 0.0,
+          "adjacent": false
+        },
+        {
+          "part_a": "left_upper_arm",
+          "part_b": "torso",
+          "overlap_fraction": 0.39206349206349206,
+          "exceeds_tolerance": true,
+          "tolerance": 0.25,
+          "adjacent": true
+        }
+      ]
     }
   }
 }
