@@ -43,8 +43,8 @@ import numpy as np
 
 #: A combined-part failure (real content from the next anatomical segment)
 #: measures far above ordinary joint-point/mask-smoothing blur. Observed
-#: on this card's own nine present upper-arm part masks: the six not
-#: already excluded by overclaim/overlap/stray rejection sit at 0.0%-2.2%
+#: on this card's own five present upper-arm part masks: the three not
+#: already excluded by overclaim/overlap/stray rejection sit at 0.0%-1.3%
 #: beyond their own elbow (back_tpose/right_upper_arm 1.3%, side_neutral/
 #: right_upper_arm 0.0%); the two genuinely contaminated ones sit at 21.8%
 #: (side_right_forward/right_upper_arm, already excluded by stray+overlap
