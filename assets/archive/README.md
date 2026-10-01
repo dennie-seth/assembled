@@ -1,10 +1,21 @@
 # assets/archive/
 
 Superseded assets kept for reference and git history. Nothing under here is
-consumed by the game client, by any generator script's own output path, or
-by the asset gate (`tools/asset-gate`) — the gate is only ever pointed at
-`assets/final`, and `assets/archive/` is a sibling directory, never a
-subdirectory of it, so it is never globbed.
+consumed by the game client or by any generator script's own output path.
+
+**It IS still globbed by three of the six asset-gate sweeps.**
+`character-gate`, `transparency-sweep`, and `visibility-sweep` are rooted at
+`assets/final` (a sibling of `assets/archive/`, never a parent of it), so
+those three never see anything archived. But `provenance-sweep`,
+`generator-sweep`, and `generator-hash-sweep` (`.github/workflows/ci-asset-gate.yml`
+`:60`, `:84`, `:105`) are rooted at the whole `assets/` tree — `archive/` is
+inside that root, so every `.provenance.json` sidecar moved here is still
+swept. **Any pre-existing baseline exemption for a moved sidecar
+(`provenance_baseline.txt`, `generator_baseline.txt`) must be re-keyed to
+its new `archive/...` path in the same move**, or the sweep re-fails on a
+gap that never changed, just because the path it's keyed to no longer
+matches (T-0424 round 2 learned this the hard way — see
+`docs/decision-log.md` DL-32).
 
 ## What belongs here
 

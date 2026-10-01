@@ -2117,17 +2117,47 @@ oversight.
 
 - **`player_walk_sheet_hybrid`.** Not moved, not relabelled, not re-evaluated — its own gate
   result is identical before and after this card, by direct measurement above.
-- **Any gate threshold, check, or `character_motion_class_baseline.txt` entry.** The six
-  archived sidecars' existing baseline-exemption lines in that file are left as-is (removing
-  them would itself be a diff under `tools/asset-gate/src/`, which this card's own acceptance
-  criteria forbids) — a stale exemption for a path no sweep will ever walk again is inert, not a
-  liability.
+- **Any gate threshold, check, or `character_motion_class_baseline.txt` entry.** That file is
+  byte-identical to `develop`. The *only* edit under `tools/asset-gate/src/` this card makes is
+  the baseline re-key described below — see "Correction (round 3)".
 - **`gen_states_v2_tiled.py` / `gen_states_v2_comfyui.js`.** Both still write their v2 outputs to
   `assets/final/character/` unchanged — re-running either would silently re-create an archived
   sheet and undo this card. Documented as a prominent hazard in both files' own headers rather
   than repointed, since repointing a generation script's output path without a GPU run to verify
   it is itself a change this card's "no GPU work" constraint can't validate.
 
+### Correction (round 3) — the sweep scope claim above was wrong, and so was the README's
+
+Round 2 (this entry, as originally written) and `assets/archive/README.md` both asserted the
+asset gate "is only ever pointed at `assets/final`", so moving a sidecar to `assets/archive/`
+would be invisible to it by construction. **That is false for three of the six CI sweeps.**
+`.github/workflows/ci-asset-gate.yml` roots `provenance-sweep` (`:60`), `generator-sweep`
+(`:84`), and `generator-hash-sweep` (`:105`) at `../../assets` — the whole tree, not
+`assets/final`. Only `character-gate`, `transparency-sweep`, and `visibility-sweep` are rooted
+at `assets/final`.
+
+Because `provenance_baseline.txt` and `generator_baseline.txt` key their exemption lines
+relative to that whole-tree root, the three v1 sidecars (`player_{crouch_hide,die,move}_sheet_v1`)
+— each already a documented, pre-existing `model_hash`/`generator` gap (HANDOFF §21/§22-c) —
+lost their exemption the moment `git mv` changed their path from
+`final/character/player_*_sheet_v1.provenance.json` to `archive/character/...`. Measured
+directly: `provenance-sweep` and `generator-sweep` each emitted 3 new `[FAIL]` lines on exactly
+those three files, while `player_idle_sheet_v1` (identical null `model_hash`, not moved, not
+re-keyed) kept passing `[baseline-exempt]` throughout — proof the break was the path key, not
+the asset's content.
+
+**Fix:** re-key those same three lines in both baseline files to their `archive/character/...`
+path. This adds no new exemption, removes no threshold, and changes no check — the same
+documented gap, for the same asset, at its new path. `git diff develop...HEAD -- tools/asset-gate/src/
+':(exclude)*baseline.txt'` is empty; `character_motion_class_baseline.txt` is byte-identical to
+`develop`. After the re-key, all six CI sweeps report 0 `[FAIL]` on this branch head —
+re-verified directly, not assumed.
+
+`assets/archive/README.md` is corrected to state plainly that `assets/archive/` IS still globbed
+by the three whole-tree sweeps, and that an exemption must travel with its asset on any future
+move.
+
 **Touched docs (this entry):**
-- `docs/decision-log.md` — this entry (DL-32)
-- `assets/archive/README.md` — the convention this entry is the worked example of
+- `docs/decision-log.md` — this entry (DL-32), including the round-3 correction above
+- `assets/archive/README.md` — the convention this entry is the worked example of, and (round 3)
+  the corrected sweep-scope claim
