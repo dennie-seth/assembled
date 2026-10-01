@@ -1,0 +1,15 @@
+{
+  "source_sheet": "docs/assets/evidence/T-0351/attempt_19_first_per_panel_reference_run_front_back_neutral_clean_sides_malformed.png",
+  "panel": "back_tpose",
+  "part": "head",
+  "cutout_method": "sam3",
+  "target_size": [
+    32,
+    32
+  ],
+  "palette": "assets/final/palette/home_palette.json",
+  "generator": "assets/src/character/gen_master_sheet_part_cutouts_T0417.py",
+  "card": "T-0417",
+  "_generator_note": "Evidence/demonstration descent, not a curated final -- descends the independent per-part SAM3 cutout for back_tpose/head; see docs/assets/evidence/T-0417/README.md.",
+  "run_id": "T-0423-2026-10-01T11-05-51-836Z"
+}
