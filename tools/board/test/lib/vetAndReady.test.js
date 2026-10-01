@@ -446,3 +446,49 @@ describe("revalidateCandidate", () => {
     expect(result.reason).toMatch(/body changed/);
   });
 });
+
+// T-0425: vetAndReady() now also reads the T-0409 structural-unsatisfiability registry plus the
+// new Class B/C over-constraint checks (acceptanceVetPreflight.js) for every card it decides on --
+// author-time, before a round is ever launched. This is WARN-only: it must never change which
+// cards get readied, only annotate the decision table a human reads.
+describe("vetAndReady -- acceptance-authoring flags (T-0425)", () => {
+  it("still readies a card carrying every flag class this check can raise", async () => {
+    const body =
+      "## Acceptance\n\n" +
+      "- [ ] Update `src/lib/doTheThing.js` to do the thing.\n" +
+      "- [ ] `.claude/agents/infra.md` is edited with the new grant.\n" +
+      "- [ ] `git diff -- tools/asset-gate/src/` is empty.\n" +
+      "- [ ] Edit `tools/asset-gate/src/asset_gate/character_motion_class_baseline.txt` to re-key the exemption.\n" +
+      "- [ ] Before/after `[FAIL]` counts are recorded: 14 before, 2 after.\n";
+    const tasks = [makeTask({ id: "T-0070", body })];
+    const result = await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS });
+
+    expect(result.readied.map((r) => r.id)).toEqual(["T-0070"]);
+    const entry = result.readied[0];
+    expect(entry.acceptanceFlags.length).toBeGreaterThanOrEqual(3);
+    const allReasons = entry.acceptanceFlags.flatMap((f) => f.reasons).join(" ");
+    expect(allReasons).toMatch(/Class A/);
+    expect(allReasons).toMatch(/Class B/);
+    expect(allReasons).toMatch(/Class C/);
+  });
+
+  it("attaches acceptanceFlags to a skipped card too, not only readied ones", async () => {
+    const body = "## Acceptance\n\n- [ ] `.claude/agents/infra.md` is edited with the new grant.\n";
+    const tasks = [makeTask({ id: "T-0071", body, depends_on: ["T-9999"] })];
+    const result = await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS });
+
+    expect(result.readied).toEqual([]);
+    const entry = result.skipped.find((r) => r.id === "T-0071");
+    expect(entry.acceptanceFlags.length).toBe(1);
+  });
+
+  // See vetAndReady.acceptancePreflightUnavailable.test.js for the "check itself is unavailable"
+  // edge case (import error / bad config) -- that needs a module mock, which must live in its own
+  // file so it doesn't affect every other test here.
+
+  it("flags nothing for an ordinary, clean acceptance section", async () => {
+    const tasks = [makeTask({ id: "T-0073" })];
+    const result = await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS });
+    expect(result.readied[0].acceptanceFlags).toEqual([]);
+  });
+});
