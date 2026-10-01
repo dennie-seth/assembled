@@ -202,3 +202,66 @@ class TestCommittedRecordsUnchangedByThisRound:
         assert panels["side_right_forward"]["parts"]["head"]["isolated"] is False
         assert panels["side_left_forward"]["parts"]["head"]["present"] is True
         assert panels["side_left_forward"]["parts"]["head"]["isolated"] is False
+
+
+@pytest.mark.skipif(not EVIDENCE_DIR.exists(), reason="T-0417/T-0423 evidence dir not present")
+class TestFigurePartSuitabilityReport:
+    """`assess_figure_part_suitability_T0423.compute_report()` is the
+    script that produced the README's per-part suitability table -- pins
+    its two headline totals (mechanical vs. anatomically-usable, kept
+    distinct per this round's own acceptance) and the specific overclaim
+    corrections so a future edit to the evidence or the script can't drift
+    the README silently out of sync with what the code actually computes."""
+
+    def _report(self):
+        import assess_figure_part_suitability_T0423 as report
+
+        return report.compute_report()
+
+    def test_totals_distinguish_mechanical_from_anatomically_usable(self):
+        _, totals = self._report()
+        assert totals == {
+            "requested": 24,
+            "mechanically_isolated": 8,
+            "anatomically_usable": 5,
+        }
+
+    def test_front_tpose_right_upper_arm_is_combined_not_usable(self):
+        per_part, _ = self._report()
+        row = next(
+            r
+            for r in per_part
+            if r["panel"] == "front_tpose" and r["part"] == "right_upper_arm"
+        )
+        assert row["isolated"] is True
+        assert row["suitability"] == "combined"
+        assert row["usable"] is False
+
+    def test_front_tpose_head_is_incomplete_not_usable(self):
+        per_part, _ = self._report()
+        row = next(r for r in per_part if r["panel"] == "front_tpose" and r["part"] == "head")
+        assert row["isolated"] is True
+        assert row["suitability"] == "incomplete"
+        assert row["usable"] is False
+
+    def test_side_right_forward_torso_is_partial_not_usable(self):
+        per_part, _ = self._report()
+        row = next(
+            r for r in per_part if r["panel"] == "side_right_forward" and r["part"] == "torso"
+        )
+        assert row["isolated"] is True
+        assert row["suitability"] == "partial"
+        assert row["usable"] is False
+
+    def test_the_five_anatomically_usable_parts_are_named(self):
+        per_part, _ = self._report()
+        usable = {
+            (r["panel"], r["part"]) for r in per_part if r["present"] and r.get("usable")
+        }
+        assert usable == {
+            ("back_tpose", "head"),
+            ("back_tpose", "right_lower_arm"),
+            ("back_tpose", "left_lower_arm"),
+            ("side_left_forward", "left_lower_arm"),
+            ("side_neutral", "head"),
+        }
