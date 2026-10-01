@@ -1,5 +1,6 @@
 import { SATISFIED_DEP_STATUSES } from "../runner/autoLaunchPoller.js";
 import { ACCEPTANCE_HEADING_TEXT_SRC } from "./acceptanceCriteria.js";
+import { checkAcceptanceAuthoringPreflight } from "../runner/acceptanceVetPreflight.js";
 
 /**
  * The mechanical vetting rules for T-0384's nightly vet-and-ready job, ported from the external
@@ -266,6 +267,27 @@ export async function mergedWorkCheck({ task, gitLogGrep }) {
 }
 
 /**
+ * T-0425: the author-time acceptance-authoring preflight (acceptanceVetPreflight.js), run over
+ * EVERY eligible card this job decides on -- readied or skipped alike -- so a human reading the
+ * morning summary sees a structurally-unsatisfiable or over-constrained criterion before a round
+ * is ever launched on it, not minutes later from the run-time preflight. WARN-only: a flag here
+ * never changes a card's verdict (see the dedicated vetAndReady.test.js describe block pinning
+ * that "a card carrying every flag class this check can raise is still readied").
+ *
+ * Wrapped in its own try/catch (the "check unavailable" edge case): an import error or a bug in
+ * the preflight itself must degrade to a single "not run" flag, never fail the whole vet pass --
+ * dependency/superseded/merged-work rules above have already decided this card's verdict by the
+ * time this runs, and that decision must not be put at risk by this strictly-additional read.
+ */
+function computeAcceptanceFlags(task) {
+  try {
+    return checkAcceptanceAuthoringPreflight(task, { agentName: task.agent, taskStoreKind: "db" }).flags;
+  } catch (err) {
+    return [{ text: null, reasons: [`acceptance-authoring preflight check not run (degraded): ${err.message}`] }];
+  }
+}
+
+/**
  * Runs every rule in order over `tasks` and returns the full decision table: which eligible-at-all
  * cards were readied, which were skipped, the rule that decided each, and the evidence behind it.
  * Never mutates `tasks`. Deterministic: both lists are sorted by numeric card id.
@@ -281,7 +303,16 @@ export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
   const decided = [];
 
   function skip(task, rule, check) {
-    decided.push({ id: task.id, title: task.title, priority: task.priority, verdict: "skip", rule, reason: check.reason, evidence: check.evidence });
+    decided.push({
+      id: task.id,
+      title: task.title,
+      priority: task.priority,
+      verdict: "skip",
+      rule,
+      reason: check.reason,
+      evidence: check.evidence,
+      acceptanceFlags: computeAcceptanceFlags(task)
+    });
   }
 
   const passRule1 = [];
@@ -318,6 +349,7 @@ export async function vetAndReady({ tasks, gitLogGrep, cap = READY_CAP }) {
       rule: "5-cap-ok",
       reason: `every rule passed; readied (priority ${task.priority}, within the cap of ${effectiveCap})`,
       evidence: "",
+      acceptanceFlags: computeAcceptanceFlags(task),
       // T-0384 FIX ROUND 4 (Codex review 2026-09-19, P2 #1): the ORIGINAL, selection-time snapshot
       // of this card -- the one every rule above actually vetted -- carried forward so the caller
       // can compare it against a fresh re-fetch immediately before the write (see

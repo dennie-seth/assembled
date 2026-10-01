@@ -27,7 +27,11 @@ import { CLAUDE_DIR_DENIAL_REASON } from "./toolAllowlist.js";
 // T-0374's own seven denied mechanisms) -- so this fires the same way for every agent, including
 // one (like `infra`) whose nominal path scope names `.claude/**` as in-scope.
 const CLAUDE_PATH_RE = /`(\.claude\/[^`]+)`/g;
-const EDIT_CUE_RE =
+// T-0425: exported so acceptanceVetPreflight.js's Class B check (an acceptance-authoring-time
+// over-constraint check, not a Class-A member) can reuse the same "this text requires an edit"
+// cue instead of restating a near-identical word list -- the "no pattern duplicated" acceptance
+// rule is about a second DEFINITION of a pattern, not about a second module importing this one.
+export const EDIT_CUE_RE =
   /\b(?:edit(?:s|ed|ing)?|updat(?:e|es|ed|ing)|modif(?:y|ies|ied|ying)|chang(?:e|es|ed|ing)|add(?:s|ed|ing)?|creat(?:e|es|ed|ing)|writ(?:e|es|ing)|written|rewrit(?:e|es|ing)|rewritten|extend(?:s|ed|ing)?)\b/i;
 
 function detectClaudeDirEdit(text) {
