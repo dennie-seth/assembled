@@ -1,0 +1,62 @@
+[
+  {
+    "x": 524,
+    "y": 320,
+    "polarity": "positive",
+    "derivation": "right_upper_arm = midpoint(JOINT[2], JOINT[3])"
+  },
+  {
+    "x": 573,
+    "y": 102,
+    "polarity": "negative",
+    "derivation": "sibling_part:head"
+  },
+  {
+    "x": 513,
+    "y": 399,
+    "polarity": "negative",
+    "derivation": "sibling_part:torso"
+  },
+  {
+    "x": 537,
+    "y": 491,
+    "polarity": "negative",
+    "derivation": "sibling_part:right_lower_arm"
+  },
+  {
+    "x": 4,
+    "y": 4,
+    "polarity": "negative",
+    "derivation": "corner_top_left"
+  },
+  {
+    "x": 1020,
+    "y": 4,
+    "polarity": "negative",
+    "derivation": "corner_top_right"
+  },
+  {
+    "x": 4,
+    "y": 1020,
+    "polarity": "negative",
+    "derivation": "corner_bottom_left"
+  },
+  {
+    "x": 1020,
+    "y": 1020,
+    "polarity": "negative",
+    "derivation": "corner_bottom_right"
+  },
+  {
+    "x": 527,
+    "y": 952,
+    "polarity": "negative",
+    "derivation": "side_neutral_panel_leg_region (right ANKLE[10], not decomposed by this card)"
+  },
+  {
+    "x": 501,
+    "y": 952,
+    "polarity": "negative",
+    "derivation": "side_neutral_panel_leg_region (left ANKLE[13], not decomposed by this card)"
+  }
+]
