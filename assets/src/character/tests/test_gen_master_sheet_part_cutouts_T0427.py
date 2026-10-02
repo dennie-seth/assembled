@@ -31,6 +31,26 @@ modules:
      seam than the shoulder-elbow midpoint the old sibling-negative alone
      provided.
 
+[ROUND 2, same card] The first live run of the above produced masks that
+mechanically isolated and even detected on both T-pose panels, but the
+reviewer's second FAIL (pixel-measured against the whole-figure Oklab mask)
+caught that the centerline-only run is a narrow vertical strip -- on
+`side_left_forward` it measured 20,111px / 4.8% of the whole figure,
+*smaller* than T-0423's own already-rejected 36,653px/8.8% mask, and
+visually excludes the entire cloak -- the opposite of the "complete-looking
+triangular coat/cloak silhouette" the first round's README claimed. A
+positive run confined to one centerline cannot, by construction, claim
+pixels off that line; it needs points on each actual side of the garment to
+have a chance of growing there.
+
+  3. Two LATERAL positive points are added to the torso's own positive set,
+     one per side, each anchored at `midpoint(shoulder, hip)` on that side
+     (`_TORSO_LATERAL_POSITIVE_JOINT_PAIRS`) -- a real anatomical landmark
+     on the torso's own left/right edge, distinct from the arm (which hangs
+     from the shoulder outward) and distinct from the centerline run. The
+     torso's positive set is now 5 points (3 centerline + 2 lateral), never
+     fewer -- this is additive to finding 2's fix, not a replacement.
+
 Neither change touches any OTHER part's own prompt derivation, the
 isolation machinery (`char_gen.part_isolation`), the suitability machinery
 (`char_gen.part_suitability`), or the all-pairs overlap mechanism
@@ -39,9 +59,8 @@ torso's own request only and reuses everything else unmodified, which the
 regression tests below also assert.
 
 RED state: `gen_master_sheet_part_cutouts_T0417.part_prompt_points` still
-emits exactly one positive point for `torso` (the old single
-midpoint-of-midpoint anchor) and no shoulder-joint negatives -> every
-assertion on the new three-point run / shoulder negatives below fails.
+emits exactly three positive points for `torso` (the centerline-only run,
+no lateral points) -> every assertion on the new 5-point set below fails.
 """
 
 from __future__ import annotations
@@ -86,11 +105,13 @@ class TestTorsoPositiveRunReplacesTheSinglePoint:
     long coat for either T-pose panel. The fix is a run of points down the
     torso's own centerline, not one guess."""
 
-    def test_torso_has_a_three_point_positive_run(self):
+    def test_torso_centerline_run_contributes_three_positive_points(self):
         points = rig.keypoints_for("front_tpose")
         records = gen.part_prompt_points("front_tpose", "torso", points, PANEL_SIZE)
-        positives = [r for r in records if r["polarity"] == "positive"]
-        assert len(positives) == 3
+        centerline_derivations = [
+            r for r in records if r["polarity"] == "positive" and "torso_run" in r["derivation"]
+        ]
+        assert len(centerline_derivations) == 3
 
     def test_torso_run_fractions_are_exactly_point_three_five_seven(self):
         assert gen._TORSO_POSITIVE_RUN_FRACTIONS == (0.3, 0.5, 0.7)
@@ -98,7 +119,11 @@ class TestTorsoPositiveRunReplacesTheSinglePoint:
     def test_torso_run_points_match_the_lerp_derivation(self):
         points = rig.keypoints_for("front_tpose")
         records = gen.part_prompt_points("front_tpose", "torso", points, PANEL_SIZE)
-        positives = {(r["x"], r["y"]) for r in records if r["polarity"] == "positive"}
+        positives = {
+            (r["x"], r["y"])
+            for r in records
+            if r["polarity"] == "positive" and "torso_run" in r["derivation"]
+        }
 
         neck = points[_NECK]
         hip_mid = ((points[_R_HIP][0] + points[_L_HIP][0]) / 2.0,
@@ -129,7 +154,11 @@ class TestTorsoPositiveRunReplacesTheSinglePoint:
     def test_torso_run_points_are_ordered_from_neck_toward_hips(self):
         points = rig.keypoints_for("front_tpose")
         records = gen.part_prompt_points("front_tpose", "torso", points, PANEL_SIZE)
-        positives = [(r["y"]) for r in records if r["polarity"] == "positive"]
+        positives = [
+            r["y"]
+            for r in records
+            if r["polarity"] == "positive" and "torso_run" in r["derivation"]
+        ]
         # front_tpose is upright -- NECK sits above the hips (smaller
         # normalized y), so the three run points increase in y monotonically.
         assert positives == sorted(positives)
@@ -140,7 +169,75 @@ class TestTorsoPositiveRunReplacesTheSinglePoint:
             points = rig.keypoints_for(panel_key)
             records = gen.part_prompt_points(panel_key, "torso", points, PANEL_SIZE)
             positives = [r for r in records if r["polarity"] == "positive"]
-            assert len(positives) == 3, panel_key
+            assert len(positives) == 5, panel_key
+
+
+class TestTorsoLateralPositivePointsWidenTheCoat:
+    """[ROUND 2] The centerline-only run (finding 2) cannot claim pixels off
+    its own line -- the reviewer's second FAIL measured `side_left_forward`'s
+    resulting mask at 20,111px/4.8% of the whole figure, missing the entire
+    cloak. Two lateral positive points, one per side at `midpoint(shoulder,
+    hip)` -- a real point on the torso's own left/right edge, not the arm
+    and not the centerline -- are added so the request has a chance to grow
+    into the garment's actual width."""
+
+    def test_torso_gets_two_lateral_positive_points_in_addition_to_the_run(self):
+        points = rig.keypoints_for("front_tpose")
+        records = gen.part_prompt_points("front_tpose", "torso", points, PANEL_SIZE)
+        positives = [r for r in records if r["polarity"] == "positive"]
+        assert len(positives) == 5
+
+    def test_lateral_positive_joint_pairs_are_shoulder_hip_per_side(self):
+        pairs = {(a, b) for a, b, _side in gen._TORSO_LATERAL_POSITIVE_JOINT_PAIRS}
+        assert pairs == {(_R_SHOULDER, _R_HIP), (_L_SHOULDER, _L_HIP)}
+
+    def test_lateral_points_match_the_shoulder_hip_midpoint(self):
+        points = rig.keypoints_for("front_tpose")
+        records = gen.part_prompt_points("front_tpose", "torso", points, PANEL_SIZE)
+        lateral = {
+            (r["x"], r["y"])
+            for r in records
+            if r["polarity"] == "positive" and "torso_lateral" in r["derivation"]
+        }
+        assert len(lateral) == 2
+
+        r_mid = _lerp(points[_R_SHOULDER], points[_R_HIP], 0.5)
+        l_mid = _lerp(points[_L_SHOULDER], points[_L_HIP], 0.5)
+        expected = {
+            (int(r_mid[0] * PANEL_SIZE), int(r_mid[1] * PANEL_SIZE)),
+            (int(l_mid[0] * PANEL_SIZE), int(l_mid[1] * PANEL_SIZE)),
+        }
+        assert lateral == expected
+
+    def test_lateral_points_applied_on_every_figure_panel(self):
+        for panel_key in FIGURE_PANEL_KEYS:
+            points = rig.keypoints_for(panel_key)
+            records = gen.part_prompt_points(panel_key, "torso", points, PANEL_SIZE)
+            lateral_derivations = [
+                r["derivation"]
+                for r in records
+                if r["polarity"] == "positive" and "torso_lateral" in r["derivation"]
+            ]
+            assert len(lateral_derivations) == 2, panel_key
+
+    def test_lateral_points_are_additive_to_the_centerline_run_not_a_replacement(self):
+        points = rig.keypoints_for("front_tpose")
+        records = gen.part_prompt_points("front_tpose", "torso", points, PANEL_SIZE)
+        positive_derivations = [r["derivation"] for r in records if r["polarity"] == "positive"]
+        run_count = sum(1 for d in positive_derivations if "torso_run" in d)
+        lateral_count = sum(1 for d in positive_derivations if "torso_lateral" in d)
+        assert run_count == 3
+        assert lateral_count == 2
+
+    def test_only_torso_gets_lateral_points_not_other_parts(self):
+        points = rig.keypoints_for("front_tpose")
+        for part_key in ("head", "right_upper_arm", "right_lower_arm"):
+            records = gen.part_prompt_points("front_tpose", part_key, points, PANEL_SIZE)
+            assert not any(
+                "torso_lateral" in r["derivation"]
+                for r in records
+                if r["polarity"] == "positive"
+            )
 
 
 class TestTorsoShoulderNegativesStopTheArmSwallow:
@@ -250,7 +347,7 @@ class TestSeparateSam3CallStructurePreservedForTorsosMultiPointRequest:
     ONE call is still one call; it is not six parts folded into a shared
     request, which is the failure mode this machinery exists to prevent."""
 
-    def test_torso_graph_carries_three_positive_coords_in_one_call(self):
+    def test_torso_graph_carries_five_positive_coords_in_one_call(self):
         points = rig.keypoints_for("front_tpose")
         records = gen.part_prompt_points("front_tpose", "torso", points, PANEL_SIZE)
         positive_coords = [
@@ -268,7 +365,7 @@ class TestSeparateSam3CallStructurePreservedForTorsosMultiPointRequest:
             filename_prefix="T0427_sam3_front_tpose_torso",
         )
         coords = json.loads(graph["3"]["inputs"]["positive_coords"])
-        assert len(coords) == 3
+        assert len(coords) == 5
 
     def test_front_tpose_still_produces_exactly_six_separate_graphs(self):
         points = rig.keypoints_for("front_tpose")
@@ -294,7 +391,7 @@ class TestSeparateSam3CallStructurePreservedForTorsosMultiPointRequest:
         for part_key, graph in graphs.items():
             coords = json.loads(graph["3"]["inputs"]["positive_coords"])
             if part_key == "torso":
-                assert len(coords) == 3
+                assert len(coords) == 5
             else:
                 assert len(coords) == 1
 

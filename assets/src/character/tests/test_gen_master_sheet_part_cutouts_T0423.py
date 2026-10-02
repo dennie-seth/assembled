@@ -209,16 +209,19 @@ class TestTorsoAnchorDesignDecision:
     def test_torso_midpoint_anchor_is_still_the_middle_of_t0427s_positive_run(self):
         # [T-0427] T-0423's own evidence found this single point measured
         # an EMPTY detection on both T-pose panels -- the torso's positive
-        # set is now a three-point run down its own centerline
-        # (`_TORSO_POSITIVE_RUN_FRACTIONS`, see
+        # set is now a three-point centerline run
+        # (`_TORSO_POSITIVE_RUN_FRACTIONS`) plus two lateral shoulder/hip
+        # points (`_TORSO_LATERAL_POSITIVE_JOINT_PAIRS`, ROUND 2 of this
+        # same card -- the centerline-only run alone was still a narrow
+        # strip), five positive points total -- see
         # tests/test_gen_master_sheet_part_cutouts_T0427.py for the full
-        # pin), not one point. This design decision's own midpoint-of-
-        # midpoint derivation is unchanged and still present -- as the
-        # t=0.5 MIDDLE point of that run, not discarded.
+        # pin. This design decision's own midpoint-of-midpoint derivation is
+        # unchanged and still present -- as the t=0.5 MIDDLE point of the
+        # centerline run, not discarded.
         points = rig.keypoints_for("front_tpose")
         records = gen.part_prompt_points("front_tpose", "torso", points, PANEL_SIZE)
         positives = [r for r in records if r["polarity"] == "positive"]
-        assert len(positives) == 3
+        assert len(positives) == 5
 
         neck_x, neck_y = points[_NECK]
         r_hip_x, r_hip_y = points[_R_HIP]
@@ -379,10 +382,11 @@ class TestSeparateSam3CallPerFigurePart:
 
     def test_each_part_builds_its_own_single_positive_coord_graph(self):
         # [T-0427] "Single positive coord" no longer holds for `torso`
-        # specifically -- its own request is now a three-point run down
-        # its centerline (see test_gen_master_sheet_part_cutouts_T0427.py)
-        # -- but every OTHER figure part still gets exactly one, and this
-        # is still six separate graphs, never one shared request.
+        # specifically -- its own request is now a five-point set (a
+        # three-point centerline run plus two lateral shoulder/hip points,
+        # see test_gen_master_sheet_part_cutouts_T0427.py) -- but every
+        # OTHER figure part still gets exactly one, and this is still six
+        # separate graphs, never one shared request.
         points = rig.keypoints_for("front_tpose")
         model_loader = {"class_type": "FakeSam3Loader", "inputs": {}}
         graphs = {}
@@ -406,7 +410,7 @@ class TestSeparateSam3CallPerFigurePart:
         positive_sets = set()
         for part_key, graph in graphs.items():
             coords = json.loads(graph["3"]["inputs"]["positive_coords"])
-            expected_len = 3 if part_key == "torso" else 1
+            expected_len = 5 if part_key == "torso" else 1
             assert len(coords) == expected_len
             positive_sets.add(tuple(sorted((c["x"], c["y"]) for c in coords)))
         assert len(positive_sets) == 6
