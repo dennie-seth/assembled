@@ -9,12 +9,17 @@ Differences from T-0199 (test_player_crouch_hide_gate.py / v1):
   - Adds test_concept_hash: verifies provenance JSON contains `concept_hash`
     matching the SHA-256 of player_idle_sheet_v2.png (T-0212 output).
 
-RED state:  assets/final/character/player_crouch_hide_sheet_v2.png absent
+RED state:  assets/archive/character/player_crouch_hide_sheet_v2.png absent
             → SHEET_PATH fixture raises AssertionError, all tests ERROR.
 GREEN state: sheet present, mode P, 144×144; passes palette-membership,
              index-semantics, cell-fit (3×3, 48×48), orphan-pixel per frame
              cell, frame-consistency between adjacent crouch frames, and
              concept_hash in provenance JSON.
+
+T-0424: this sheet was archived to assets/archive/character/ (measured on
+merit, see docs/decision-log.md DL-32) -- nothing in client/ referenced it
+and its pose returns via T-0260's successor. Only the path changed; no
+assertion below was relaxed.
 
 Install:
     pip install -e ".[dev]" -e ../../../../tools/asset-gate
@@ -32,13 +37,15 @@ asset_gate_art = pytest.importorskip("asset_gate.art")
 asset_gate_palette = pytest.importorskip("asset_gate.palette")
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+# T-0424: archived out of assets/final/ (measured on merit, see DL-32) --
+# this file moved, the gate checks below did not change.
 SHEET_PATH = (
-    REPO_ROOT / "assets" / "final" / "character" / "player_crouch_hide_sheet_v2.png"
+    REPO_ROOT / "assets" / "archive" / "character" / "player_crouch_hide_sheet_v2.png"
 )
 PROVENANCE_PATH = (
     REPO_ROOT
     / "assets"
-    / "final"
+    / "archive"
     / "character"
     / "player_crouch_hide_sheet_v2.provenance.json"
 )
