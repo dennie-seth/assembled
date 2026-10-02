@@ -34,6 +34,38 @@ const CLAUDE_PATH_RE = /`(\.claude\/[^`]+)`/g;
 export const EDIT_CUE_RE =
   /\b(?:edit(?:s|ed|ing)?|updat(?:e|es|ed|ing)|modif(?:y|ies|ied|ying)|chang(?:e|es|ed|ing)|add(?:s|ed|ing)?|creat(?:e|es|ed|ing)|writ(?:e|es|ing)|written|rewrit(?:e|es|ing)|rewritten|extend(?:s|ed|ing)?)\b/i;
 
+// T-0425 FIX ROUND: a clause-scoped negation cue, kept beside EDIT_CUE_RE rather than re-derived at
+// acceptanceVetPreflight.js's own call site -- that is the "no pattern duplicated" rule's point,
+// not a license to bolt negation-awareness onto EDIT_CUE_RE's own run-time semantics. "Clause" is
+// deliberately crude -- text split on `.`, `;`, `:`, or a newline -- rather than real parsing: a
+// negation word and the cue it negates must share a clause, so "Do not weaken the gate; edit X"
+// keeps "edit X" genuine (different clause) while "Do not edit X" does not (same clause).
+const NEGATION_CUE_RE =
+  /\b(?:do\s+not|does\s+not|did\s+not|don't|doesn't|didn't|never|must\s+not|shall\s+not|should\s+not|won't|will\s+not|cannot|can't|no\s+longer)\b/i;
+
+/**
+ * True when `text` has at least one clause where `cueRe` matches and that SAME clause has no
+ * negation cue -- i.e. a genuine, unnegated hit. General over any cue regex (acceptanceVetPreflight
+ * .js's Class C hardcoded-count patterns use this too), not just EDIT_CUE_RE.
+ */
+export function hasUnnegatedMatch(text, cueRe) {
+  if (typeof text !== "string" || text.length === 0) {
+    return false;
+  }
+  return text.split(/[.;:\n]+/).some((clause) => cueRe.test(clause) && !NEGATION_CUE_RE.test(clause));
+}
+
+// T-0425 FIX ROUND: an OPT-IN companion to EDIT_CUE_RE -- used only by acceptanceVetPreflight.js's
+// Class B check (an author-time-only check this fix round adds). detectClaudeDirEdit below (Class
+// A, read at both author-time AND run-time via the shared registry) is deliberately NOT switched
+// onto this: changing what an already-shipped criterion's wording resolves to at run-time is
+// exactly what this fix round's own acceptance forbids ("do not change EDIT_CUE_RE's run-time
+// semantics"). A future run-time caller that wants the negation-aware read can opt in the same way
+// Class B does, by calling this directly -- it is never silently inherited.
+export function hasUnnegatedEditCue(text) {
+  return hasUnnegatedMatch(text, EDIT_CUE_RE);
+}
+
 function detectClaudeDirEdit(text) {
   CLAUDE_PATH_RE.lastIndex = 0;
   const paths = [];

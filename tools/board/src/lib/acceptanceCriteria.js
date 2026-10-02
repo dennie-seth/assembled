@@ -10,7 +10,7 @@
 // can no longer diverge on what counts as "the" Acceptance heading (see vetAndReady.js).
 export const ACCEPTANCE_HEADING_TEXT_SRC = "Acceptance(?![A-Za-z0-9-])";
 export const ACCEPTANCE_HEADING_RE = new RegExp(`^#{1,6}\\s+${ACCEPTANCE_HEADING_TEXT_SRC}`, "i");
-const HEADING_RE = /^#{1,6}\s+/;
+export const HEADING_RE = /^#{1,6}\s+/;
 export const CHECKBOX_RE = /^-\s*\[([ xX])\]\s*(.+)$/;
 
 /**
@@ -39,6 +39,53 @@ export function parseAcceptanceCriteria(body) {
     const match = CHECKBOX_RE.exec(line);
     if (match) {
       items.push({ text: match[2].trim(), checked: match[1].toLowerCase() === "x" });
+    }
+  }
+  return items;
+}
+
+/**
+ * T-0425 FIX ROUND: like parseAcceptanceCriteria, but reconstructs each criterion's FULL logical
+ * text -- continuation lines included -- bounded at the next checkbox item or the next
+ * heading/section, same as parseAcceptanceCriteria's own section boundary. parseAcceptanceCriteria
+ * itself stays first-line-only on purpose: every run-time/reviewer-time reader
+ * (impossibleAcceptancePreflight.js, reviewerPrompt.js) depends on that exact behaviour, and this
+ * fix round changes none of it. This is a SEPARATE, author-time-only reader for
+ * acceptanceVetPreflight.js's own checks, which need to see a criterion's whole text, not just its
+ * opening line, to catch a conflict or a hardcoded count that only appears on a wrapped line.
+ *
+ * Two deliberate choices, stated here so they're decisions rather than accidents:
+ * - A continuation line is NEVER treated as a new criterion based on its own shape -- only an
+ *   actual `- [ ]`/`- [x]` match ends one. A nested bullet, a table row, or a fenced-code line is
+ *   therefore captured as prose and joined onto the criterion above it.
+ * - Fenced code-block content COUNTS as part of the criterion's text (not stripped) -- a path or
+ *   command named only inside a fence is still real author-time signal; silently dropping it would
+ *   just be a fresh blind spot of the same shape this function exists to close.
+ * A blank/whitespace-only continuation line contributes nothing but does not end the criterion --
+ * a later, non-blank continuation line still joins onto it.
+ */
+export function parseAcceptanceCriteriaWithContinuations(body) {
+  if (typeof body !== "string") {
+    return [];
+  }
+  const lines = body.split(/\r?\n/);
+  const startIdx = lines.findIndex((line) => ACCEPTANCE_HEADING_RE.test(line.trim()));
+  if (startIdx === -1) {
+    return [];
+  }
+  const items = [];
+  let current = null;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (HEADING_RE.test(line)) {
+      break;
+    }
+    const match = CHECKBOX_RE.exec(line);
+    if (match) {
+      current = { text: match[2].trim(), checked: match[1].toLowerCase() === "x" };
+      items.push(current);
+    } else if (current && line.length > 0) {
+      current.text += ` ${line}`;
     }
   }
   return items;

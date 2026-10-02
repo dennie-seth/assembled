@@ -1,5 +1,5 @@
-import { parseAcceptanceCriteria } from "../lib/acceptanceCriteria.js";
-import { classifyAcceptanceItem, EDIT_CUE_RE } from "./structuralUnsatisfiability.js";
+import { parseAcceptanceCriteriaWithContinuations } from "../lib/acceptanceCriteria.js";
+import { classifyAcceptanceItem, hasUnnegatedEditCue, hasUnnegatedMatch } from "./structuralUnsatisfiability.js";
 
 /**
  * T-0425: the author-time half of the warning T-0424's retro asked for. T-0409's
@@ -23,9 +23,10 @@ import { classifyAcceptanceItem, EDIT_CUE_RE } from "./structuralUnsatisfiabilit
  * Limits, stated plainly: this only catches the shape across two DISTINCT acceptance items, the
  * same shape the real incident had -- a single criterion that both asserts and contradicts itself
  * in one sentence is not covered. It also only compares path tokens found inside `## Acceptance`
- * itself (parseAcceptanceCriteria's own scope) -- an edit requirement stated only in `## Scope` or
- * `## Do not` is invisible to it, by the same "only criteria are graded" rule the edge cases ask
- * for. Detecting whether two ARBITRARY criteria's literal conjunction is unsatisfiable is
+ * itself (parseAcceptanceCriteriaWithContinuations's own scope, same section boundary as
+ * parseAcceptanceCriteria) -- an edit requirement stated only in `## Scope` or `## Do not` is
+ * invisible to it, by the same "only criteria are graded" rule the edge cases ask for. Detecting
+ * whether two ARBITRARY criteria's literal conjunction is unsatisfiable is
  * undecidable in general; this detects exactly the one tractable shape named above, nothing more.
  *
  * Class C -- a hardcoded count or "before" state (`"14 before, 2 after"`, `"N failures"`, `"reports
@@ -47,6 +48,45 @@ import { classifyAcceptanceItem, EDIT_CUE_RE } from "./structuralUnsatisfiabilit
  * WARN-only, mirroring impossibleAcceptancePreflight.js / edgeCasesPreflight.js's own posture: this
  * module never returns a pass/fail verdict and must never gate anything. `vetAndReady.js` attaches
  * its `flags` to a card's decision-table entry regardless of verdict; the card still readies.
+ *
+ * T-0425 FIX ROUND (Chat's review of PR #429, 2026-10-02) -- two detection defects fixed, detection
+ * logic only, no change to readiness or run-time behaviour:
+ *
+ * Finding 1 (negation/quoted mentions). `EDIT_CUE_RE.test(other.text)` and the Class-C count
+ * patterns are bare regex tests with no notion of negation or quotation -- "Do not edit X" was read
+ * as an edit REQUIREMENT, and "Do not assume 14 failures" was read as the hardcoded claim it is
+ * actually warning against. Fixed two ways:
+ *   - Negation: `hasUnnegatedEditCue`/`hasUnnegatedMatch` (structuralUnsatisfiability.js, beside
+ *     EDIT_CUE_RE, not re-derived here) split text into clauses on `.`/`;`/`:`/newline and require
+ *     the cue and a negation word ("do not", "never", "must not", ...) to share a clause. "Do not
+ *     weaken the gate; edit X" therefore still reads as a genuine edit requirement -- the negation
+ *     is in a different clause. This is opt-in: Class A's run-time detector (detectClaudeDirEdit)
+ *     is NOT switched onto it, so a `.claude/**` criterion classifies identically at run-time and
+ *     author-time, as the shared-registry design requires.
+ *   - Quotation: `stripQuotedSpans` removes double-quoted substrings before the edit-cue/count
+ *     tests run, so a criterion that quotes a phrase ("edit `X`", "14 failures") purely to
+ *     illustrate or forbid it is not misread as a live assertion. This is local to this module --
+ *     quoting-as-illustration is an author-time-prose concern, not a run-time classification one.
+ *   A single criterion that is BOTH a prohibition and a permission (e.g. "diff is empty -- the
+ *   ONLY permitted edit is X") is handled by the existing i!==j self-comparison skip in
+ *   `detectDiffEmptyOverConstraint`, not by any negation-specific carve-out: it is one
+ *   self-describing criterion, never compared against itself, so no blanket "contains a negation,
+ *   skip it" rule was added (which would risk silencing a genuine two-criterion conflict phrased
+ *   with "only"/"permitted" elsewhere).
+ *   Not covered, by deliberate choice, same "deliberately narrow per detector" philosophy as every
+ *   other class here: word-form counts ("fourteen failures") and separator-formatted counts
+ *   ("1,400 tests") are not matched by Class C's digit-only (`\d+`) patterns.
+ *
+ * Finding 2 (continuation lines). `parseAcceptanceCriteria` is deliberately first-line-only --
+ * every run-time/reviewer-time reader depends on exactly that, and this fix round changes none of
+ * it. But it also meant a criterion whose path or command wrapped onto an indented continuation
+ * line was invisible to every check below. `parseAcceptanceCriteriaWithContinuations`
+ * (acceptanceCriteria.js) is a separate, author-time-only reader this module now uses instead:
+ * it reconstructs each criterion's full logical text, continuations included, bounded at the next
+ * `- [ ]` item or the next heading/section. Fenced code-block content counts as ordinary
+ * continuation prose (not stripped); a nested bullet, table row, or blank line mid-criterion is
+ * never mistaken for a new criterion or an early stop. See that function's own docstring for the
+ * full statement of these choices.
  */
 
 // Class B: the diff-empty / "unchanged" cue a criterion uses to assert a path has no changes.
@@ -71,6 +111,17 @@ function pathsOverlap(a, b) {
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
+// T-0425 FIX ROUND: a double-quoted (straight or curly) substring is an author illustrating or
+// forbidding a pattern in prose, not asserting it live for this card -- see this card's own body,
+// which does exactly that with "Do not edit ..." and "14 failures" examples. Backtick-quoted paths
+// are untouched: this is about English-prose quoting, not this codebase's own path-quoting
+// convention, and stripping backticks would remove the very path tokens Class B needs to compare.
+const QUOTED_SPAN_RE = /"[^"]*"|“[^”]*”/g;
+
+function stripQuotedSpans(text) {
+  return text.replace(QUOTED_SPAN_RE, "");
+}
+
 /**
  * Class B over the whole criteria set at once (it's inherently cross-item): returns
  * `Map<itemIndex, Set<reason>>` for every criterion that asserts a diff-empty/unchanged path also
@@ -86,7 +137,7 @@ function detectDiffEmptyOverConstraint(items) {
     if (diffPaths.length === 0) return;
 
     items.forEach((other, j) => {
-      if (j === i || !EDIT_CUE_RE.test(other.text)) return;
+      if (j === i || !hasUnnegatedEditCue(stripQuotedSpans(other.text))) return;
       for (const diffPath of diffPaths) {
         for (const editPath of pathsByIndex[j]) {
           if (!pathsOverlap(diffPath, editPath)) continue;
@@ -115,7 +166,8 @@ const HARDCODED_COUNT_PATTERNS = [
 ];
 
 function detectHardcodedCounts(text) {
-  return HARDCODED_COUNT_PATTERNS.filter(({ re }) => re.test(text)).map(
+  const stripped = stripQuotedSpans(text);
+  return HARDCODED_COUNT_PATTERNS.filter(({ re }) => hasUnnegatedMatch(stripped, re)).map(
     ({ label }) =>
       `Class C (hardcoded stateful claim) -- asserts ${label} -- verify this against the card's OWN base ` +
       'branch before relying on it, or restate as a branch-relative invariant (e.g. "nothing that passed ' +
@@ -139,7 +191,7 @@ function detectHardcodedCounts(text) {
 export function checkAcceptanceAuthoringPreflight(task, ctx = {}) {
   const { agentName, taskStoreKind = "db" } = ctx;
   const body = task?.body ?? "";
-  const items = parseAcceptanceCriteria(body);
+  const items = parseAcceptanceCriteriaWithContinuations(body);
 
   if (items.length === 0) {
     return {
