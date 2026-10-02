@@ -178,17 +178,18 @@ class TestCommittedRecordsUnchangedByThisRound:
         # [T-0427] This one entry is a DELIBERATE exception to this class's
         # own "never revises measurement" rule: T-0427's whole premise is
         # retuning the torso's own SAM3 request and re-running it live
-        # against every figure panel, including side_right_forward -- its
-        # pixel count moved from T-0423's original 126159 to 108815 (the
-        # shoulder-seam negatives pulling the mask in slightly), while
-        # staying mechanically isolated throughout. See
-        # docs/assets/evidence/T-0427/README.md for the full retuned
+        # against every figure panel, including side_right_forward. ROUND 2
+        # added lateral shoulder/hip positive points on top of round 1's
+        # centerline run (round 1's own 108815 came from the shoulder-seam
+        # negatives alone); the live re-run with lateral points moved this
+        # panel's count to 107293, staying mechanically isolated throughout.
+        # See docs/assets/evidence/T-0427/README.md for the full retuned
         # picture; `front_tpose_right_upper_arm`/`front_tpose_head` above
         # are untouched by T-0427 and still pin their original T-0423
         # numbers unmodified.
         data = json.loads((EVIDENCE_DIR / "part_comparison.json").read_text())
         rec = data["panels"]["side_right_forward"]["parts"]["torso"]
-        assert rec["foreground_px_after_isolation"] == 108815
+        assert rec["foreground_px_after_isolation"] == 107293
         assert rec["isolated"] is True
 
     def test_head_overlap_rejected_on_both_forward_panels(self):
@@ -308,4 +309,70 @@ class TestFigurePartSuitabilityReport:
             ("side_neutral", "head"),
             ("front_tpose", "torso"),  # blind spot, not a real win -- see above
             ("back_tpose", "torso"),  # blind spot, not a real win -- see above
+        }
+
+
+@pytest.mark.skipif(not EVIDENCE_DIR.exists(), reason="T-0417/T-0423 evidence dir not present")
+class TestT0427OwnScriptDoesNotRepeatTheAdequateMislabel:
+    """[T-0427 ROUND 2] T-0423's own frozen script (tested above) has a
+    known blind spot that silently mislabels `front_tpose/torso` and
+    `back_tpose/torso` as usable -- tolerated above as a reproduction of
+    what that UNMODIFIED script computes, never as correct. This card's own
+    `assess_figure_part_suitability_T0427.py` is the script that actually
+    produced the committed README, and it must not repeat round 1's own
+    mistake: the reviewer's second FAIL on this card found `_TORSO_VISUAL_
+    FINDINGS` called `side_left_forward/torso` "adequate"/"a complete-
+    looking triangular coat/cloak silhouette" when the committed mask
+    (20,111px, 4.8% of the whole figure) excluded the entire cloak. These
+    tests pin the corrected report: no torso row is ever "adequate" on any
+    of the five figure panels, and the headline totals reflect zero new
+    usable torsos, not a count inflated by a mislabel."""
+
+    def _report(self):
+        import assess_figure_part_suitability_T0427 as report
+
+        return report.compute_report()
+
+    def test_no_torso_row_is_labelled_adequate_on_any_panel(self):
+        # The exact failure mode the reviewer caught: a "partial" or
+        # "mechanically rejected" torso wrongly reported as "adequate".
+        # This guards against a repeat on ANY of the five figure panels,
+        # not just the one the reviewer happened to measure.
+        per_part, _ = self._report()
+        torso_rows = [r for r in per_part if r["part"] == "torso"]
+        assert len(torso_rows) == 5
+        for row in torso_rows:
+            assert row["suitability"] != "adequate", row
+
+    def test_side_left_forward_torso_is_partial_not_adequate(self):
+        # Direct regression pin for the reviewer's own specific finding.
+        per_part, _ = self._report()
+        row = next(
+            r for r in per_part if r["panel"] == "side_left_forward" and r["part"] == "torso"
+        )
+        assert row["isolated"] is True
+        assert row["suitability"] == "partial"
+        assert row["usable"] is False
+
+    def test_totals_show_zero_new_usable_torsos_this_round(self):
+        # T-0427's own (correct) script must land on T-0423's original 5
+        # usable parts, not an inflated count -- unlike the frozen T-0423
+        # script's own blind-spot-inflated 7 (pinned separately above as a
+        # reproduction of that script's known behaviour, not a target).
+        _, totals = self._report()
+        assert totals == {
+            "requested": 24,
+            "mechanically_isolated": 11,
+            "anatomically_usable": 5,
+        }
+
+    def test_the_five_usable_parts_are_exactly_t0423s_original_five(self):
+        per_part, _ = self._report()
+        usable = {(r["panel"], r["part"]) for r in per_part if r["present"] and r.get("usable")}
+        assert usable == {
+            ("back_tpose", "head"),
+            ("back_tpose", "right_lower_arm"),
+            ("back_tpose", "left_lower_arm"),
+            ("side_left_forward", "left_lower_arm"),
+            ("side_neutral", "head"),
         }

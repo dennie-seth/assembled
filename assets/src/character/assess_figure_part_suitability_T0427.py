@@ -60,44 +60,71 @@ _PANEL_KEYPOINTS = {
     "side_neutral": rig.SIDE_NEUTRAL_KEYPOINTS_NORM,
 }
 
-#: [T-0427] Visual findings for `torso` parts re-run by this card -- a
-#: fresh, honest re-inspection of the NEW evidence PNGs this run produced,
-#: following the exact same "no second joint to measure beyond, so judged
-#: visually, cited by file" rule T-0423's own module docstring states.
-#: `head` is untouched by this card (not re-run) -- T-0423's own
-#: `_VISUAL_FINDINGS` entries for `head` still apply verbatim and are not
-#: duplicated here.
+#: [T-0427 ROUND 2] Visual findings for `torso`, re-measured after adding
+#: the lateral shoulder/hip positive points (`_TORSO_LATERAL_POSITIVE_JOINT_PAIRS`)
+#: on top of round 1's centerline run. **Round 1's own findings for
+#: `side_right_forward` and `side_left_forward` here were WRONG** -- the
+#: reviewer's second FAIL on this card measured `side_left_forward`'s
+#: actual committed mask (20,111px, 4.8% of the whole-figure mask) against
+#: the source panel and found it covers part of the brown tunic only,
+#: missing the entire green cloak -- the opposite of "a complete-looking
+#: triangular coat/cloak silhouette." That finding is retracted below, not
+#: repeated. Every percentage cited here is pixel count divided by the
+#: whole-figure foreground pixel count from
+#: `docs/assets/evidence/T-0337/panel_<panel>_oklab_after.png` (the same
+#: method the reviewer used), not a subjective impression -- the subjective
+#: "looks complete" language is exactly what produced round 1's false
+#: positives, so this round's labels are anchored to that measurement
+#: first and a visual description second.
 _TORSO_VISUAL_FINDINGS: dict[str, str | None] = {
     "front_tpose": (
-        "partial -- a narrow vertical strip down the coat's own center "
-        "seam, not the full torso width; the empty-detection problem is "
-        "fixed (present, mechanically isolated, no overlap) but this is "
-        "not a complete torso silhouette "
-        "(panel_front_tpose_part_torso_sam3_after.png)"
+        "partial -- 19,983px, 5.1% of the whole-figure mask, a narrow "
+        "~70px-wide vertical strip down the coat's own center seam; the "
+        "lateral positive points landed within ~15px of the centerline "
+        "run on this pose (front/back T-poses do spread the shoulder/hip "
+        "joints apart, but this pose's own geometry still didn't pull the "
+        "mask wider) -- empty-detection problem fixed, full torso width "
+        "is not (panel_front_tpose_part_torso_sam3_after.png)"
     ),
     "back_tpose": (
-        "partial -- same narrow center-seam strip as front_tpose, same "
-        "fix/limitation split: empty detection fixed, full torso width "
-        "is not (panel_back_tpose_part_torso_sam3_after.png)"
+        "partial -- genuinely larger this round (99,640px, 24.3% of the "
+        "whole figure, up from round 1's 5,955px/1.5%) and visually spans "
+        "most of the upper-to-mid back coat width; overlaid on the source "
+        "panel it has extensive internal holes (the kept component is not "
+        "a clean fill) and still falls short of the garment's left/right "
+        "edges by a visible margin -- real progress, not yet a complete "
+        "silhouette (panel_back_tpose_part_torso_sam3_after.png)"
     ),
     "side_right_forward": (
-        "adequate -- a fuller profile torso/coat silhouette with visible "
-        "fold lines, an improvement over T-0423's own 'strip of coat "
-        "fold, not the complete torso/coat' finding for this panel "
+        "partial -- 107,293px, 35.8% of the whole figure, a single "
+        "vertical coat-fold panel with visible fold lines -- same "
+        "conclusion T-0423's original run reached ('a strip of coat fold, "
+        "not the complete torso/coat'); the opposite panel of this "
+        "open coat (the far-side flap, roughly the other half of the "
+        "garment's visible width) is not captured "
         "(panel_side_right_forward_part_torso_sam3_after.png)"
     ),
     "side_left_forward": (
-        "adequate -- a complete-looking triangular coat/cloak silhouette "
-        "for this side view, tapering toward the hip; a minor concave "
-        "notch on the near edge, not a missing region "
+        "partial -- CORRECTS round 1's wrong 'adequate' label. 20,722px, "
+        "5.0% of the whole figure, a ~90px-wide vertical strip down the "
+        "center seam only. The torso/left_upper_arm overlap that rejected "
+        "this panel under T-0423 is genuinely resolved (0.392 -> 0.013, "
+        "confirmed again this round), which is why the mask now isolates "
+        "mechanically -- but resolving an overlap only clears the "
+        "mechanical-isolation axis, it does not make the mask anatomically "
+        "complete: overlaid on the source panel this strip covers part of "
+        "the brown tunic and excludes the entire green cloak "
         "(panel_side_left_forward_part_torso_sam3_after.png)"
     ),
     "side_neutral": (
-        "mechanically rejected -- visually a plausible, fairly complete "
-        "torso blob on its own, but overlaps BOTH arm masks well past "
-        "tolerance (see overlap table); the stray-fragment problem T-0423 "
-        "recorded (68.4%) is fixed (1.3%), but overlap got WORSE, not "
-        "better (panel_side_neutral_part_torso_sam3_after.png)"
+        "mechanically rejected -- 44,092px, 33.8% of the whole figure, a "
+        "visually clean vertical panel on its own, but overlaps "
+        "right_upper_arm (0.577, over the 0.25 tolerance) and "
+        "right_lower_arm (0.897, over the 0.0 non-adjacent tolerance); "
+        "both worse than T-0423's original 0.369/0.194 for this same pair "
+        "-- the stray-fragment problem T-0423 recorded (68.4%) stays fixed "
+        "(1.1%), but overlap is still the blocker, not improved by the "
+        "lateral points (panel_side_neutral_part_torso_sam3_after.png)"
     ),
 }
 

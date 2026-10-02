@@ -18,6 +18,18 @@
     "derivation": "torso_run[t=0.7] = lerp(JOINT[1], midpoint(JOINT[8], JOINT[11]), t=0.7)"
   },
   {
+    "x": 517,
+    "y": 410,
+    "polarity": "positive",
+    "derivation": "torso_lateral[right] = midpoint(JOINT[2], JOINT[8])"
+  },
+  {
+    "x": 504,
+    "y": 407,
+    "polarity": "positive",
+    "derivation": "torso_lateral[left] = midpoint(JOINT[5], JOINT[11])"
+  },
+  {
     "x": 435,
     "y": 102,
     "polarity": "negative",

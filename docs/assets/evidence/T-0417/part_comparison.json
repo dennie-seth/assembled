@@ -733,17 +733,17 @@
           "part": "torso",
           "method_used": "sam3",
           "present": true,
-          "foreground_px_raw": 13675,
-          "foreground_px_after_isolation": 13092,
+          "foreground_px_raw": 26754,
+          "foreground_px_after_isolation": 19983,
           "isolation": {
-            "component_count": 17,
+            "component_count": 67,
             "kept_component_ids": [
               1
             ],
-            "foreground_px_before": 13675,
-            "foreground_px_after": 13092,
-            "stray_px": 583,
-            "stray_fraction": 0.04263254113345521
+            "foreground_px_before": 26754,
+            "foreground_px_after": 19983,
+            "stray_px": 6771,
+            "stray_fraction": 0.2530836510428347
           },
           "degenerate": false,
           "stray_fraction_exceeds_tolerance": false,
@@ -768,6 +768,18 @@
               "y": 473,
               "polarity": "positive",
               "derivation": "torso_run[t=0.7] = lerp(JOINT[1], midpoint(JOINT[8], JOINT[11]), t=0.7)"
+            },
+            {
+              "x": 441,
+              "y": 407,
+              "polarity": "positive",
+              "derivation": "torso_lateral[right] = midpoint(JOINT[2], JOINT[8])"
+            },
+            {
+              "x": 582,
+              "y": 407,
+              "polarity": "positive",
+              "derivation": "torso_lateral[left] = midpoint(JOINT[5], JOINT[11])"
             },
             {
               "x": 512,
@@ -1381,17 +1393,17 @@
           "part": "torso",
           "method_used": "sam3",
           "present": true,
-          "foreground_px_raw": 8493,
-          "foreground_px_after_isolation": 5955,
+          "foreground_px_raw": 116626,
+          "foreground_px_after_isolation": 99640,
           "isolation": {
-            "component_count": 20,
+            "component_count": 189,
             "kept_component_ids": [
-              1
+              5
             ],
-            "foreground_px_before": 8493,
-            "foreground_px_after": 5955,
-            "stray_px": 2538,
-            "stray_fraction": 0.2988343341575415
+            "foreground_px_before": 116626,
+            "foreground_px_after": 99640,
+            "stray_px": 16986,
+            "stray_fraction": 0.14564505341862022
           },
           "degenerate": false,
           "stray_fraction_exceeds_tolerance": false,
@@ -1416,6 +1428,18 @@
               "y": 473,
               "polarity": "positive",
               "derivation": "torso_run[t=0.7] = lerp(JOINT[1], midpoint(JOINT[8], JOINT[11]), t=0.7)"
+            },
+            {
+              "x": 441,
+              "y": 407,
+              "polarity": "positive",
+              "derivation": "torso_lateral[right] = midpoint(JOINT[2], JOINT[8])"
+            },
+            {
+              "x": 582,
+              "y": 407,
+              "polarity": "positive",
+              "derivation": "torso_lateral[left] = midpoint(JOINT[5], JOINT[11])"
             },
             {
               "x": 512,
@@ -2077,17 +2101,17 @@
           "part": "torso",
           "method_used": "sam3",
           "present": true,
-          "foreground_px_raw": 110093,
-          "foreground_px_after_isolation": 108815,
+          "foreground_px_raw": 108948,
+          "foreground_px_after_isolation": 107293,
           "isolation": {
-            "component_count": 49,
+            "component_count": 51,
             "kept_component_ids": [
-              1
+              2
             ],
-            "foreground_px_before": 110093,
-            "foreground_px_after": 108815,
-            "stray_px": 1278,
-            "stray_fraction": 0.011608367471138038
+            "foreground_px_before": 108948,
+            "foreground_px_after": 107293,
+            "stray_px": 1655,
+            "stray_fraction": 0.015190733193817234
           },
           "degenerate": false,
           "stray_fraction_exceeds_tolerance": false,
@@ -2112,6 +2136,18 @@
               "y": 473,
               "polarity": "positive",
               "derivation": "torso_run[t=0.7] = lerp(JOINT[1], midpoint(JOINT[8], JOINT[11]), t=0.7)"
+            },
+            {
+              "x": 519,
+              "y": 407,
+              "polarity": "positive",
+              "derivation": "torso_lateral[right] = midpoint(JOINT[2], JOINT[8])"
+            },
+            {
+              "x": 506,
+              "y": 410,
+              "polarity": "positive",
+              "derivation": "torso_lateral[left] = midpoint(JOINT[5], JOINT[11])"
             },
             {
               "x": 588,
@@ -2507,17 +2543,17 @@
           "part": "torso",
           "method_used": "sam3",
           "present": true,
-          "foreground_px_raw": 21071,
-          "foreground_px_after_isolation": 20111,
+          "foreground_px_raw": 21404,
+          "foreground_px_after_isolation": 20722,
           "isolation": {
-            "component_count": 21,
+            "component_count": 24,
             "kept_component_ids": [
-              2
+              3
             ],
-            "foreground_px_before": 21071,
-            "foreground_px_after": 20111,
-            "stray_px": 960,
-            "stray_fraction": 0.04556024868302406
+            "foreground_px_before": 21404,
+            "foreground_px_after": 20722,
+            "stray_px": 682,
+            "stray_fraction": 0.031863203139600074
           },
           "degenerate": false,
           "stray_fraction_exceeds_tolerance": false,
@@ -2542,6 +2578,18 @@
               "y": 473,
               "polarity": "positive",
               "derivation": "torso_run[t=0.7] = lerp(JOINT[1], midpoint(JOINT[8], JOINT[11]), t=0.7)"
+            },
+            {
+              "x": 517,
+              "y": 410,
+              "polarity": "positive",
+              "derivation": "torso_lateral[right] = midpoint(JOINT[2], JOINT[8])"
+            },
+            {
+              "x": 504,
+              "y": 407,
+              "polarity": "positive",
+              "derivation": "torso_lateral[left] = midpoint(JOINT[5], JOINT[11])"
             },
             {
               "x": 435,
@@ -2835,7 +2883,7 @@
         {
           "part_a": "left_upper_arm",
           "part_b": "torso",
-          "overlap_fraction": 0.009126984126984128,
+          "overlap_fraction": 0.013227513227513227,
           "exceeds_tolerance": false,
           "tolerance": 0.25,
           "adjacent": true
@@ -2937,17 +2985,17 @@
           "part": "torso",
           "method_used": "sam3",
           "present": true,
-          "foreground_px_raw": 39812,
-          "foreground_px_after_isolation": 39302,
+          "foreground_px_raw": 44566,
+          "foreground_px_after_isolation": 44092,
           "isolation": {
-            "component_count": 51,
+            "component_count": 31,
             "kept_component_ids": [
-              1
+              5
             ],
-            "foreground_px_before": 39812,
-            "foreground_px_after": 39302,
-            "stray_px": 510,
-            "stray_fraction": 0.012810207977494223
+            "foreground_px_before": 44566,
+            "foreground_px_after": 44092,
+            "stray_px": 474,
+            "stray_fraction": 0.010635910784005744
           },
           "degenerate": false,
           "stray_fraction_exceeds_tolerance": false,
@@ -2972,6 +3020,18 @@
               "y": 473,
               "polarity": "positive",
               "derivation": "torso_run[t=0.7] = lerp(JOINT[1], midpoint(JOINT[8], JOINT[11]), t=0.7)"
+            },
+            {
+              "x": 519,
+              "y": 407,
+              "polarity": "positive",
+              "derivation": "torso_lateral[right] = midpoint(JOINT[2], JOINT[8])"
+            },
+            {
+              "x": 506,
+              "y": 410,
+              "polarity": "positive",
+              "derivation": "torso_lateral[left] = midpoint(JOINT[5], JOINT[11])"
             },
             {
               "x": 573,
@@ -3257,7 +3317,7 @@
         {
           "part_a": "right_lower_arm",
           "part_b": "torso",
-          "overlap_fraction": 0.7541471932617739,
+          "overlap_fraction": 0.8968722715833805,
           "exceeds_tolerance": true,
           "tolerance": 0.0,
           "adjacent": false
@@ -3265,7 +3325,7 @@
         {
           "part_a": "right_upper_arm",
           "part_b": "torso",
-          "overlap_fraction": 0.5766238307544366,
+          "overlap_fraction": 0.5769735116706006,
           "exceeds_tolerance": true,
           "tolerance": 0.25,
           "adjacent": true
