@@ -308,3 +308,39 @@ class TestRequestingAPartThePanelCannotShowStillRaises:
         points = rig.keypoints_for("side_right_forward")
         with pytest.raises(ValueError):
             gen.part_prompt_points("side_right_forward", "left_upper_arm", points, PANEL_SIZE)
+
+
+class TestOutputGeometryUnchangedByThisCard:
+    """"Output geometry is 48x48 per cell via x8 area-descend -- high-res
+    generate then descend... No new resolution. Assert the emitted
+    geometry rather than assuming it" (card acceptance). The 48x48 cell
+    named in `docs/design/13-asset-pipeline.md` (`:139`, "Cell 48x48 (3
+    tiles)") is the PRODUCTION curated-sprite-sheet cell size; this
+    module's own evidence descend is a DIFFERENT, pre-existing
+    demonstration convention this card reuses unmodified from T-0417/
+    T-0423 (`_run_one_part`'s own `box_descend_part(..., target_size=(32,
+    32), margin_px=2)` call) -- never promoted to `assets/final/` (this
+    card's own "do not promote anything" rule), so the production 48x48
+    convention is never actually exercised here. What this card DOES
+    assert, literally, against the real committed PNGs on disk rather
+    than assumed: the high-res-crop-then-descend shape is unchanged
+    (`PANEL_SIZE` is still the 1024x1024 T-0337 established crop size SAM3
+    operates on) and the evidence descend's own emitted geometry is still
+    exactly what T-0417/T-0423 left it at -- no new resolution introduced
+    by this card's torso prompt change."""
+
+    def test_panel_size_is_still_the_t0337_established_1024_crop(self):
+        assert PANEL_SIZE == 1024
+
+    def test_torso_descended_evidence_png_geometry_is_unchanged_32x32(self):
+        from PIL import Image
+
+        evidence_dir = gen.EVIDENCE_DIR
+        for panel_key in FIGURE_PANEL_KEYS:
+            path = evidence_dir / f"panel_{panel_key}_part_torso_descended.png"
+            if not path.exists():
+                # An empty/not-present torso on this panel never reaches
+                # box_descend_part -- nothing to assert geometry on.
+                continue
+            with Image.open(path) as img:
+                assert img.size == (32, 32), f"{panel_key}: {img.size}"
