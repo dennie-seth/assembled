@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseAcceptanceCriteria } from "../src/lib/acceptanceCriteria.js";
+import { parseAcceptanceCriteria, parseAcceptanceCriteriaWithContinuations } from "../src/lib/acceptanceCriteria.js";
 
 describe("parseAcceptanceCriteria", () => {
   it("extracts unchecked checkbox items under ## Acceptance", () => {
@@ -190,5 +190,115 @@ describe("parseAcceptanceCriteria -- nothing gets looser than intended (T-0405 r
   it("still returns [] when the Acceptance section has prose but no checkboxes, qualified heading included", () => {
     const body = "## Acceptance (final)\n\nsome prose but no checkboxes\n";
     expect(parseAcceptanceCriteria(body)).toEqual([]);
+  });
+});
+
+// T-0425 FIX ROUND -- Finding 2: parseAcceptanceCriteria is deliberately first-line-only (run-time
+// behaviour -- impossibleAcceptancePreflight.js, reviewerPrompt.js -- is protected and untouched by
+// this fix round). parseAcceptanceCriteriaWithContinuations is a SEPARATE, author-time-only reader
+// that reconstructs each criterion's full logical text, continuations included, bounded at the next
+// checkbox item or the next heading/section.
+describe("parseAcceptanceCriteriaWithContinuations -- author-time-only full-criterion reconstruction", () => {
+  it("joins a continuation line onto the checkbox item above it", () => {
+    const body = "## Acceptance\n\n- [ ] The fix edits\n      `tools/asset-gate/src/foo.py`\n      to add the new check.\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "The fix edits `tools/asset-gate/src/foo.py` to add the new check.", checked: false }
+    ]);
+  });
+
+  it("stops a continuation at the next checkbox item", () => {
+    const body =
+      "## Acceptance\n\n- [ ] first criterion\n      continues here\n- [ ] second criterion\n      continues too\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "first criterion continues here", checked: false },
+      { text: "second criterion continues too", checked: false }
+    ]);
+  });
+
+  it("stops a continuation at the next heading/section", () => {
+    const body = "## Acceptance\n\n- [ ] a criterion\n      that wraps\n\n## Do not\n\n- never do X\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([{ text: "a criterion that wraps", checked: false }]);
+  });
+
+  it("agrees with parseAcceptanceCriteria when nothing wraps", () => {
+    const body = "## Acceptance\n\n- [ ] first thing\n- [ ] second thing\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual(parseAcceptanceCriteria(body));
+  });
+
+  it("returns [] when there is no Acceptance section at all", () => {
+    expect(parseAcceptanceCriteriaWithContinuations("## Context\nJust context.\n")).toEqual([]);
+  });
+
+  // Edge case: "An empty or whitespace-only continuation line mid-criterion -- reconstruction must
+  // not terminate early on it."
+  it("does not terminate a criterion early on a blank continuation line -- later continuation lines still join", () => {
+    const body = "## Acceptance\n\n- [ ] first part\n\n      second part after a blank line\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "first part second part after a blank line", checked: false }
+    ]);
+  });
+
+  // Edge case: "A continuation line that itself starts with something list-like (a nested -, a
+  // table row, a fenced-code line) -- it must not be mistaken for the next criterion."
+  it("treats a nested, non-checkbox bullet line as a continuation, not a new criterion", () => {
+    const body = "## Acceptance\n\n- [ ] a criterion\n      - a nested note, not a checkbox\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "a criterion - a nested note, not a checkbox", checked: false }
+    ]);
+  });
+
+  it("treats a table-row continuation line as a continuation, not a new criterion", () => {
+    const body = "## Acceptance\n\n- [ ] a criterion\n      | col1 | col2 |\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "a criterion | col1 | col2 |", checked: false }
+    ]);
+  });
+
+  // Edge case: "A criterion whose path appears only inside a fenced code block spanning
+  // continuations -- state whether fenced content counts, and assert it either way." Chosen: fenced
+  // content COUNTS -- it is captured as ordinary continuation prose, never stripped, since this
+  // module's job is to detect mechanically-visible shapes and silently dropping fenced text would
+  // only create a fresh blind spot of the same kind Finding 2 itself reports.
+  it("includes fenced-code continuation lines as part of the criterion's text", () => {
+    const body = "## Acceptance\n\n- [ ] run this and confirm it is empty:\n      ```\n      git diff -- tools/asset-gate/src/\n      ```\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "run this and confirm it is empty: ``` git diff -- tools/asset-gate/src/ ```", checked: false }
+    ]);
+  });
+
+  // T-0425 FIX ROUND 2 (reviewer FAIL, 2026-10-02T09:58:58.564Z, acceptance criterion 6): a bare
+  // bold section label such as "**Edge cases:**" -- the exact shape this card's own body, and real
+  // cards generally, use to start the edge-cases block right after the checklist -- was absorbed
+  // into the PRECEDING criterion as if it were an ordinary continuation line, because only
+  // HEADING_RE (`#`) and the next checkbox bounded reconstruction. That produced a real false
+  // positive: a Class-C hardcoded-count check downstream would misattribute the label's own prose
+  // to a criterion that never mentioned a count. Bounded here the same way a heading/checkbox is.
+  it("stops a continuation at a bare '**Edge cases:**' label, even when prose trails it on the same line", () => {
+    const body =
+      "## Acceptance\n\n- [ ] Fix the underlying bug.\n\n" +
+      "**Edge cases:** the gate reports 14 failures today, so recount after the fix.\n\n" +
+      "- [ ] Something else.\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "Fix the underlying bug.", checked: false },
+      { text: "Something else.", checked: false }
+    ]);
+  });
+
+  it("stops a continuation at a bare '**Edge cases:**' label with nothing trailing it, resuming on the next checkbox", () => {
+    const body = "## Acceptance\n\n- [ ] first criterion\n      wraps here\n\n**Edge cases:**\n\n- [ ] an edge case\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "first criterion wraps here", checked: false },
+      { text: "an edge case", checked: false }
+    ]);
+  });
+
+  // A bold span that is NOT a line-leading "label: " shape -- mid-sentence emphasis inside a real
+  // criterion -- must keep joining as ordinary continuation prose. The label boundary is anchored on
+  // "starts the line, colon immediately before the closing **", not "contains any bold text."
+  it("does not mistake mid-sentence bold text for a section-label boundary", () => {
+    const body = "## Acceptance\n\n- [ ] Do **not** skip this step\n      and finish the job.\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "Do **not** skip this step and finish the job.", checked: false }
+    ]);
   });
 });

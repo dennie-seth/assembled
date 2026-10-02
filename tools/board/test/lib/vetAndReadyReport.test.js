@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { formatDecisionRow, formatDecisionTable, formatPollerSummary, formatReport } from "../../src/lib/vetAndReadyReport.js";
+import {
+  formatDecisionRow,
+  formatDecisionTable,
+  formatPollerSummary,
+  formatReport,
+  formatAcceptanceFlagLines
+} from "../../src/lib/vetAndReadyReport.js";
 
 function readyEntry(overrides = {}) {
   return {
@@ -58,6 +64,45 @@ describe("formatDecisionTable", () => {
     expect(table).toMatch(/Eligible-at-all: 0/);
     expect(table).not.toMatch(/## Readied/);
     expect(table).not.toMatch(/## Skipped/);
+  });
+});
+
+// T-0425: the acceptance-authoring preflight's flags must land in the morning summary a human
+// reads (latest.md), attributed per criterion -- not only a log line nobody sees in the same place.
+describe("formatAcceptanceFlagLines", () => {
+  it("renders nothing for an entry with no acceptanceFlags at all", () => {
+    expect(formatAcceptanceFlagLines(readyEntry())).toEqual([]);
+  });
+
+  it("renders nothing for an entry with an empty acceptanceFlags array", () => {
+    expect(formatAcceptanceFlagLines(readyEntry({ acceptanceFlags: [] }))).toEqual([]);
+  });
+
+  it("renders one line per reason, quoting the flagged criterion text", () => {
+    const entry = readyEntry({
+      acceptanceFlags: [{ text: "`.claude/agents/infra.md` is edited.", reasons: ["Class A -- reason one.", "Class C -- reason two."] }]
+    });
+    const lines = formatAcceptanceFlagLines(entry);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/\.claude\/agents\/infra\.md/);
+    expect(lines[0]).toMatch(/Class A/);
+    expect(lines[1]).toMatch(/Class C/);
+  });
+
+  it("renders the no-Acceptance-section finding distinctly, without a quoted criterion", () => {
+    const entry = readyEntry({ acceptanceFlags: [{ text: null, reasons: ["no parseable \"## Acceptance\" section found."] }] });
+    const lines = formatAcceptanceFlagLines(entry);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/no parseable/i);
+  });
+
+  it("formatDecisionTable includes acceptance flag lines under the entry's own row", () => {
+    const entry = readyEntry({
+      acceptanceFlags: [{ text: "`.claude/agents/infra.md` is edited.", reasons: ["Class A -- flagged."] }]
+    });
+    const result = { eligibleCount: 1, cap: 4, readied: [entry], skipped: [] };
+    const table = formatDecisionTable(result);
+    expect(table.indexOf("T-0001")).toBeLessThan(table.indexOf("Class A -- flagged."));
   });
 });
 
