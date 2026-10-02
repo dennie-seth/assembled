@@ -1,9 +1,33 @@
 [
   {
+    "x": 511,
+    "y": 325,
+    "polarity": "positive",
+    "derivation": "torso_run[t=0.3] = lerp(JOINT[1], midpoint(JOINT[8], JOINT[11]), t=0.3)"
+  },
+  {
     "x": 510,
     "y": 399,
     "polarity": "positive",
-    "derivation": "torso = midpoint(JOINT[1], midpoint(JOINT[8], JOINT[11]))"
+    "derivation": "torso_run[t=0.5] = lerp(JOINT[1], midpoint(JOINT[8], JOINT[11]), t=0.5)"
+  },
+  {
+    "x": 510,
+    "y": 473,
+    "polarity": "positive",
+    "derivation": "torso_run[t=0.7] = lerp(JOINT[1], midpoint(JOINT[8], JOINT[11]), t=0.7)"
+  },
+  {
+    "x": 517,
+    "y": 410,
+    "polarity": "positive",
+    "derivation": "torso_lateral[right] = midpoint(JOINT[2], JOINT[8])"
+  },
+  {
+    "x": 504,
+    "y": 407,
+    "polarity": "positive",
+    "derivation": "torso_lateral[left] = midpoint(JOINT[5], JOINT[11])"
   },
   {
     "x": 435,
@@ -22,6 +46,18 @@
     "y": 230,
     "polarity": "negative",
     "derivation": "sibling_part:left_lower_arm"
+  },
+  {
+    "x": 517,
+    "y": 235,
+    "polarity": "negative",
+    "derivation": "torso_arm_seam (right SHOULDER[2], keeps the coat off the right upper arm)"
+  },
+  {
+    "x": 506,
+    "y": 230,
+    "polarity": "negative",
+    "derivation": "torso_arm_seam (left SHOULDER[5], keeps the coat off the left upper arm)"
   },
   {
     "x": 4,

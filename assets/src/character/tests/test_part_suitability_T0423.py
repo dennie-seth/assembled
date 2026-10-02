@@ -174,10 +174,22 @@ class TestCommittedRecordsUnchangedByThisRound:
         assert rec["foreground_px_after_isolation"] == 5527
         assert rec["isolated"] is True
 
-    def test_part_comparison_json_side_right_forward_torso_unchanged(self):
+    def test_part_comparison_json_side_right_forward_torso_matches_t0427s_retuned_run(self):
+        # [T-0427] This one entry is a DELIBERATE exception to this class's
+        # own "never revises measurement" rule: T-0427's whole premise is
+        # retuning the torso's own SAM3 request and re-running it live
+        # against every figure panel, including side_right_forward. ROUND 2
+        # added lateral shoulder/hip positive points on top of round 1's
+        # centerline run (round 1's own 108815 came from the shoulder-seam
+        # negatives alone); the live re-run with lateral points moved this
+        # panel's count to 107293, staying mechanically isolated throughout.
+        # See docs/assets/evidence/T-0427/README.md for the full retuned
+        # picture; `front_tpose_right_upper_arm`/`front_tpose_head` above
+        # are untouched by T-0427 and still pin their original T-0423
+        # numbers unmodified.
         data = json.loads((EVIDENCE_DIR / "part_comparison.json").read_text())
         rec = data["panels"]["side_right_forward"]["parts"]["torso"]
-        assert rec["foreground_px_after_isolation"] == 126159
+        assert rec["foreground_px_after_isolation"] == 107293
         assert rec["isolated"] is True
 
     def test_head_overlap_rejected_on_both_forward_panels(self):
@@ -219,11 +231,36 @@ class TestFigurePartSuitabilityReport:
         return report.compute_report()
 
     def test_totals_distinguish_mechanical_from_anatomically_usable(self):
+        # [T-0427] This script's own `compute_report()` reads the SHARED,
+        # live `part_comparison.json` -- it was never a frozen snapshot.
+        # T-0427 deliberately re-ran the torso request against all five
+        # figure panels (front_tpose/back_tpose newly present,
+        # side_left_forward no longer overlap-rejected), which lifts
+        # `mechanically_isolated` from T-0423's original 8 to 11.
+        #
+        # `anatomically_usable` moves from 5 to 7, but NOT because this
+        # script correctly identified 2 genuine new wins -- it has a BLIND
+        # SPOT: `front_tpose/torso` and `back_tpose/torso` have no
+        # `_VISUAL_FINDINGS` entry here (T-0423 never anticipated a torso
+        # being present on either T-pose panel), so this function's own
+        # "no finding -> usable" default silently counts both as usable.
+        # T-0427's own fresh visual inspection found both to be a narrow
+        # center-seam strip, not a complete torso (NOT usable). This
+        # script also still marks `side_left_forward/torso` as not usable
+        # off its OLD stale finding ("coat mask extends into the swallowed
+        # left_upper_arm") even though that overlap is now fixed -- a
+        # false negative that happens to cancel the two false positives
+        # numerically, landing on 7 by coincidence, not correctness. See
+        # `assess_figure_part_suitability_T0427.py` and
+        # `docs/assets/evidence/T-0427/README.md` for the actually-correct
+        # 7 (same count, different, correct membership). This test pins
+        # what THIS unmodified T-0423 script literally computes today,
+        # blind spot included.
         _, totals = self._report()
         assert totals == {
             "requested": 24,
-            "mechanically_isolated": 8,
-            "anatomically_usable": 5,
+            "mechanically_isolated": 11,
+            "anatomically_usable": 7,
         }
 
     def test_front_tpose_right_upper_arm_is_combined_not_usable(self):
@@ -253,11 +290,85 @@ class TestFigurePartSuitabilityReport:
         assert row["suitability"] == "partial"
         assert row["usable"] is False
 
-    def test_the_five_anatomically_usable_parts_are_named(self):
+    def test_the_seven_parts_this_unmodified_script_now_names_usable(self):
+        # [T-0427] Renamed from "the five..." -- see
+        # test_totals_distinguish_mechanical_from_anatomically_usable's own
+        # comment just above for why this grew to 7, and why 2 of the 7 are
+        # this script's own known blind spot (`front_tpose/torso`,
+        # `back_tpose/torso`) rather than genuine wins. T-0423's original 5
+        # are still named here, unmodified and still correct.
         per_part, _ = self._report()
         usable = {
             (r["panel"], r["part"]) for r in per_part if r["present"] and r.get("usable")
         }
+        assert usable == {
+            ("back_tpose", "head"),
+            ("back_tpose", "right_lower_arm"),
+            ("back_tpose", "left_lower_arm"),
+            ("side_left_forward", "left_lower_arm"),
+            ("side_neutral", "head"),
+            ("front_tpose", "torso"),  # blind spot, not a real win -- see above
+            ("back_tpose", "torso"),  # blind spot, not a real win -- see above
+        }
+
+
+@pytest.mark.skipif(not EVIDENCE_DIR.exists(), reason="T-0417/T-0423 evidence dir not present")
+class TestT0427OwnScriptDoesNotRepeatTheAdequateMislabel:
+    """[T-0427 ROUND 2] T-0423's own frozen script (tested above) has a
+    known blind spot that silently mislabels `front_tpose/torso` and
+    `back_tpose/torso` as usable -- tolerated above as a reproduction of
+    what that UNMODIFIED script computes, never as correct. This card's own
+    `assess_figure_part_suitability_T0427.py` is the script that actually
+    produced the committed README, and it must not repeat round 1's own
+    mistake: the reviewer's second FAIL on this card found `_TORSO_VISUAL_
+    FINDINGS` called `side_left_forward/torso` "adequate"/"a complete-
+    looking triangular coat/cloak silhouette" when the committed mask
+    (20,111px, 4.8% of the whole figure) excluded the entire cloak. These
+    tests pin the corrected report: no torso row is ever "adequate" on any
+    of the five figure panels, and the headline totals reflect zero new
+    usable torsos, not a count inflated by a mislabel."""
+
+    def _report(self):
+        import assess_figure_part_suitability_T0427 as report
+
+        return report.compute_report()
+
+    def test_no_torso_row_is_labelled_adequate_on_any_panel(self):
+        # The exact failure mode the reviewer caught: a "partial" or
+        # "mechanically rejected" torso wrongly reported as "adequate".
+        # This guards against a repeat on ANY of the five figure panels,
+        # not just the one the reviewer happened to measure.
+        per_part, _ = self._report()
+        torso_rows = [r for r in per_part if r["part"] == "torso"]
+        assert len(torso_rows) == 5
+        for row in torso_rows:
+            assert row["suitability"] != "adequate", row
+
+    def test_side_left_forward_torso_is_partial_not_adequate(self):
+        # Direct regression pin for the reviewer's own specific finding.
+        per_part, _ = self._report()
+        row = next(
+            r for r in per_part if r["panel"] == "side_left_forward" and r["part"] == "torso"
+        )
+        assert row["isolated"] is True
+        assert row["suitability"] == "partial"
+        assert row["usable"] is False
+
+    def test_totals_show_zero_new_usable_torsos_this_round(self):
+        # T-0427's own (correct) script must land on T-0423's original 5
+        # usable parts, not an inflated count -- unlike the frozen T-0423
+        # script's own blind-spot-inflated 7 (pinned separately above as a
+        # reproduction of that script's known behaviour, not a target).
+        _, totals = self._report()
+        assert totals == {
+            "requested": 24,
+            "mechanically_isolated": 11,
+            "anatomically_usable": 5,
+        }
+
+    def test_the_five_usable_parts_are_exactly_t0423s_original_five(self):
+        per_part, _ = self._report()
+        usable = {(r["panel"], r["part"]) for r in per_part if r["present"] and r.get("usable")}
         assert usable == {
             ("back_tpose", "head"),
             ("back_tpose", "right_lower_arm"),
