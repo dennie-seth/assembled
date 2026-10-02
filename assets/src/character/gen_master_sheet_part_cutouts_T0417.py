@@ -355,6 +355,43 @@ _NON_PART_NEGATIVE_JOINTS_BY_PANEL: dict[str, tuple[tuple[int, str], ...]] = {
 }
 
 
+#: [T-0427] Fractions along the torso's own NECK->hip-midpoint centerline
+#: that each get their own positive point, replacing the single
+#: midpoint-of-midpoint anchor T-0423 used -- that single point measured
+#: an EMPTY detection on both T-pose panels (see
+#: docs/assets/evidence/T-0427/README.md). A single point is one guess at
+#: where the coat fabric actually is; three points spread down the real
+#: coat body give SAM3 multiple chances to land on fabric rather than,
+#: say, a fold or a gap between coat panels. 0.5 is deliberately kept --
+#: it is T-0423's own original anchor, now the middle of the run rather
+#: than discarded. 0.3/0.7 bracket it without reaching NECK itself (the
+#: head/torso shared boundary) or the hip midpoint itself (the legs
+#: boundary on a figure panel).
+_TORSO_POSITIVE_RUN_FRACTIONS: tuple[float, ...] = (0.3, 0.5, 0.7)
+
+#: [T-0427] Extra negative points on the torso's own request only, beyond
+#: the generic one-point-per-sibling negative every part already gets for
+#: every OTHER present part in the panel. T-0423's own evidence recorded
+#: four `upper_arm` rejections and two `torso` rejections that shared one
+#: cause -- "failure is the torso overlap" -- with the torso's only
+#: existing defense against bleeding into an arm being ONE negative point
+#: at the sibling `upper_arm`'s own anchor (the shoulder-elbow midpoint).
+#: The raw shoulder JOINT itself sits closer to the actual torso/sleeve
+#: seam than that midpoint does; adding it as a second, explicit negative
+#: per side tightens the boundary right where the coat and the sleeve
+#: meet.
+_TORSO_EXTRA_NEGATIVE_JOINTS: tuple[tuple[int, str], ...] = (
+    (
+        _R_SHOULDER,
+        "torso_arm_seam (right SHOULDER[2], keeps the coat off the right upper arm)",
+    ),
+    (
+        _L_SHOULDER,
+        "torso_arm_seam (left SHOULDER[5], keeps the coat off the left upper arm)",
+    ),
+)
+
+
 def _part_anchor_norm(spec: PartSpec, points_norm: dict[int, tuple[float, float]]):
     a = points_norm[spec.joint_a]
     if spec.joint_b_pair is not None:
@@ -392,19 +429,33 @@ def part_prompt_points(
     }
 
     records: list[dict] = []
-    px, py = anchors_px[part_key]
     spec = specs_by_key[part_key]
     if spec.joint_b_pair is not None:
+        # [T-0427] A derived two-joint-pair anchor (torso only, today) gets
+        # a short positive RUN along its own centerline instead of the
+        # single midpoint-of-midpoint point -- see
+        # `_TORSO_POSITIVE_RUN_FRACTIONS`'s own docstring for why.
         j1, j2 = spec.joint_b_pair
-        derivation = (
-            f"{spec.part_key} = midpoint(JOINT[{spec.joint_a}], "
-            f"midpoint(JOINT[{j1}], JOINT[{j2}]))"
-        )
-    elif spec.joint_b is None:
-        derivation = f"{spec.part_key} = JOINT[{spec.joint_a}]"
+        a_norm = points_norm[spec.joint_a]
+        b_norm = _midpoint(points_norm[j1], points_norm[j2])
+        for t in _TORSO_POSITIVE_RUN_FRACTIONS:
+            lerp_norm = (
+                a_norm[0] + (b_norm[0] - a_norm[0]) * t,
+                a_norm[1] + (b_norm[1] - a_norm[1]) * t,
+            )
+            lx, ly = _px(lerp_norm, panel_size)
+            derivation = (
+                f"{spec.part_key}_run[t={t}] = lerp(JOINT[{spec.joint_a}], "
+                f"midpoint(JOINT[{j1}], JOINT[{j2}]), t={t})"
+            )
+            records.append({"x": lx, "y": ly, "polarity": "positive", "derivation": derivation})
     else:
-        derivation = f"{spec.part_key} = midpoint(JOINT[{spec.joint_a}], JOINT[{spec.joint_b}])"
-    records.append({"x": px, "y": py, "polarity": "positive", "derivation": derivation})
+        px, py = anchors_px[part_key]
+        if spec.joint_b is None:
+            derivation = f"{spec.part_key} = JOINT[{spec.joint_a}]"
+        else:
+            derivation = f"{spec.part_key} = midpoint(JOINT[{spec.joint_a}], JOINT[{spec.joint_b}])"
+        records.append({"x": px, "y": py, "polarity": "positive", "derivation": derivation})
 
     for other_key, (ox, oy) in anchors_px.items():
         if other_key == part_key:
@@ -412,6 +463,20 @@ def part_prompt_points(
         records.append(
             {"x": ox, "y": oy, "polarity": "negative", "derivation": f"sibling_part:{other_key}"}
         )
+
+    if spec.joint_b_pair is not None:
+        # [T-0427] The torso's own extra defense against bleeding into the
+        # shoulder/upper-arm region -- see `_TORSO_EXTRA_NEGATIVE_JOINTS`'s
+        # own docstring. Added for every panel, not gated on whether this
+        # particular panel's own `PARTS_BY_PANEL` entry happens to request
+        # that side's upper_arm: both shoulders are real anatomy on every
+        # figure panel even when the far arm itself isn't one of this
+        # card's requested parts.
+        for joint_idx, derivation_text in _TORSO_EXTRA_NEGATIVE_JOINTS:
+            jx, jy = _px(points_norm[joint_idx], panel_size)
+            records.append(
+                {"x": jx, "y": jy, "polarity": "negative", "derivation": derivation_text}
+            )
 
     records.append({"x": 4, "y": 4, "polarity": "negative", "derivation": "corner_top_left"})
     records.append(

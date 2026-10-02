@@ -206,11 +206,19 @@ class TestTorsoAnchorDesignDecision:
         assert torso.joint_b is None
         assert torso.joint_b_pair == (_L_HIP, _R_HIP) or torso.joint_b_pair == (_R_HIP, _L_HIP)
 
-    def test_torso_positive_point_is_neck_to_hip_midpoint_midpoint(self):
+    def test_torso_midpoint_anchor_is_still_the_middle_of_t0427s_positive_run(self):
+        # [T-0427] T-0423's own evidence found this single point measured
+        # an EMPTY detection on both T-pose panels -- the torso's positive
+        # set is now a three-point run down its own centerline
+        # (`_TORSO_POSITIVE_RUN_FRACTIONS`, see
+        # tests/test_gen_master_sheet_part_cutouts_T0427.py for the full
+        # pin), not one point. This design decision's own midpoint-of-
+        # midpoint derivation is unchanged and still present -- as the
+        # t=0.5 MIDDLE point of that run, not discarded.
         points = rig.keypoints_for("front_tpose")
         records = gen.part_prompt_points("front_tpose", "torso", points, PANEL_SIZE)
         positives = [r for r in records if r["polarity"] == "positive"]
-        assert len(positives) == 1
+        assert len(positives) == 3
 
         neck_x, neck_y = points[_NECK]
         r_hip_x, r_hip_y = points[_R_HIP]
@@ -218,7 +226,7 @@ class TestTorsoAnchorDesignDecision:
         hip_mid_x, hip_mid_y = (r_hip_x + l_hip_x) / 2.0, (r_hip_y + l_hip_y) / 2.0
         expected_x = int((neck_x + hip_mid_x) / 2.0 * PANEL_SIZE)
         expected_y = int((neck_y + hip_mid_y) / 2.0 * PANEL_SIZE)
-        assert (positives[0]["x"], positives[0]["y"]) == (expected_x, expected_y)
+        assert (expected_x, expected_y) in {(p["x"], p["y"]) for p in positives}
 
     def test_torso_anchor_sits_between_neck_and_hips_not_on_either(self):
         # The derived anchor must not collapse onto NECK alone or onto
@@ -370,6 +378,11 @@ class TestSeparateSam3CallPerFigurePart:
     batched multi-point request."""
 
     def test_each_part_builds_its_own_single_positive_coord_graph(self):
+        # [T-0427] "Single positive coord" no longer holds for `torso`
+        # specifically -- its own request is now a three-point run down
+        # its centerline (see test_gen_master_sheet_part_cutouts_T0427.py)
+        # -- but every OTHER figure part still gets exactly one, and this
+        # is still six separate graphs, never one shared request.
         points = rig.keypoints_for("front_tpose")
         model_loader = {"class_type": "FakeSam3Loader", "inputs": {}}
         graphs = {}
@@ -391,10 +404,11 @@ class TestSeparateSam3CallPerFigurePart:
 
         assert len(graphs) == 6
         positive_sets = set()
-        for graph in graphs.values():
+        for part_key, graph in graphs.items():
             coords = json.loads(graph["3"]["inputs"]["positive_coords"])
-            assert len(coords) == 1
-            positive_sets.add((coords[0]["x"], coords[0]["y"]))
+            expected_len = 3 if part_key == "torso" else 1
+            assert len(coords) == expected_len
+            positive_sets.add(tuple(sorted((c["x"], c["y"]) for c in coords)))
         assert len(positive_sets) == 6
 
     def test_runner_invocations_are_six_separate_calls_not_one_combined_call(self):

@@ -177,8 +177,12 @@ class TestTorsoShoulderNegativesStopTheArmSwallow:
             negative_derivations = [
                 r["derivation"] for r in records if r["polarity"] == "negative"
             ]
-            assert any("torso_arm_seam" in d and "right SHOULDER" in d for d in negative_derivations)
-            assert any("torso_arm_seam" in d and "left SHOULDER" in d for d in negative_derivations)
+            assert any(
+                "torso_arm_seam" in d and "right SHOULDER" in d for d in negative_derivations
+            )
+            assert any(
+                "torso_arm_seam" in d and "left SHOULDER" in d for d in negative_derivations
+            )
 
     def test_shoulder_negatives_are_additional_not_a_replacement(self):
         # The generic sibling-anchor negatives (corners, non-part joints,
