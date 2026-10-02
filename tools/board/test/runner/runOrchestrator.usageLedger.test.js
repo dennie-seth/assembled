@@ -141,7 +141,19 @@ function makeRunner() {
 }
 
 async function nthChild(runner, n) {
-  await vi.waitFor(() => expect(runner.start).toHaveBeenCalledTimes(n));
+  // `vi.waitFor`'s own default timeout is 1000ms -- enough for this assertion's actual work (a
+  // handful of microtask ticks; real disk I/O only in the crash-recovery test below) under a
+  // lightly loaded machine, but this suite runs with every other test file's workers competing for
+  // the same CPUs, and a 1000ms wall-clock budget is a scheduling guess, not a correctness bound:
+  // the assertion itself is never wrong, only sometimes not yet true by the default deadline
+  // (T-0426 flake diagnosis, confirmed by reproducing this exact file's "classifies a clean-exit
+  // phase..." test timing out at the default under 96-way worker oversubscription on 20 real
+  // cores, with every dependency already mocked -- i.e. the delay is scheduler contention on the
+  // Node event loop itself, not slow I/O). 5000ms is 5x that default and is kept deliberately
+  // BELOW this file's suite-wide 10000ms `testTimeout` (vite.config.js) -- a caller with several
+  // sequential waits (the crash-recovery test calls this up to 3 times) raises its OWN per-test
+  // timeout instead of this shared helper silently eating the whole budget in one call.
+  await vi.waitFor(() => expect(runner.start).toHaveBeenCalledTimes(n), { timeout: 5000 });
   return runner.spawnedChildren[n - 1];
 }
 
@@ -342,9 +354,16 @@ describe("RunOrchestrator — usage ledger wiring (T-0367 T-A)", () => {
     implChild.stdout.emit("data", ndjson(quotaStopResultEvent()));
     implChild.emit("exit", 0, null);
 
-    await vi.waitFor(() => {
-      expect(lastUsageCallFor(recordAttemptUsageFn, 1, "implementer")).toMatchObject({ outcome: "quota_stop", complete: true });
-    });
+    // See nthChild's own comment (T-0426): the default 1000ms vi.waitFor budget is a scheduling
+    // guess that this exact assertion is confirmed to lose under full-suite worker contention,
+    // not a correctness bound -- 5000ms matches the same justification, kept below the file's
+    // 10000ms testTimeout since this test has only the one wait to fit inside that budget.
+    await vi.waitFor(
+      () => {
+        expect(lastUsageCallFor(recordAttemptUsageFn, 1, "implementer")).toMatchObject({ outcome: "quota_stop", complete: true });
+      },
+      { timeout: 5000 }
+    );
 
     // Drive the reviewer to completion too, so the run settles and the test doesn't hang.
     const reviewChild = await nthChild(runner, 2);
@@ -420,9 +439,13 @@ describe("RunOrchestrator — usage ledger wiring (T-0367 T-A)", () => {
     const runPromise = orchestrator.runCard("T-0001");
     const implChild = await nthChild(runner, 1);
     implChild.stdout.emit("data", ndjson(assistantEvent("still working...")));
-    await vi.waitFor(() => {
-      expect(usageCalls(recordAttemptUsageFn).some((c) => c.attempt === 1 && c.phase === "implementer" && c.complete === false)).toBe(true);
-    });
+    // See nthChild's own comment (T-0426) for why this needs a larger-than-default budget.
+    await vi.waitFor(
+      () => {
+        expect(usageCalls(recordAttemptUsageFn).some((c) => c.attempt === 1 && c.phase === "implementer" && c.complete === false)).toBe(true);
+      },
+      { timeout: 5000 }
+    );
 
     implChild.emit("exit", 0, null);
     const reviewChild = await nthChild(runner, 2);
@@ -616,6 +639,12 @@ describe("RunOrchestrator — quota event receive-timestamp stamping (Codex revi
 });
 
 describe("RunOrchestrator — crash-recovery invocation identity (Codex review 2, 2026-09-12, finding 2)", () => {
+  // This test chains up to 3 `nthChild`/`vi.waitFor` waits (each up to 5000ms, T-0426) across TWO
+  // real orchestrator runs doing real disk I/O (its whole point -- see the comment below), so the
+  // file's shared 10000ms `testTimeout` (vite.config.js) isn't enough slack for genuinely-slow-but-
+  // correct runs under full-suite load without risking the less-informative generic "Test timed
+  // out" failure cutting in ahead of any single wait's own bound. The 30000ms third argument below
+  // raises ONLY this test's own timeout, not a global change.
   it("a phase restarted after a board crash never overwrites the interrupted phase's own ledger entry, and the execution total is 125", async () => {
     // Real ledger persistence throughout -- a mocked recordAttemptUsageFn (as every other test in
     // this file uses) can't reproduce this bug: Codex's reproduction needed the real
@@ -653,10 +682,18 @@ describe("RunOrchestrator — crash-recovery invocation identity (Codex review 2
         ndjson({ type: "assistant", session_id: "sess-1", message: { id: "msg-1", model: "fixture", usage: { input_tokens: 100, output_tokens: 1 } } })
       );
       // No 'exit' event ever fires for this child -- the process (and the whole board) is gone.
-      await vi.waitFor(async () => {
-        const entries = await listCardUsageEntries({ runsDir, cardId: "T-0001" });
-        expect(entries.length).toBeGreaterThan(0);
-      });
+      // Real disk I/O (this test's whole point, per its own comment above) through a REAL runsDir
+      // -- see nthChild's comment (T-0426) for why the default 1000ms vi.waitFor budget is a
+      // scheduling guess under full-suite worker contention, not a correctness bound, here even
+      // more so than the mocked-runner call sites since this one genuinely waits on the
+      // filesystem.
+      await vi.waitFor(
+        async () => {
+          const entries = await listCardUsageEntries({ runsDir, cardId: "T-0001" });
+          expect(entries.length).toBeGreaterThan(0);
+        },
+        { timeout: 5000 }
+      );
 
       const interruptedEntries = await listCardUsageEntries({ runsDir, cardId: "T-0001" });
       expect(interruptedEntries).toHaveLength(1);
@@ -716,5 +753,5 @@ describe("RunOrchestrator — crash-recovery invocation identity (Codex review 2
     } finally {
       await rmTemp(runsDir);
     }
-  });
+  }, 30000);
 });
