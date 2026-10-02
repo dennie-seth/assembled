@@ -17,6 +17,15 @@
  *   assets/final/character/player_{state}_sheet_v2.provenance.json
  *
  * docs/design/13-asset-pipeline.md §3.5 (Characters) + §6 (archetype-first coherence guard)
+ *
+ * HAZARD (T-0424): all three of this script's outputs -- move, crouch_hide,
+ * die -- were archived to assets/archive/character/ after measurably
+ * failing the character gate's pose-fidelity/identity-stability checks
+ * (see docs/decision-log.md DL-32). The STATES config below still writes
+ * to assets/final/character/ unchanged. Re-running this script will
+ * silently re-create an archived sheet there and undo the archive --
+ * repoint the output paths to assets/archive/character/ (or re-confirm
+ * the archive decision no longer holds) before running this again.
  */
 
 'use strict';
