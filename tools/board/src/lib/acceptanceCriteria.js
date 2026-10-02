@@ -63,7 +63,18 @@ export function parseAcceptanceCriteria(body) {
  *   just be a fresh blind spot of the same shape this function exists to close.
  * A blank/whitespace-only continuation line contributes nothing but does not end the criterion --
  * a later, non-blank continuation line still joins onto it.
+ *
+ * T-0425 FIX ROUND 2: a bare bold section label (e.g. `**Edge cases:**`) also bounds
+ * reconstruction, the same as a heading or the next checkbox -- this is the real-card convention
+ * for starting the edge-cases block right after the main checklist, and without this boundary the
+ * label (and anything trailing it on the same line) gets absorbed into the PRECEDING criterion's
+ * text. SECTION_LABEL_RE is anchored at the start of the trimmed line with the colon immediately
+ * before the closing `**`, so it only matches a line-leading "**Label:**" shape -- mid-sentence
+ * bold emphasis inside a real criterion ("Do **not** skip this step") does not match and keeps
+ * joining as ordinary continuation prose.
  */
+const SECTION_LABEL_RE = /^\*\*[^*]+:\*\*/;
+
 export function parseAcceptanceCriteriaWithContinuations(body) {
   if (typeof body !== "string") {
     return [];
@@ -84,6 +95,8 @@ export function parseAcceptanceCriteriaWithContinuations(body) {
     if (match) {
       current = { text: match[2].trim(), checked: match[1].toLowerCase() === "x" };
       items.push(current);
+    } else if (SECTION_LABEL_RE.test(line)) {
+      current = null;
     } else if (current && line.length > 0) {
       current.text += ` ${line}`;
     }
