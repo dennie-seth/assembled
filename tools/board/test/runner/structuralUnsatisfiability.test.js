@@ -2,7 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   classifyAcceptanceItem,
   classifyAcceptanceItems,
-  ORCHESTRATOR_ONLY_ACTION_PATTERNS
+  ORCHESTRATOR_ONLY_ACTION_PATTERNS,
+  EDIT_CUE_RE,
+  hasUnnegatedEditCue,
+  hasUnnegatedMatch
 } from "../../src/runner/structuralUnsatisfiability.js";
 
 describe("classifyAcceptanceItem -- claude-dir-edit class (T-0405)", () => {
@@ -152,5 +155,58 @@ describe("classifyAcceptanceItems -- batch helper", () => {
 
   it("returns an empty array for an empty item list", () => {
     expect(classifyAcceptanceItems([], { agentName: "infra", taskStoreKind: "db" })).toEqual([]);
+  });
+});
+
+// T-0425 FIX ROUND -- Finding 1: EDIT_CUE_RE.test(text) alone does not know about negation (it
+// matches the literal word "edit" in "Do not edit X" just as readily as in "Edit X"). The run-time
+// Class-A detector (detectClaudeDirEdit, via classifyAcceptanceItem above) is NOT switched onto any
+// negation-aware read -- its existing behaviour, including on a negated .claude/** mention, must
+// stay exactly what it already is. hasUnnegatedEditCue/hasUnnegatedMatch below are an OPT-IN
+// companion that only acceptanceVetPreflight.js's own Class B check calls.
+describe("run-time behaviour is protected: Class A does not become negation-aware", () => {
+  it("still flags a NEGATED .claude/** edit mention exactly as before -- run-time semantics are untouched", () => {
+    const result = classifyAcceptanceItem("Do not edit `.claude/agents/infra.md` -- leave it as-is.", {
+      agentName: "infra",
+      taskStoreKind: "db"
+    });
+    expect(result).not.toBeNull();
+    expect(result.classId).toBe("claude-dir-edit");
+  });
+});
+
+describe("hasUnnegatedMatch / hasUnnegatedEditCue -- opt-in negation-aware companion to EDIT_CUE_RE", () => {
+  it("hasUnnegatedEditCue is false for 'Do not edit X'", () => {
+    expect(hasUnnegatedEditCue("Do not edit `tools/asset-gate/src/character.py`.")).toBe(false);
+  });
+
+  it("hasUnnegatedEditCue is false for 'never edit X'", () => {
+    expect(hasUnnegatedEditCue("Never edit `tools/asset-gate/src/character.py` again.")).toBe(false);
+  });
+
+  it("hasUnnegatedEditCue is true for an ordinary, unnegated edit requirement", () => {
+    expect(hasUnnegatedEditCue("Edit `tools/asset-gate/src/foo.py` to add the new check.")).toBe(true);
+  });
+
+  it("hasUnnegatedEditCue is true when the negation scopes to a DIFFERENT clause", () => {
+    // "Do not weaken the gate" is its own clause; "edit tools/asset-gate/src/foo.py ..." is a
+    // separate, unnegated clause -- a genuine edit requirement despite the sentence containing "Do not".
+    expect(
+      hasUnnegatedEditCue("Do not weaken the gate; edit `tools/asset-gate/src/foo.py` to re-key the exemption.")
+    ).toBe(true);
+  });
+
+  it("hasUnnegatedEditCue is false when there is no edit cue at all", () => {
+    expect(hasUnnegatedEditCue("Keep `tools/asset-gate/src/` unchanged.")).toBe(false);
+  });
+
+  it("hasUnnegatedMatch generalises to an arbitrary cue regex, not just EDIT_CUE_RE", () => {
+    const countRe = /\b\d+\s+failures?\b/i;
+    expect(hasUnnegatedMatch("Do not assume 14 failures; compare with the card base branch.", countRe)).toBe(false);
+    expect(hasUnnegatedMatch("The gate reports 14 failures before this card's change.", countRe)).toBe(true);
+  });
+
+  it("hasUnnegatedEditCue is defined in terms of the same EDIT_CUE_RE Class A uses, not a second word list", () => {
+    expect(hasUnnegatedEditCue("Edit `tools/asset-gate/src/foo.py`.")).toBe(EDIT_CUE_RE.test("Edit `tools/asset-gate/src/foo.py`."));
   });
 });

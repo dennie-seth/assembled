@@ -16,6 +16,24 @@ export function formatDecisionRow(entry) {
   return `- ${entry.id}${title} [${entry.priority}] ${label} -- ${entry.rule}: ${entry.reason}${evidence}`;
 }
 
+/**
+ * T-0425: one indented line per reason on every acceptance-authoring flag attached to a decision
+ * entry (vetAndReady.js's `acceptanceFlags`) -- so the flag lands where a human actually reads the
+ * morning summary (this report, hence `latest.md`), attributed to its own criterion, rather than
+ * only in a log line. Empty/missing `acceptanceFlags` renders nothing, which is the common case.
+ */
+export function formatAcceptanceFlagLines(entry) {
+  const flags = entry.acceptanceFlags ?? [];
+  const lines = [];
+  for (const flag of flags) {
+    const label = flag.text ? `"${flag.text}"` : "(no ## Acceptance section)";
+    for (const reason of flag.reasons) {
+      lines.push(`    - acceptance-authoring flag ${label}: ${reason}`);
+    }
+  }
+  return lines;
+}
+
 /** The full per-card decision table, readied cards listed before skipped ones. */
 export function formatDecisionTable(result) {
   const lines = [
@@ -24,11 +42,13 @@ export function formatDecisionTable(result) {
     `Skipped: ${result.skipped.length}`
   ];
 
+  const renderGroup = (entries) => entries.flatMap((entry) => [formatDecisionRow(entry), ...formatAcceptanceFlagLines(entry)]);
+
   if (result.readied.length > 0) {
-    lines.push("", "## Readied", ...result.readied.map(formatDecisionRow));
+    lines.push("", "## Readied", ...renderGroup(result.readied));
   }
   if (result.skipped.length > 0) {
-    lines.push("", "## Skipped", ...result.skipped.map(formatDecisionRow));
+    lines.push("", "## Skipped", ...renderGroup(result.skipped));
   }
   return lines.join("\n");
 }
