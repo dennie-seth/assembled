@@ -8,11 +8,16 @@ Sheet: player_die_sheet_v1.png (9 death-sequence frames, 0 spare cells).
 Death animation: figure progressively falls from standing to fully horizontal
 on the floor. The silhouette changes radically across the fall sequence.
 
-RED state:  assets/final/character/player_die_sheet_v1.png absent
+RED state:  assets/archive/character/player_die_sheet_v1.png absent
             → SHEET_PATH fixture raises AssertionError, all tests ERROR.
 GREEN state: sheet present, mode P, 144×144; passes palette-membership,
              index-semantics, cell-fit (3×3, 48×48), orphan-pixel per frame
              cell, and frame-consistency between adjacent die frames.
+
+T-0424: this sheet was archived to assets/archive/character/ (measured on
+merit, see docs/decision-log.md DL-32) -- nothing in client/ referenced it
+and its pose returns via T-0261's successor. Only the path changed; no
+assertion below was relaxed.
 
 Install:
     pip install -e ".[dev]" -e ../../../../tools/asset-gate
@@ -29,7 +34,9 @@ asset_gate_art = pytest.importorskip("asset_gate.art")
 asset_gate_palette = pytest.importorskip("asset_gate.palette")
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SHEET_PATH = REPO_ROOT / "assets" / "final" / "character" / "player_die_sheet_v1.png"
+# T-0424: archived out of assets/final/ (measured on merit, see DL-32) --
+# this file moved, the gate checks below did not change.
+SHEET_PATH = REPO_ROOT / "assets" / "archive" / "character" / "player_die_sheet_v1.png"
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 
 CELL_SIZE = 48

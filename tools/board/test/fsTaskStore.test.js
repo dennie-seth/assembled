@@ -7,6 +7,26 @@ import { FsTaskStore } from "../src/lib/fsTaskStore.js";
 import { runTaskStoreContractTests, makeTask } from "./taskStoreContract.js";
 import { rmTemp } from "./helpers/rmTemp.js";
 
+/**
+ * Polls `conditionFn` until it's true, instead of assuming a fixed wall-clock delay was enough for
+ * a background `store.update()` to have reached a specific internal await point (T-0426 flake
+ * diagnosis). The tests below use this to wait for an instrumented flag/counter the mocked
+ * `fs.readFile` already sets at the exact moment the guard reaches the read in question -- a real,
+ * observable signal -- rather than a `setTimeout(resolve, N)` guess at how long that many real disk
+ * reads and lock-queue resolutions take. A fixed guess is only as good as the load the suite
+ * happens to be under when it runs; under the real parallel-worker contention this suite runs with,
+ * a guess that holds locally can still lose, letting a competing write grab a lock the guard hadn't
+ * reached yet -- see fsTaskStore.js:224's `DependencyNotSatisfiedError` this produced.
+ */
+async function waitUntil(conditionFn, { timeoutMs = 2000, intervalMs = 5 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (conditionFn()) return;
+    if (Date.now() >= deadline) throw new Error("waitUntil: condition never became true");
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 describe("TaskStore (abstract interface)", () => {
   it("throws not-implemented for every method when unimplemented", async () => {
     const base = new TaskStore();
@@ -175,8 +195,11 @@ describe("FsTaskStore dependency-aware locking (FIX ROUND 5 interleaving regress
         { expected: { status: "backlog" }, requireDependenciesSatisfied: true }
       );
 
-      // Give the event loop a tick so guardedReady is paused inside its dependency read.
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Wait for guardedReady to actually be paused inside its dependency read -- not a fixed
+      // delay guessing how long the lock acquisition and prior real disk reads take (T-0426: that
+      // guess loses under heavy parallel-suite load, letting the write below land before the lock
+      // it's supposed to queue behind is even held).
+      await waitUntil(() => dependencyReadSeen);
 
       // A separate write to the DEPENDENCY itself, through the same store instance -- with only
       // the candidate id locked (the pre-fix behaviour), this would land immediately.
@@ -289,7 +312,12 @@ describe("FsTaskStore dependency-aware locking (FIX ROUND 6 stale-peek regressio
 
       const guardedReady = store.update("T-9001", { status: "ready" }, { requireDependenciesSatisfied: true });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Wait for the guard's own unlocked peek to have actually issued its real read of T-9001 --
+      // not a fixed delay guessing that one disk read finishes within it (T-0426: under heavy
+      // parallel-suite load a fixed guess can lose, letting the competing write below land before
+      // the guard's peek has even been dispatched, which would read the NEW depends_on instead of
+      // the stale one this test needs to capture).
+      await waitUntil(() => t9001ReadCount >= 1);
 
       // (2) a competing write changes T-9001's OWN depends_on to a different, also-done card,
       // while the guard's peek is still holding its stale snapshot back. Nothing locks T-9001 yet
@@ -302,7 +330,14 @@ describe("FsTaskStore dependency-aware locking (FIX ROUND 6 stale-peek regressio
       // T-9003 (real, but unlocked).
       releasePeek();
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Wait for the guard to have actually retried onto the CORRECTED lock set and reached its
+      // real dependency read for T-9003 -- not a fixed delay guessing that the retry (a fresh
+      // T-9001 re-peek, lock release/reacquire, and second fresh re-read, all real disk I/O) lands
+      // within it. This is exactly the wait the observed CI failure (fsTaskStore.js:224's
+      // DependencyNotSatisfiedError, T-0426) traces to: under load the guard hadn't yet reached
+      // (and locked) T-9003 when the competing write below was issued, so the write landed first
+      // and the guard's own later read saw T-9003 already "backlog".
+      await waitUntil(() => t9003ReadCount >= 1);
 
       // (4) once the guard has re-locked onto the CORRECT set and reached its dependency read for
       // T-9003, try to move T-9003 to backlog through the same store.

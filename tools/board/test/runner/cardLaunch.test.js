@@ -60,6 +60,31 @@ async function waitFor(conditionFn, { timeoutMs = 2000, intervalMs = 10 } = {}) 
   }
 }
 
+/**
+ * Polls until an `.advisory.json` record exists in `runsDir` AND carries an attached (non-null)
+ * `outcome` -- never just "the file exists" (T-0426 flake diagnosis). `recordAdvisoryDecision`
+ * (advisoryLogger.js) creates the record via `fs.link` with `outcome: null` FIRST, then, only if a
+ * pending outcome marker was already retained, attaches it via a SEPARATE, later `writeAtomic` call
+ * inside `consumePendingOutcome`. A reader that stops at "file exists" can observe the record in
+ * that intermediate `outcome: null` window -- normally too narrow to hit, but a real gap that
+ * widens under heavy parallel-suite load (confirmed by oversubscribing workers locally) until it's
+ * actually hit. Waiting on the outcome itself, not a proxy for it, removes the window instead of
+ * hoping it stays narrow.
+ */
+async function waitForAdvisoryOutcome(runsDir) {
+  let record;
+  await waitFor(async () => {
+    const files = await fs.readdir(runsDir);
+    const advisoryFile = files.find((f) => f.endsWith(".advisory.json"));
+    if (!advisoryFile) return false;
+    const parsed = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+    if (parsed.outcome === null || parsed.outcome === undefined) return false;
+    record = parsed;
+    return true;
+  });
+  return record;
+}
+
 /** Lets a fire-and-forget `runCard().catch(...)` chain settle before assertions. */
 async function flush() {
   await new Promise((resolve) => setImmediate(resolve));
@@ -812,12 +837,10 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
       expect((await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json"))).toBe(false);
 
       releaseGate();
-      await waitFor(async () => (await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json")));
+      const record = await waitForAdvisoryOutcome(runsDir);
+      expect(record.outcome).not.toBeNull();
 
       const afterRelease = await fs.readdir(runsDir);
-      const advisoryFile = afterRelease.find((f) => f.endsWith(".advisory.json"));
-      const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
-      expect(record.outcome).not.toBeNull();
       expect(afterRelease.some((f) => f.endsWith(".outcome-pending.json"))).toBe(false);
       expect(await listActiveReservations({ runsDir })).toHaveLength(0);
     });
@@ -851,16 +874,19 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
       }
       await launchPromise;
 
-      // The run has already "finished and been reconciled" (its lease released) while the
-      // fallback's own persistence is still gated -- the ordering Codex's round-3 finding named.
-      await waitFor(async () => (await listActiveReservations({ runsDir })).length === 0);
+      // The run has already "finished and been reconciled" -- its outcome durably retained,
+      // pending a decision record to attach to -- while the fallback's own persistence is still
+      // gated: the ordering Codex's round-3 finding named. `listActiveReservations` is NOT a valid
+      // proxy for "reconciliation has completed" here (T-0426 flake diagnosis): this decide() never
+      // gets far enough to reserve anything in the first place, so the reservation list reads empty
+      // from the very start, independent of reconciliation's own progress. The outcome-pending
+      // marker is the one signal that's actually true only once reconciliation reached it.
+      await waitFor(async () => (await fs.readdir(runsDir)).some((f) => f.endsWith(".outcome-pending.json")));
       expect(decisionWritesObserved).toBe(0);
 
       releaseGate();
-      await waitFor(async () => decisionWritesObserved === 1);
-
-      const advisoryFile = (await fs.readdir(runsDir)).find((f) => f.endsWith(".advisory.json"));
-      const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+      const record = await waitForAdvisoryOutcome(runsDir);
+      expect(decisionWritesObserved).toBe(1);
       expect(record.outcome).not.toBeNull();
     });
 
@@ -909,13 +935,11 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
 
       // The real (non-fallback) estimate finally resolves and gets recorded normally.
       resolveEstimate();
-      await waitFor(async () => (await fs.readdir(runsDir)).some((f) => f.endsWith(".advisory.json")));
-
-      const files = await fs.readdir(runsDir);
-      const advisoryFile = files.find((f) => f.endsWith(".advisory.json"));
-      const record = JSON.parse(await fs.readFile(path.join(runsDir, advisoryFile), "utf8"));
+      const record = await waitForAdvisoryOutcome(runsDir);
       expect(record.outcome).not.toBeNull();
       expect(record.reason).toMatch(/genuine, just slow/);
+
+      const files = await fs.readdir(runsDir);
       expect(files.some((f) => f.endsWith(".outcome-pending.json"))).toBe(false);
     });
   });

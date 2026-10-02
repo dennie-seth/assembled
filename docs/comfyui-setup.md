@@ -311,3 +311,60 @@ round 9's baseline non-cached recompute (attempt 54) ran in `gpu_seconds`
 `gpu_seconds` 60.1 — roughly +11%, on different seeds and not a controlled
 A/B. It played no part in the baseline decision above and is retained only
 as a stray data point, not a cost that was ever paid.
+
+## Thermal cooler gate (T-0422)
+
+The T-0419 incident: a retry loop submitted ComfyUI work with the cooler
+off. Per-job interruption caught the running job every time
+(`POST /interrupt`, `POST /queue {"clear": true}`, `POST /free` all
+returned 200) but the loop just resubmitted — by the time the board run
+itself was cancelled, ComfyUI's history showed 39 jobs had run and the GPU
+had climbed from 81 to 87°C. `ComfyUIClient.submit()`
+(`tools/comfy-client/src/comfy_client/comfyui_client.py`) now refuses every
+submission — including hand-built graphs that skip
+`comfy_client.pipeline.generate()` entirely — unless the cooler-state file
+says the cooler is on **and** a live `nvidia-smi` reading is a finite
+number under the ceiling in `comfy_client.thermal_gate.TEMPERATURE_CEILING_C`.
+See that module's docstring for the full policy (missing/malformed file,
+multi-GPU, non-finite readings, timeout, etc.) and
+`tools/comfy-client/tests/test_thermal_gate.py` / `test_comfyui_client.py`
+for the tests.
+
+**The one authoritative file** is `~/.local/share/assembled-board/cooler-state.json`
+on whichever host runs the submitting process — **not** a path inside any
+git checkout or task worktree. Round 1 of this card resolved the file
+relative to the module's own `__file__`, so every board task worktree got
+its own independent copy, each defaulting to ON: editing the file in one
+checkout could never stop a submission running from another. There is now
+exactly one file, outside every checkout, the same way
+`tools/board/src/lib/db/connection.js`'s `DEFAULT_DB_PATH` roots `board.db`
+out-of-repo — rooted there specifically so a `git pull`/checkout/new
+worktree can never touch it. Override the location with the
+`COOLER_STATE_PATH` env var (same pattern as that file's `BOARD_DB_PATH`);
+an override pointing at a path that doesn't exist fails closed, naming the
+path it tried.
+
+**To flip it:** edit `"cooler"` in `~/.local/share/assembled-board/cooler-state.json`
+to `"OFF"` (the only other accepted value is `"ON"` — anything else
+refuses, it is not read as on). The change takes effect on the very next
+`ComfyUIClient.submit()` call — no restart of ComfyUI, the board, or any
+process is needed, since the gate reads the file fresh on every submission,
+and resolves its location fresh on every call too (nothing caches a path or
+a decision past client construction — flip it after a client already
+exists and its next submission still sees the flip). There is deliberately
+no bypass/force flag (see the card's "Do not" list): turning it back `"ON"`
+is the only way to resume submissions.
+
+**How the file comes to exist on a host:** nothing commits it (it lives
+outside the repo on purpose), so it must be seeded once per host, before
+the first submission after this card lands. On this development host it
+was seeded ON on 2026-09-30 as part of the T-0422 round-2 fix (the cooler
+is physically on). On a new host, create it once by hand with the same
+shape as the committed example that used to live at
+`tools/board/ops/cooler-state.json` before this round (now removed — see
+git history at `9434490969d2` for its last committed content) --
+`{"cooler": "ON", "decidedBy": ..., "decidedDate": ..., "reason": ...}` --
+at `~/.local/share/assembled-board/cooler-state.json`. There is no
+auto-create-on-first-read: an absent file fails closed (refuses every
+submission) rather than silently defaulting to ON, the same discipline
+round 1 applied to an explicit `"OFF"`.

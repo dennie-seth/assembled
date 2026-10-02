@@ -3,8 +3,10 @@
 
 Successor to `player_move_sheet_v2` (predates the hybrid pipeline entirely --
 mode 'P', no alpha, no Arm-C comparison). Ships under a new filename,
-`player_walk_sheet_hybrid.png` -- the old sheet stays committed and
-untouched; the atlas switch to the new sheet is a separate card.
+`player_walk_sheet_hybrid.png` -- the old sheet is untouched by this
+script; the atlas switch to the new sheet is a separate card. (T-0424
+later archived player_move_sheet_v2 to assets/archive/character/ -- it
+stays committed, just no longer under assets/final/.)
 
 **Why this is its own script, not a generalisation of
 `gen_hybrid_idle_T0252.py`.** The idle hybrid recipe generates exactly ONE

@@ -4,7 +4,11 @@ T-0102 gate validation.
 Successor to `player_move_sheet_v2` (predates the hybrid pipeline: mode 'P',
 144x192, no alpha, no Arm-C comparison -- one of CHR-1's audited gaps).
 Ships under a new filename, `player_walk_sheet_hybrid.png` -- the old sheet
-is untouched and the atlas switch is a separate card, not this one.
+is untouched by this card and the atlas switch is a separate card, not this
+one. T-0424 later archived `player_move_sheet_v2` to
+`assets/archive/character/` (measured on merit, see docs/decision-log.md
+DL-32) -- it still exists, just not under `assets/final/` any more; this
+walk sheet itself was explicitly out of scope for that move.
 
 Unlike the idle hybrid sheet (T-0252: exactly one SDXL generation, every
 other frame derived by translating that one frame's own pixel bands), a walk
@@ -59,7 +63,10 @@ FINAL_CHARACTER_DIR = REPO_ROOT / "assets" / "final" / "character"
 SHEET_PATH = FINAL_CHARACTER_DIR / "player_walk_sheet_hybrid.png"
 PROVENANCE_PATH = FINAL_CHARACTER_DIR / "player_walk_sheet_hybrid.provenance.json"
 IDLE_KEYFRAME_PATH = FINAL_CHARACTER_DIR / "player_idle_sheet_hybrid_T0252.png"
-OLD_MOVE_SHEET_PATH = FINAL_CHARACTER_DIR / "player_move_sheet_v2.png"
+# T-0424: archived to assets/archive/character/ (measured on merit, see
+# DL-32) -- it still exists, just not under assets/final/ any more.
+ARCHIVE_CHARACTER_DIR = REPO_ROOT / "assets" / "archive" / "character"
+OLD_MOVE_SHEET_PATH = ARCHIVE_CHARACTER_DIR / "player_move_sheet_v2.png"
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 
 # T-0266: three real 8-frame generation attempts (see
@@ -156,8 +163,8 @@ def frame_images(sheet: Image.Image) -> dict[tuple[int, int], Image.Image]:
 def test_does_not_overwrite_player_move_sheet_v2() -> None:
     assert SHEET_PATH != OLD_MOVE_SHEET_PATH
     assert OLD_MOVE_SHEET_PATH.exists(), (
-        "player_move_sheet_v2.png must stay committed and untouched -- the atlas switch "
-        "to the new sheet is a separate card"
+        "player_move_sheet_v2.png must stay committed (now under assets/archive/character/, "
+        "T-0424) -- the atlas switch to the new sheet is a separate card"
     )
 
 

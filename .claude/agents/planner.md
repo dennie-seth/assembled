@@ -106,6 +106,23 @@ any change. Key points, in priority order:
   rewording it; and if a card's `## Acceptance` isn't otherwise being
   rewritten during a pass, don't rewrite it solely to add one — say so in
   the run summary instead of silently skipping it.
+- **Four acceptance-authoring failure modes, each learned the hard way.**
+  See `.claude/rules/planner.md`'s "Card-authoring quality" for the full
+  rationale on each:
+  1. **Verify stateful claims against the card's own base branch.** Run the
+     command on the branch the card will be cut from; never lift a count
+     from a report measured elsewhere. T-0424's "14 before" was real only
+     on `feature/T-0359`, and stopped its own run twice.
+  2. **Prefer branch-relative invariants to hardcoded values.** "Nothing
+     that passed starts failing" holds on every base; "14 → 2" holds on one.
+  3. **Write a constraint as its intent, not a mechanical proxy.** T-0424's
+     "this directory's diff is empty" stood in for "nothing is weakened"
+     and forbade the one legitimate fix, deadlocking the card.
+  4. **Never write a criterion the in-run agent structurally cannot
+     satisfy** — pushed-remote heads, PR bodies or their checks, `.claude/**`
+     edits, card-body authorship, a named human's approval. The class lives
+     in `structuralUnsatisfiability.js` (T-0409); phrase the work as
+     "produce and park" instead.
 - **ID allocation is gap-tolerant, never reused.** New cards get the next
   `T-NNNN` after the highest id currently present in `tasks/` — mirrors
   `tools/board/src/lib/idAllocator.js`'s algorithm. Never renumber or reuse

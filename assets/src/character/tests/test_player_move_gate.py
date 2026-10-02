@@ -5,11 +5,16 @@ docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class):
 
 Sheet: player_move_sheet_v1.png (10 walk-cycle frames, 2 spare cells).
 
-RED state:  assets/final/character/player_move_sheet_v1.png absent
+RED state:  assets/archive/character/player_move_sheet_v1.png absent
             → SHEET_PATH fixture raises AssertionError, all tests ERROR.
 GREEN state: sheet present, mode P, 144×192; passes palette-membership,
              index-semantics, cell-fit (3×4, 48×48), orphan-pixel per frame
              cell, and frame-consistency between adjacent walk frames.
+
+T-0424: this sheet was archived to assets/archive/character/ (measured on
+merit, see docs/decision-log.md DL-32) -- nothing in client/ referenced it
+and its pose returns via T-0338's per-state compositor. Only the path
+changed; no assertion below was relaxed.
 
 Install:
     pip install -e ".[dev]" -e ../../../../tools/asset-gate
@@ -26,7 +31,9 @@ asset_gate_art = pytest.importorskip("asset_gate.art")
 asset_gate_palette = pytest.importorskip("asset_gate.palette")
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SHEET_PATH = REPO_ROOT / "assets" / "final" / "character" / "player_move_sheet_v1.png"
+# T-0424: archived out of assets/final/ (measured on merit, see DL-32) --
+# this file moved, the gate checks below did not change.
+SHEET_PATH = REPO_ROOT / "assets" / "archive" / "character" / "player_move_sheet_v1.png"
 PALETTE_PATH = REPO_ROOT / "assets" / "final" / "palette" / "home_palette.json"
 
 CELL_SIZE = 48

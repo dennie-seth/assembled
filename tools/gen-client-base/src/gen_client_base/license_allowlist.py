@@ -3,10 +3,20 @@
 Extracted from `tools/comfy-client` (T-0071) so both `comfy_client.pipeline`
 (ComfyUI checkpoints) and `audio_agent.pipeline` (ACE-Step, T-0082) enforce
 the same guardrail from the same config file, `config/checkpoint_allowlist.json`
-in this package. Not a convention: each pipeline's `generate()` calls
-`assert_checkpoint_allowed` before ever constructing a request, so a
-disallowed checkpoint/model cannot reach a generation backend regardless of
-caller.
+in this package. Each pipeline's `generate()` calls `assert_checkpoint_allowed`
+before ever constructing a request.
+
+For ComfyUI specifically, that pipeline-level call is not the only
+enforcement point (T-0418): `comfy_client.comfyui_client.ComfyUIClient.submit()`
+also inspects every checkpoint-bearing node in whatever graph it's handed
+(`comfy_client.checkpoint_gate.assert_graph_checkpoints_allowed`) before
+posting it, so a hand-built graph that skips `pipeline.generate()` entirely
+-- the route `assets/src/character/gen_master_sheet_cutout_compare_T0337.py`'s
+SAM3 runner uses -- is checked too. That is what makes "a disallowed
+checkpoint/model cannot reach a generation backend regardless of caller" true
+for the ComfyUI backend today. The ACE-Step backend (`audio_agent`) has no
+equivalent client-level graph inspection yet: its guarantee is still only as
+strong as `audio_agent.pipeline.generate()`'s own call to this function.
 """
 
 from __future__ import annotations

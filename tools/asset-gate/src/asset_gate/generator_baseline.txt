@@ -15,10 +15,18 @@
 #   final/props/signal_tower/server_rack_v1.provenance.json
 #
 # Do NOT add new entries here to silence a fresh violation -- fix the writer.
-final/character/player_crouch_hide_sheet_v1.provenance.json
-final/character/player_die_sheet_v1.provenance.json
+#
+# T-0424 re-keyed 3 of these (crouch_hide/die/move v1) from final/character/
+# to archive/character/ when those sheets were archived -- this sweep's root
+# is the whole assets/ tree (ci-asset-gate.yml's generator-sweep job), not
+# assets/final/, so the exemption must follow the asset to its new path or
+# it stops matching and the sidecar fails on a generator-resolvability gap
+# that never changed. player_idle_sheet_v1 was NOT archived and keeps its
+# original path.
+archive/character/player_crouch_hide_sheet_v1.provenance.json
+archive/character/player_die_sheet_v1.provenance.json
 final/character/player_idle_sheet_v1.provenance.json
-final/character/player_move_sheet_v1.provenance.json
+archive/character/player_move_sheet_v1.provenance.json
 final/entity/sound_idle_sheet_v1.provenance.json
 final/entity/sound_move_sheet_v1.provenance.json
 final/entity/sound_trapped_sheet_v1.provenance.json

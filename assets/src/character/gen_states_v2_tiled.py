@@ -15,6 +15,17 @@ Pipeline per sheet:
 
 concept_hash recorded here is the hash of player_idle_sheet_v2.png (T-0212),
 satisfying the T-0106 conditioning-chain provenance requirement.
+
+**HAZARD (T-0424):** all three of this script's output paths --
+player_move_sheet_v2.png, player_crouch_hide_sheet_v2.png and
+player_die_sheet_v2.png, plus their .provenance.json sidecars -- were
+archived to assets/archive/character/ after measurably failing the
+character gate's pose-fidelity/identity-stability checks (see
+docs/decision-log.md DL-32). This script's STATES dict below still points
+at assets/final/character/ unchanged. Re-running it will silently
+re-create a sheet there and undo the archive -- repoint `output_path` /
+`provenance_path` to assets/archive/character/ (or re-confirm the archive
+decision no longer holds) before running this again.
 """
 
 from __future__ import annotations

@@ -7,8 +7,10 @@ import json
 
 import pytest
 import responses
+from gen_client_base.license_allowlist import CheckpointNotAllowedError
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
+from comfy_client import thermal_gate
 from comfy_client.comfyui_client import ComfyUIClient
 from comfy_client.errors import (
     ExecutionError,
@@ -17,6 +19,7 @@ from comfy_client.errors import (
     SubmitError,
     UploadError,
 )
+from comfy_client.thermal_gate import ThermalGateRefused, assert_thermal_gate_open
 
 BASE_URL = "http://172.18.192.1:8188"
 
@@ -220,6 +223,53 @@ def test_upload_image_raises_on_non_2xx(fake_clock):
         client.upload_image(b"data", filename="template.png")
 
 
+# ---- T-0418: the checkpoint-allowlist gate fires on the direct-submit path,
+# not only inside comfy_client.pipeline.generate() ---------------------------
+
+
+@responses.activate
+def test_submit_refuses_a_hand_built_graph_naming_an_unregistered_checkpoint(fake_clock):
+    """This is the regression that would have caught T-0337: a hand-built
+    graph (never passed through pipeline.generate()'s own gate) submitted
+    straight to ComfyUIClient.submit(), the same call
+    assets/src/character/gen_master_sheet_cutout_compare_T0337.py's SAM3
+    runner uses. No responses.add() is registered for /prompt -- if the gate
+    didn't fire first and the code actually tried the HTTP call, this test
+    would fail with a connection error, not a CheckpointNotAllowedError."""
+    graph = {
+        "2": {
+            "class_type": "UNETLoader",
+            "inputs": {
+                "unet_name": "unregistered_checkpoint.safetensors",
+                "weight_dtype": "default",
+            },
+        },
+    }
+    client = make_client(fake_clock)
+    with pytest.raises(CheckpointNotAllowedError):
+        client.submit(graph)
+    assert len(responses.calls) == 0
+
+
+@responses.activate
+def test_submit_allows_a_hand_built_graph_naming_no_checkpoint_at_all(fake_clock):
+    """A SAM3_Detect segmentation graph fed a MASK/IMAGE, naming no checkpoint
+    at all, must still submit -- the gate refuses unregistered checkpoints,
+    it does not require every graph to have one."""
+    responses.add(
+        responses.POST,
+        f"{BASE_URL}/prompt",
+        json={"prompt_id": "seg1", "node_errors": {}},
+        status=200,
+    )
+    graph = {
+        "1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}},
+        "3": {"class_type": "SAM3_Detect", "inputs": {"image": ["1", 0], "threshold": 0.5}},
+    }
+    client = make_client(fake_clock)
+    assert client.submit(graph) == "seg1"
+
+
 @responses.activate
 def test_generate_end_to_end(sample_graph, fake_clock):
     responses.add(
@@ -244,3 +294,136 @@ def test_generate_end_to_end(sample_graph, fake_clock):
     client = make_client(fake_clock)
     data = client.generate(sample_graph, timeout=30, poll_interval=1.0)
     assert data == b"PNGDATA"
+
+
+# ---- T-0422: the thermal/cooler gate fires on the direct-submit path, not --
+# only through some caller that remembers to check first ---------------------
+
+
+def _refusing_thermal_gate():
+    raise ThermalGateRefused("cooler is OFF per stub -- refusing submission")
+
+
+@responses.activate
+def test_submit_refuses_via_the_real_default_gate_when_the_cooler_state_file_says_off(
+    fake_clock, monkeypatch, tmp_path
+):
+    """The literally bare path: ComfyUIClient constructed with no
+    thermal_gate override at all, so submit() runs the real
+    assert_thermal_gate_open against DEFAULT_COOLER_STATE_PATH -- proven by
+    pointing that default at an OFF file, not by injecting a stub gate
+    callable. This is the regression test for the T-0419 incident itself:
+    the cooler flag alone, with zero special construction, must stop a
+    submission."""
+    off_state = tmp_path / "cooler-state.json"
+    off_state.write_text('{"cooler": "OFF"}')
+    monkeypatch.setattr(thermal_gate, "DEFAULT_COOLER_STATE_PATH", off_state)
+
+    client = make_client(fake_clock)
+    graph = {"1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}}}
+    with pytest.raises(ThermalGateRefused):
+        client.submit(graph)
+    assert len(responses.calls) == 0
+
+
+@responses.activate
+def test_submit_refuses_a_bare_hand_built_graph_when_the_cooler_is_off(fake_clock):
+    """The T-0419 regression: a hand-built graph posted straight to
+    ComfyUIClient.submit() (never through pipeline.generate()) must be
+    refused when the cooler is off, exactly like the checkpoint gate already
+    covers a hand-built graph naming a disallowed checkpoint. No responses.add()
+    is registered for /prompt -- if the gate didn't fire first and the code
+    actually tried the HTTP call, this would fail with a connection error,
+    not a ThermalGateRefused."""
+    graph = {
+        "1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}},
+        "3": {"class_type": "SAM3_Detect", "inputs": {"image": ["1", 0], "threshold": 0.5}},
+    }
+    client = ComfyUIClient(
+        base_url=BASE_URL,
+        sleep=fake_clock.sleep,
+        now=fake_clock.now,
+        thermal_gate=_refusing_thermal_gate,
+    )
+    with pytest.raises(ThermalGateRefused):
+        client.submit(graph)
+    assert len(responses.calls) == 0
+
+
+@responses.activate
+def test_submit_allows_when_cooler_is_on_and_temperature_is_under_the_ceiling(fake_clock, tmp_path):
+    """A gate that is never open is not a gate: prove the allow path fires
+    too, through the real assert_thermal_gate_open (a real ON cooler-state
+    file + an injected under-ceiling reading), not a trivial always-allow
+    stub."""
+    cooler_state = tmp_path / "cooler-state.json"
+    cooler_state.write_text('{"cooler": "ON"}')
+    responses.add(
+        responses.POST,
+        f"{BASE_URL}/prompt",
+        json={"prompt_id": "thermal-ok", "node_errors": {}},
+        status=200,
+    )
+    client = ComfyUIClient(
+        base_url=BASE_URL,
+        sleep=fake_clock.sleep,
+        now=fake_clock.now,
+        thermal_gate=lambda: assert_thermal_gate_open(
+            cooler_state_path=cooler_state, temperature_reader=lambda: 60.0
+        ),
+    )
+    graph = {"1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}}}
+    assert client.submit(graph) == "thermal-ok"
+
+
+@responses.activate
+def test_submit_with_no_thermal_override_still_submits_ordinary_mocked_http_flows(fake_clock):
+    """The default (uninjected) thermal_gate must not break an ordinary
+    mocked-HTTP submit -- this is what keeps the rest of this file's 244
+    pre-existing tests green without any of them knowing this gate exists."""
+    responses.add(
+        responses.POST,
+        f"{BASE_URL}/prompt",
+        json={"prompt_id": "default-ok", "node_errors": {}},
+        status=200,
+    )
+    client = make_client(fake_clock)
+    graph = {"1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}}}
+    assert client.submit(graph) == "default-ok"
+
+
+# ---- T-0422 round 2, finding 1: the cooler decision is ONE authoritative --
+# state shared by every worktree's own ComfyUIClient, not one flag per -------
+# checkout -- and client construction must not cache it ---------------------
+
+
+@responses.activate
+def test_two_linked_worktree_clients_both_see_a_flip_made_after_construction(
+    fake_clock, monkeypatch, tmp_path
+):
+    """The exact regression the round-2 review asked for: two ComfyUIClient
+    instances -- standing in for two board task worktrees' own clients,
+    each already constructed -- must both read the SAME authoritative
+    cooler-state file (round 1's bug was a path derived from each
+    checkout's own `__file__`, giving each worktree its own copy). Flip the
+    shared file to OFF only *after* both clients already exist, then assert
+    the very next submission from BOTH refuses and that no HTTP call left
+    either client -- proving neither client cached the ON decision at
+    construction time."""
+    shared_state = tmp_path / "shared-cooler-state.json"
+    shared_state.write_text('{"cooler": "ON"}')
+    monkeypatch.setattr(thermal_gate, "DEFAULT_COOLER_STATE_PATH", shared_state)
+    monkeypatch.setattr(thermal_gate, "_shell_nvidia_smi_temperature_c", lambda **_: 60.0)
+
+    worktree_a_client = ComfyUIClient(base_url=BASE_URL, sleep=fake_clock.sleep, now=fake_clock.now)
+    worktree_b_client = ComfyUIClient(base_url=BASE_URL, sleep=fake_clock.sleep, now=fake_clock.now)
+
+    # Flip AFTER both clients already exist -- construction must not cache.
+    shared_state.write_text('{"cooler": "OFF"}')
+
+    graph = {"1": {"class_type": "LoadImage", "inputs": {"image": "panel.png"}}}
+    with pytest.raises(ThermalGateRefused):
+        worktree_a_client.submit(graph)
+    with pytest.raises(ThermalGateRefused):
+        worktree_b_client.submit(graph)
+    assert len(responses.calls) == 0
