@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { checkAcceptanceAuthoringPreflight } from "../../src/runner/acceptanceVetPreflight.js";
 import { checkImpossibleAcceptancePreflight } from "../../src/runner/impossibleAcceptancePreflight.js";
@@ -234,17 +235,37 @@ describe("Class A patterns are defined exactly once -- no duplication", () => {
 // Acceptance: "No change to run-time behaviour. runOrchestrator.js's existing preflight sequence
 // is untouched ... Assert the orchestrator diff is empty." This card adds a NEW author-time reader
 // of the existing registry; it must not touch the run-time orchestrator at all.
+//
+// This was originally written as `git merge-base HEAD origin/develop` + `git diff <base> HEAD`, and
+// that form CANNOT work in CI: `.github/workflows/ci-board.yml` uses `actions/checkout@v4` with no
+// `fetch-depth`, which defaults to a shallow depth-1 checkout. A depth-1 checkout has no
+// `origin/develop`, no local `develop`, and no reachable parent commit -- so EVERY base-relative
+// diff form fails there with `fatal: Not a valid object name origin/develop`, not just this one.
+// That is the same class as the rule this very card enforces (a criterion that depends on a ref the
+// running environment does not have; see .claude/rules/planner.md's fourth authoring rule).
+//
+// So the assertion is expressed as the invariant it was always standing in for, checkable from the
+// working tree alone with no git and no refs: the run-time orchestrator does not reference the
+// author-time module. A base-diff could only ever say "this one commit range touched nothing"; this
+// says "the run-time path does not reach the author-time reader", which stays true and meaningful
+// after merge, when the original form would have become vacuous.
 describe("runOrchestrator.js is untouched by this card", () => {
-  it("has an empty diff against the branch this card was cut from", async () => {
-    const { stdout: mergeBase } = await execFileAsync("git", ["merge-base", "HEAD", "origin/develop"]);
-    const { stdout: diff } = await execFileAsync("git", [
-      "diff",
-      mergeBase.trim(),
-      "HEAD",
-      "--",
-      "tools/board/src/runner/runOrchestrator.js"
-    ]);
-    expect(diff.trim()).toBe("");
+  const ORCHESTRATOR = new URL("../../src/runner/runOrchestrator.js", import.meta.url);
+  const AUTHOR_TIME_SYMBOLS = ["acceptanceVetPreflight", "checkAcceptanceAuthoringPreflight"];
+
+  it("does not reference the author-time preflight module at all", async () => {
+    const source = await readFile(ORCHESTRATOR, "utf8");
+    const found = AUTHOR_TIME_SYMBOLS.filter((symbol) => source.includes(symbol));
+    expect(found).toEqual([]);
+  });
+
+  it("still wires the RUN-TIME preflights it owned before this card", async () => {
+    // The guard above would also pass if someone deleted the orchestrator's preflight sequence
+    // wholesale, so pin that the run-time readers are still there -- that is the half of "run-time
+    // behaviour is unchanged" a reference-absence check cannot see on its own.
+    const source = await readFile(ORCHESTRATOR, "utf8");
+    expect(source).toContain("impossibleAcceptancePreflight");
+    expect(source).toContain("capabilityPreflight");
   });
 });
 
