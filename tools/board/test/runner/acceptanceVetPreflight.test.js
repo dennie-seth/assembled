@@ -247,3 +247,215 @@ describe("runOrchestrator.js is untouched by this card", () => {
     expect(diff.trim()).toBe("");
   });
 });
+
+// T-0425 FIX ROUND -- Chat's review of PR #429 (2026-10-02), probe429.mjs's own cases, pinned as
+// regressions. All four must fail on d9c36eb2 (Round 1's head) and pass after this round's fix.
+describe("FIX ROUND -- probe429.mjs cases", () => {
+  it("negated_edit: a diff-empty criterion and a 'Do not edit' criterion on the same path are COMPATIBLE, not conflicting", () => {
+    const body =
+      "## Acceptance\n\n" +
+      "- [ ] Keep `tools/asset-gate/src/` unchanged.\n" +
+      "- [ ] Do not edit `tools/asset-gate/src/character.py`.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toEqual([]);
+  });
+
+  it("negated_count: 'Do not assume 14 failures; compare with the card base branch' is the corrective guidance itself, not a hardcoded claim", () => {
+    const body = "## Acceptance\n\n- [ ] Do not assume 14 failures; compare with the card base branch.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toEqual([]);
+  });
+
+  it("wrapped_conflict: the T-0424 criterion-4 shape still flags when the SAME two criteria are written with line-wrapped continuations", () => {
+    const body =
+      "## Acceptance\n\n" +
+      "- [ ] `git diff develop...HEAD --\n" +
+      "      tools/asset-gate/src/` is empty.\n" +
+      "- [ ] The fix edits\n" +
+      "      `tools/asset-gate/src/foo.py`\n" +
+      "      to add the new check.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    const flagged = result.flags.find((f) => /diff/.test(f.text ?? ""));
+    expect(flagged).toBeTruthy();
+    expect(flagged.reasons.join(" ")).toMatch(/Class B/);
+  });
+
+  it("unwrapped_conflict (control): the identical conflict written on single lines still flags -- the false-positive fix must not cost this", () => {
+    const body =
+      "## Acceptance\n\n" +
+      "- [ ] `git diff develop...HEAD -- tools/asset-gate/src/` is empty.\n" +
+      "- [ ] The fix edits `tools/asset-gate/src/foo.py` to add the new check.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    const flagged = result.flags.find((f) => /diff/.test(f.text ?? ""));
+    expect(flagged).toBeTruthy();
+    expect(flagged.reasons.join(" ")).toMatch(/Class B/);
+  });
+
+  it("wrapped/unwrapped equivalence: both bodies above produce the SAME flags", () => {
+    const wrapped =
+      "## Acceptance\n\n" +
+      "- [ ] `git diff develop...HEAD --\n" +
+      "      tools/asset-gate/src/` is empty.\n" +
+      "- [ ] The fix edits\n" +
+      "      `tools/asset-gate/src/foo.py`\n" +
+      "      to add the new check.\n";
+    const unwrapped =
+      "## Acceptance\n\n" +
+      "- [ ] `git diff develop...HEAD -- tools/asset-gate/src/` is empty.\n" +
+      "- [ ] The fix edits `tools/asset-gate/src/foo.py` to add the new check.\n";
+    const ctx = { agentName: "infra", taskStoreKind: "db" };
+    const wrappedResult = checkAcceptanceAuthoringPreflight(task(wrapped), ctx);
+    const unwrappedResult = checkAcceptanceAuthoringPreflight(task(unwrapped), ctx);
+    expect(wrappedResult.flags).toEqual(unwrappedResult.flags);
+  });
+
+  it("wrapped/unwrapped equivalence for Class C: a hardcoded count written on a continuation line is caught the same as on one line", () => {
+    const wrapped = "## Acceptance\n\n- [ ] The gate reports 14\n      failures before this card's change.\n";
+    const unwrapped = "## Acceptance\n\n- [ ] The gate reports 14 failures before this card's change.\n";
+    const ctx = { agentName: "infra", taskStoreKind: "db" };
+    const wrappedResult = checkAcceptanceAuthoringPreflight(task(wrapped), ctx);
+    const unwrappedResult = checkAcceptanceAuthoringPreflight(task(unwrapped), ctx);
+    expect(wrappedResult.flags).toHaveLength(1);
+    expect(unwrappedResult.flags).toHaveLength(1);
+    expect(wrappedResult.flags[0].reasons).toEqual(unwrappedResult.flags[0].reasons);
+  });
+});
+
+describe("FIX ROUND -- negated/prohibited edit mentions never produce a Class B conflict", () => {
+  it("'Keep X unchanged' + 'never edit X' are compatible", () => {
+    const body =
+      "## Acceptance\n\n" +
+      "- [ ] `tools/asset-gate/src/` stays untouched.\n" +
+      "- [ ] Never edit `tools/asset-gate/src/character.py` again.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toEqual([]);
+  });
+
+  // Edge case: negation scoped to a DIFFERENT clause is still a genuine edit requirement -- a
+  // blanket "criterion contains a negation word, skip it" rule would wrongly silence this.
+  it("edge case: a negation in one clause does not shield a genuine edit requirement in a different clause of the SAME criterion", () => {
+    const body =
+      "## Acceptance\n\n" +
+      "- [ ] `git diff -- tools/asset-gate/src/` is empty.\n" +
+      "- [ ] Do not weaken the gate; edit `tools/asset-gate/src/foo.py` to re-key the exemption.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    const flagged = result.flags.find((f) => /diff/.test(f.text ?? ""));
+    expect(flagged).toBeTruthy();
+    expect(flagged.reasons.join(" ")).toMatch(/Class B/);
+  });
+
+  // Edge case: a SINGLE criterion that is BOTH a prohibition and a permission (T-0424's own
+  // rescoped criterion 4) -- chosen verdict: NOT flagged. It is one self-describing criterion
+  // naming its own carve-out ("diff empty except for this one named edit"), not two independent
+  // criteria whose literal conjunction is unsatisfiable -- the existing i!==j self-comparison skip
+  // (detectDiffEmptyOverConstraint never compares a criterion to itself) already gives this answer
+  // without any negation-specific carve-out, so no blanket "contains a negation, skip it" rule was
+  // needed (and adding one would risk silencing a genuine two-criterion conflict phrased with
+  // "only"/"permitted" elsewhere).
+  it("edge case: a single criterion that is both prohibition and permission is not flagged", () => {
+    const body =
+      "## Acceptance\n\n" +
+      "- [ ] `git diff develop...HEAD -- tools/asset-gate/src/` is empty -- the ONLY permitted edit is re-keying `tools/asset-gate/src/asset_gate/character_motion_class_baseline.txt`'s existing exemption line to its new path.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toEqual([]);
+  });
+});
+
+describe("FIX ROUND -- negated count mentions never produce a Class C flag", () => {
+  it("'Do not assume N failures' passes clean", () => {
+    const body = "## Acceptance\n\n- [ ] Do not assume 14 failures; verify against the card's own base branch instead.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toEqual([]);
+  });
+
+  it("control: an unnegated hardcoded count in the same shape still flags (false-positive fix must not cost this)", () => {
+    const body = "## Acceptance\n\n- [ ] The suite reports 14 failures.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toHaveLength(1);
+    expect(result.flags[0].reasons.join(" ")).toMatch(/Class C/);
+  });
+
+  // Edge case: a count written in words or with separators -- stated explicitly rather than left
+  // accidental: Class C's patterns are digit-only (\d+) by design, matching the "deliberately
+  // narrow per detector" philosophy this module already documents for Class A. Word-form
+  // ("fourteen failures") and separator-formatted ("1,400 tests") counts are NOT covered by this
+  // fix round -- pinned here as documented, known gaps rather than a silent accident.
+  it("edge case: a word-form count ('fourteen failures') is NOT covered by Class C (documented gap)", () => {
+    const body = "## Acceptance\n\n- [ ] The suite reports fourteen failures.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toEqual([]);
+  });
+
+  it("edge case: a separator-formatted count ('1,400 tests') is NOT covered by Class C (documented gap)", () => {
+    const body = "## Acceptance\n\n- [ ] The suite now runs 1,400 tests.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toEqual([]);
+  });
+});
+
+describe("FIX ROUND -- quoted-example mentions do not flag", () => {
+  it("a criterion that quotes an illustrative 'edit <path>' phrase purely as an example does not produce a Class B conflict", () => {
+    const body =
+      "## Acceptance\n\n" +
+      "- [ ] `git diff -- tools/asset-gate/src/` is empty.\n" +
+      '- [ ] This check\'s own regression test quotes "edit `tools/asset-gate/src/foo.py`" purely as an example of a conflicting criterion; this bullet does not itself require that edit.\n';
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toEqual([]);
+  });
+
+  it("a criterion that quotes an illustrative hardcoded-count phrase purely as an example does not produce a Class C flag", () => {
+    const body =
+      "## Acceptance\n\n" +
+      '- [ ] This check\'s own regression test quotes "the suite reports 14 failures" purely as an example of what Class C should flag; this bullet does not itself assert that count.\n';
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toEqual([]);
+  });
+
+  it("control: the same quoted phrase, pulled outside the quotes as a live assertion, still flags Class C", () => {
+    const body = "## Acceptance\n\n- [ ] The suite reports 14 failures, not inside any quote marks.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    expect(result.flags).toHaveLength(1);
+  });
+});
+
+describe("FIX ROUND -- continuation-line edge cases beyond the probe's own fixtures", () => {
+  it("a continuation line that is itself a nested, non-checkbox bullet is not mistaken for the next criterion", () => {
+    const body =
+      "## Acceptance\n\n" +
+      "- [ ] `git diff -- tools/asset-gate/src/` is empty.\n" +
+      "- [ ] The fix edits\n" +
+      "      - note: this nested line is not a checkbox\n" +
+      "      `tools/asset-gate/src/foo.py` to add the new check.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    const flagged = result.flags.find((f) => /diff/.test(f.text ?? ""));
+    expect(flagged).toBeTruthy();
+    expect(flagged.reasons.join(" ")).toMatch(/Class B/);
+  });
+
+  it("a path named only inside a fenced code block spanning continuation lines is still detected", () => {
+    const body =
+      "## Acceptance\n\n" +
+      "- [ ] Run:\n" +
+      "      ```\n" +
+      "      git diff -- tools/asset-gate/src/\n" +
+      "      ```\n" +
+      "      and confirm it is empty.\n" +
+      "- [ ] Edit `tools/asset-gate/src/foo.py` to add the new check.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    const flagged = result.flags.find((f) => /diff/.test(f.text ?? ""));
+    expect(flagged).toBeTruthy();
+    expect(flagged.reasons.join(" ")).toMatch(/Class B/);
+  });
+
+  it("a blank continuation line mid-criterion does not terminate reconstruction early", () => {
+    const body =
+      "## Acceptance\n\n" +
+      "- [ ] `git diff -- tools/asset-gate/src/` is empty.\n" +
+      "- [ ] The fix edits\n" +
+      "\n" +
+      "      `tools/asset-gate/src/foo.py` to add the new check.\n";
+    const result = checkAcceptanceAuthoringPreflight(task(body), { agentName: "infra", taskStoreKind: "db" });
+    const flagged = result.flags.find((f) => /diff/.test(f.text ?? ""));
+    expect(flagged).toBeTruthy();
+  });
+});
