@@ -8,6 +8,8 @@
   "_note": "synthetic — this is the programmatic reference image for T-0198 gate infrastructure validation. Replace with SDXL-generated + descended PNG following MANUAL_GENERATION.md to answer the real spike question (does a 40px figure survive SDXL descent as a readable silhouette?). See player_idle_sheet_v1.recipe.json for SDXL parameters (seed=31415, sd_xl_base_1.0 + soviet_brutalism_style_v1 LoRA weight=0.70, 1152x1152 -> 144x144 descent).",
   "generator": "assets/src/character/src/char_gen/synth_sheet.py (invoked via tests/conftest.py ensure_synth_sheet fixture)",
   "card": "T-0198",
+  "motion_class": "idle",
+  "motion_class_basis": "T-0359: filename and card T-0198 identify this as the original idle sheet synthetic fixture; no per-frame walk-gait or transition rig data is recorded",
   "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
   "layout": {
     "sheet_px": [

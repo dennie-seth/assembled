@@ -26,6 +26,8 @@
   "method": "Procedurally drawn OpenPose-format skeleton (single 336x336 cell, PIL, 18-keypoint COCO layout, standard OpenPose limb colours) tiled bit-for-bit identical into a 1008x1008 pose grid, uploaded once -> ControlNetApplyAdvanced (xinsir OpenPose) + IPAdapterAdvanced (PLUS, T-0209 concept) + LoraLoader (soviet_brutalism_style_v1) -> KSampler 1008x1008 -> area downscale to 144x144 -> Oklab-nearest palette quantization (dithering off, §3.1) -> orphan cleanup.",
   "generator": "assets/src/character/gen_arm_a_idle_T0228.py",
   "card": "T-0228",
+  "motion_class": "idle",
+  "motion_class_basis": "T-0359: this sidecar's own generator field names gen_arm_a_idle_T0228.py -- an idle-pose generation script -- not a walk-gait or transition rig",
   "bake_off_arm": "A (§23-d)",
   "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §3.5",
   "comfyui_prompt_id": "39c51e26-075f-466b-ae94-e7bdc053acbc",

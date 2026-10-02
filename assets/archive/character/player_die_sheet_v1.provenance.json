@@ -8,6 +8,8 @@
   "_note": "synthetic — programmatic reference image for T-0199 gate infrastructure validation. Represents the player die/death state (figure falls from standing to prone across 9 frames, with up to 90% silhouette delta allowed between adjacent frames by the gate). img2img from the approved idle sheet (player_idle_sheet_v1.png, T-0198) is the intended production path.",
   "generator": "assets/src/character/src/char_gen/synth_states.py:generate_die_sheet (invoked via tests/conftest.py ensure_synth_sheets fixture)",
   "card": "T-0199",
+  "motion_class": "transition",
+  "motion_class_basis": "T-0359: this sidecar's own layout.frame_cells record a one-directional, non-repeating pose change -- the head shifts right and down 2px per frame across 9 frames from 'standing' (step 0) to 'prone/settled' (step 8), with no return to the starting pose and no loop. That is neither idle (it has frame-to-frame pose progression) nor locomotion (it is not a repeating gait cycle) -- it is a terminal transition from standing to fallen, so motion_class=\"transition\".",
   "spec": "docs/design/13-asset-pipeline.md §3.5 (Characters — the hard class)",
   "layout": {
     "sheet_px": [

@@ -203,6 +203,8 @@
   "method": "pose_rig_T0249 derives 18-keypoint COCO frame keypoints from committed animation parameters (pose_rig_T0249.json) -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each frame's skeleton (384x384, reused renderer, not re-authored) -> frame 0: ControlNetApplyAdvanced (xinsir OpenPose) conditions a single-figure KSampler generation at 384x384 from pure noise -> frames 1-8: frame 0's own decoded output (a fixed anchor, not the immediately preceding frame) is VAE-encoded and used as the KSampler's latent source at denoise=0.3, with this frame's own skeleton still ControlNet-conditioning the sample -> the sampled output is composited back onto frame 0's own background through a soft-edged mask over this frame's keypoint bounding box (apply_background_hold), so every background pixel is byte-anchored to frame 0's -> per-frame area descent to 48x48 (same x8 ratio as the grid path, computed locally from the held/composited image for frames 1-8) -> frames assembled into a 144x144 sheet -> Oklab-nearest palette quantization (dithering off, §3.1) -> orphan cleanup.",
   "generator": "assets/src/character/gen_chained_idle_T0250.py",
   "card": "T-0250",
+  "motion_class": "idle",
+  "motion_class_basis": "T-0359: this sidecar's own generator field names gen_chained_idle_T0250.py -- an idle-pose generation script -- not a walk-gait or transition rig",
   "bake_off_arm": "round 2, chained img2img (HANDOFF §24-c), stacked on top of §24-a's player_identity_v2 and §24-b's pose-authority per-frame generation -- not a new bake-off arm competing on DL-21's original criteria",
   "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §3.5 + HANDOFF §24.3",
   "comfyui_prompt_ids": [

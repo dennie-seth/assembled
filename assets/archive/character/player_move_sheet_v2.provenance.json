@@ -28,6 +28,8 @@
   "comfyui_prompt_id": "dd08ae09-9bfb-4a0b-8a17-8f8569e068e7",
   "generator": "assets/src/character/gen_states_v2_tiled.py",
   "card": "T-0213",
+  "motion_class": "locomotion",
+  "motion_class_basis": "T-0359: this sidecar's own prompt explicitly describes a 'walk cycle animation sprite sheet ... with leg stride variation between frames, left and right leg alternating forward and back across adjacent frames' -- a repeating gait, not a one-off pose change. Same category as player_walk_sheet_hybrid.provenance.json, so motion_class=\"locomotion\".",
   "spec": "docs/design/13-asset-pipeline.md \u00a73.5 (Characters \u2014 the hard class) + \u00a76 (archetype-first coherence guard)",
   "layout": {
     "sheet_px": [
