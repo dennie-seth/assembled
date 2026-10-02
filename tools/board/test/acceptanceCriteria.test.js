@@ -265,4 +265,40 @@ describe("parseAcceptanceCriteriaWithContinuations -- author-time-only full-crit
       { text: "run this and confirm it is empty: ``` git diff -- tools/asset-gate/src/ ```", checked: false }
     ]);
   });
+
+  // T-0425 FIX ROUND 2 (reviewer FAIL, 2026-10-02T09:58:58.564Z, acceptance criterion 6): a bare
+  // bold section label such as "**Edge cases:**" -- the exact shape this card's own body, and real
+  // cards generally, use to start the edge-cases block right after the checklist -- was absorbed
+  // into the PRECEDING criterion as if it were an ordinary continuation line, because only
+  // HEADING_RE (`#`) and the next checkbox bounded reconstruction. That produced a real false
+  // positive: a Class-C hardcoded-count check downstream would misattribute the label's own prose
+  // to a criterion that never mentioned a count. Bounded here the same way a heading/checkbox is.
+  it("stops a continuation at a bare '**Edge cases:**' label, even when prose trails it on the same line", () => {
+    const body =
+      "## Acceptance\n\n- [ ] Fix the underlying bug.\n\n" +
+      "**Edge cases:** the gate reports 14 failures today, so recount after the fix.\n\n" +
+      "- [ ] Something else.\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "Fix the underlying bug.", checked: false },
+      { text: "Something else.", checked: false }
+    ]);
+  });
+
+  it("stops a continuation at a bare '**Edge cases:**' label with nothing trailing it, resuming on the next checkbox", () => {
+    const body = "## Acceptance\n\n- [ ] first criterion\n      wraps here\n\n**Edge cases:**\n\n- [ ] an edge case\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "first criterion wraps here", checked: false },
+      { text: "an edge case", checked: false }
+    ]);
+  });
+
+  // A bold span that is NOT a line-leading "label: " shape -- mid-sentence emphasis inside a real
+  // criterion -- must keep joining as ordinary continuation prose. The label boundary is anchored on
+  // "starts the line, colon immediately before the closing **", not "contains any bold text."
+  it("does not mistake mid-sentence bold text for a section-label boundary", () => {
+    const body = "## Acceptance\n\n- [ ] Do **not** skip this step\n      and finish the job.\n";
+    expect(parseAcceptanceCriteriaWithContinuations(body)).toEqual([
+      { text: "Do **not** skip this step and finish the job.", checked: false }
+    ]);
+  });
 });
