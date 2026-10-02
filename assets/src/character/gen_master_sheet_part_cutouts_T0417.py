@@ -391,6 +391,24 @@ _TORSO_EXTRA_NEGATIVE_JOINTS: tuple[tuple[int, str], ...] = (
     ),
 )
 
+#: [T-0427 ROUND 2] Two additional positive points, one per side, each at
+#: `midpoint(shoulder, hip)` on that side -- a real anatomical landmark on
+#: the torso's own left/right edge. The centerline run alone
+#: (`_TORSO_POSITIVE_RUN_FRACTIONS`) fixed the empty-T-pose-detection
+#: problem but, by construction, cannot claim pixels off its own line: the
+#: reviewer's second FAIL on this card measured `side_left_forward`'s
+#: resulting mask at 20,111px (4.8% of the whole figure), smaller than
+#: T-0423's own already-rejected mask, and visually missing the entire
+#: cloak -- a narrow strip mislabeled "complete." A shoulder-hip midpoint
+#: sits on the garment itself, distinct from the arm (which hangs from the
+#: shoulder outward, kept off by `_TORSO_EXTRA_NEGATIVE_JOINTS`) and
+#: distinct from the centerline -- giving the request a genuine chance to
+#: grow into the coat's actual width instead of only its centerline.
+_TORSO_LATERAL_POSITIVE_JOINT_PAIRS: tuple[tuple[int, int, str], ...] = (
+    (_R_SHOULDER, _R_HIP, "right"),
+    (_L_SHOULDER, _L_HIP, "left"),
+)
+
 
 def _part_anchor_norm(spec: PartSpec, points_norm: dict[int, tuple[float, float]]):
     a = points_norm[spec.joint_a]
@@ -447,6 +465,17 @@ def part_prompt_points(
             derivation = (
                 f"{spec.part_key}_run[t={t}] = lerp(JOINT[{spec.joint_a}], "
                 f"midpoint(JOINT[{j1}], JOINT[{j2}]), t={t})"
+            )
+            records.append({"x": lx, "y": ly, "polarity": "positive", "derivation": derivation})
+        # [T-0427 ROUND 2] Lateral points, one per side, added AFTER the
+        # centerline run -- see `_TORSO_LATERAL_POSITIVE_JOINT_PAIRS`'s own
+        # docstring for why the centerline run alone isn't enough.
+        for shoulder_idx, hip_idx, side in _TORSO_LATERAL_POSITIVE_JOINT_PAIRS:
+            lateral_norm = _midpoint(points_norm[shoulder_idx], points_norm[hip_idx])
+            lx, ly = _px(lateral_norm, panel_size)
+            derivation = (
+                f"{spec.part_key}_lateral[{side}] = midpoint(JOINT[{shoulder_idx}], "
+                f"JOINT[{hip_idx}])"
             )
             records.append({"x": lx, "y": ly, "polarity": "positive", "derivation": derivation})
     else:
