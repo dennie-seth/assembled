@@ -47,9 +47,10 @@ FIGURE_PANEL_KEYS = (
 
 # COCO-18 indices, same numbering as pose_rig_master_sheet_T0351.py.
 _NOSE, _NECK = 0, 1
-_R_SHOULDER, _R_ELBOW, _R_WRIST = 2, 3, 4
-_L_SHOULDER, _L_ELBOW, _L_WRIST = 5, 6, 7
+_R_SHOULDER, _R_WRIST = 2, 4
+_L_SHOULDER, _L_WRIST = 5, 7
 _R_HIP, _L_HIP = 8, 11
+_R_EAR, _L_EAR = 16, 17
 
 
 class _StubComfyClient:
@@ -92,10 +93,8 @@ class TestPartsByPanelExplicitPerFigurePanel:
         assert set(parts) == {
             "head",
             "torso",
-            "right_upper_arm",
-            "right_lower_arm",
-            "left_upper_arm",
-            "left_lower_arm",
+            "right_arm",
+            "left_arm",
         }
 
     def test_back_tpose_has_the_same_set_as_front_tpose(self):
@@ -106,15 +105,13 @@ class TestPartsByPanelExplicitPerFigurePanel:
 
     def test_side_right_forward_excludes_the_far_left_arm(self):
         parts = gen.PARTS_BY_PANEL["side_right_forward"]
-        assert set(parts) == {"head", "torso", "right_upper_arm", "right_lower_arm"}
-        assert "left_upper_arm" not in parts
-        assert "left_lower_arm" not in parts
+        assert set(parts) == {"head", "torso", "right_arm"}
+        assert "left_arm" not in parts
 
     def test_side_left_forward_excludes_the_far_right_arm(self):
         parts = gen.PARTS_BY_PANEL["side_left_forward"]
-        assert set(parts) == {"head", "torso", "left_upper_arm", "left_lower_arm"}
-        assert "right_upper_arm" not in parts
-        assert "right_lower_arm" not in parts
+        assert set(parts) == {"head", "torso", "left_arm"}
+        assert "right_arm" not in parts
 
     def test_side_neutral_uses_the_same_near_side_as_side_right_forward(self):
         # side_neutral's own head keypoints (pose_rig_master_sheet_T0351)
@@ -125,7 +122,7 @@ class TestPartsByPanelExplicitPerFigurePanel:
         for idx in (14, 15, 16, 17):  # R_EYE, L_EYE, R_EAR, L_EAR
             assert points_neutral[idx] == points_right_forward[idx]
         parts = gen.PARTS_BY_PANEL["side_neutral"]
-        assert set(parts) == {"head", "torso", "right_upper_arm", "right_lower_arm"}
+        assert set(parts) == {"head", "torso", "right_arm"}
 
     def test_legs_panel_part_set_is_unchanged_by_this_card(self):
         assert set(gen.PARTS_BY_PANEL["legs"]) == {
@@ -142,46 +139,47 @@ class TestPartsByPanelExplicitPerFigurePanel:
 
         points = rig.keypoints_for("side_right_forward")
         with pytest.raises(ValueError):
-            gen.part_prompt_points("side_right_forward", "left_upper_arm", points, PANEL_SIZE)
+            gen.part_prompt_points("side_right_forward", "left_arm", points, PANEL_SIZE)
 
 
 class TestBuildFigurePartSpecs:
     """`_build_figure_part_specs()` beside `_build_legs_part_specs()` --
     one rule generated for both sides (arms), plus the two single/derived-
-    anchor parts (head, torso) -- never six independently hand-typed specs."""
+    anchor parts (head, torso) -- never independently hand-typed specs.
 
-    def test_returns_six_bounded_parts(self):
+    [T-0428] `arm` is now ONE part per side, shoulder->wrist -- T-0338 needs
+    the arm to separate from the torso for arm opposition, not to separate
+    at the elbow (see this card's own acceptance). The former
+    `upper_arm`/`lower_arm` split is gone."""
+
+    def test_returns_four_bounded_parts(self):
         specs = gen._build_figure_part_specs()
         keys = {s.part_key for s in specs}
         assert keys == {
             "head",
             "torso",
-            "right_upper_arm",
-            "right_lower_arm",
-            "left_upper_arm",
-            "left_lower_arm",
+            "right_arm",
+            "left_arm",
         }
         assert len(specs) == len(keys)  # no duplicates
 
-    def test_head_anchors_on_nose(self):
+    def test_head_anchors_on_the_ear_midpoint_not_the_nose(self):
+        # [T-0428] NOSE alone sits on the forward edge of the face -- on a
+        # profile panel that's almost directly above the forward-extended
+        # arm (12-13px horizontal gap, see the card's own finding). The
+        # ear-to-ear midpoint sits inside the skull instead.
         specs_by_key = {s.part_key: s for s in gen._build_figure_part_specs()}
         head = specs_by_key["head"]
-        assert head.joint_a == _NOSE
-        assert head.joint_b is None
+        assert head.joint_a == _R_EAR
+        assert head.joint_b == _L_EAR
+        assert head.joint_b_pair is None
 
-    def test_upper_arm_anchors_on_shoulder_elbow_midpoint_per_side(self):
+    def test_arm_anchors_on_shoulder_wrist_midpoint_per_side(self):
         specs_by_key = {s.part_key: s for s in gen._build_figure_part_specs()}
-        assert specs_by_key["right_upper_arm"].joint_a == _R_SHOULDER
-        assert specs_by_key["right_upper_arm"].joint_b == _R_ELBOW
-        assert specs_by_key["left_upper_arm"].joint_a == _L_SHOULDER
-        assert specs_by_key["left_upper_arm"].joint_b == _L_ELBOW
-
-    def test_lower_arm_anchors_on_elbow_wrist_midpoint_per_side(self):
-        specs_by_key = {s.part_key: s for s in gen._build_figure_part_specs()}
-        assert specs_by_key["right_lower_arm"].joint_a == _R_ELBOW
-        assert specs_by_key["right_lower_arm"].joint_b == _R_WRIST
-        assert specs_by_key["left_lower_arm"].joint_a == _L_ELBOW
-        assert specs_by_key["left_lower_arm"].joint_b == _L_WRIST
+        assert specs_by_key["right_arm"].joint_a == _R_SHOULDER
+        assert specs_by_key["right_arm"].joint_b == _R_WRIST
+        assert specs_by_key["left_arm"].joint_a == _L_SHOULDER
+        assert specs_by_key["left_arm"].joint_b == _L_WRIST
 
     def test_bounded_not_a_sweep_the_set_is_fixed_across_calls(self):
         first = gen._build_figure_part_specs()
@@ -343,18 +341,25 @@ class TestSiblingPartPairsByPanelForFigurePanels:
         pairs = set(gen.SIBLING_PART_PAIRS_BY_PANEL["front_tpose"])
         expected = {
             ("head", "torso"),
-            ("torso", "right_upper_arm"),
-            ("torso", "left_upper_arm"),
-            ("right_upper_arm", "right_lower_arm"),
-            ("left_upper_arm", "left_lower_arm"),
+            ("torso", "right_arm"),
+            ("torso", "left_arm"),
         }
         assert expected <= pairs or expected <= {(b, a) for a, b in pairs}
+
+    def test_head_and_arm_are_not_marked_adjacent(self):
+        # [T-0428] head/arm share no joint -- any measured overlap between
+        # them means the negative prompts failed to keep them apart, not
+        # ordinary joint-blur. Zero tolerance applies via the general
+        # pairwise sweep, never the 0.25 joint-blur allowance.
+        pairs = set(gen.SIBLING_PART_PAIRS_BY_PANEL["front_tpose"])
+        pairs |= {(b, a) for a, b in pairs}
+        assert ("head", "right_arm") not in pairs
+        assert ("head", "left_arm") not in pairs
 
     def test_cross_side_arms_are_not_marked_adjacent(self):
         pairs = set(gen.SIBLING_PART_PAIRS_BY_PANEL["front_tpose"])
         pairs |= {(b, a) for a, b in pairs}
-        assert ("right_upper_arm", "left_upper_arm") not in pairs
-        assert ("right_lower_arm", "left_lower_arm") not in pairs
+        assert ("right_arm", "left_arm") not in pairs
 
     def test_side_right_forward_only_pairs_parts_it_actually_has(self):
         pairs = gen.SIBLING_PART_PAIRS_BY_PANEL["side_right_forward"]
@@ -389,13 +394,13 @@ class TestSeparateSam3CallPerFigurePart:
                 filename_prefix=f"T0423_sam3_front_tpose_{part_key}",
             )
 
-        assert len(graphs) == 6
+        assert len(graphs) == 4
         positive_sets = set()
         for graph in graphs.values():
             coords = json.loads(graph["3"]["inputs"]["positive_coords"])
             assert len(coords) == 1
             positive_sets.add((coords[0]["x"], coords[0]["y"]))
-        assert len(positive_sets) == 6
+        assert len(positive_sets) == 4
 
     def test_runner_invocations_are_six_separate_calls_not_one_combined_call(self):
         points = rig.keypoints_for("front_tpose")
@@ -419,7 +424,7 @@ class TestSeparateSam3CallPerFigurePart:
             mask = runner()
             assert mask.shape == (PANEL_SIZE, PANEL_SIZE)
 
-        assert len(client.submitted_workflows) == 6
+        assert len(client.submitted_workflows) == 4
 
 
 class TestOverlapRejectionAppliesToFigurePanels:
@@ -428,15 +433,15 @@ class TestOverlapRejectionAppliesToFigurePanels:
     wording) -- the same all-pairs overlap machinery T-0417's FIX ROUND
     finding 3 made generic, reused unmodified for a figure panel."""
 
-    def test_identical_cross_side_upper_arm_masks_are_rejected(self):
+    def test_identical_cross_side_arm_masks_are_rejected(self):
         mask = np.zeros((64, 64), dtype=bool)
         mask[10:40, 10:40] = True
         masks_by_part = {
-            "right_upper_arm": mask.copy(),
-            "left_upper_arm": mask.copy(),
+            "right_arm": mask.copy(),
+            "left_arm": mask.copy(),
         }
         overlaps = gen._evaluate_overlaps("front_tpose", masks_by_part)
-        target = frozenset(("right_upper_arm", "left_upper_arm"))
+        target = frozenset(("right_arm", "left_arm"))
         pair = next(o for o in overlaps if frozenset((o["part_a"], o["part_b"])) == target)
         assert pair["overlap_fraction"] == 1.0
         assert pair["exceeds_tolerance"] is True
@@ -451,17 +456,17 @@ class TestOverlapRejectionAppliesToFigurePanels:
             for key in masks_by_part
         }
         updated = gen._apply_overlap_rejection(parts, overlaps)
-        assert updated["right_upper_arm"]["isolated"] is False
-        assert updated["left_upper_arm"]["isolated"] is False
+        assert updated["right_arm"]["isolated"] is False
+        assert updated["left_arm"]["isolated"] is False
 
-    def test_adjacent_torso_and_upper_arm_keep_the_joint_blur_tolerance(self):
+    def test_adjacent_torso_and_arm_keep_the_joint_blur_tolerance(self):
         mask_a = np.zeros((64, 64), dtype=bool)
         mask_a[0:45, :] = True
         mask_b = np.zeros((64, 64), dtype=bool)
         mask_b[44:54, :] = True
-        masks_by_part = {"torso": mask_a, "right_upper_arm": mask_b}
+        masks_by_part = {"torso": mask_a, "right_arm": mask_b}
         overlaps = gen._evaluate_overlaps("front_tpose", masks_by_part)
-        target = frozenset(("torso", "right_upper_arm"))
+        target = frozenset(("torso", "right_arm"))
         pair = next(o for o in overlaps if frozenset((o["part_a"], o["part_b"])) == target)
         assert pair["tolerance"] == gen.PART_OVERLAP_FRACTION_TOLERANCE
         assert pair["exceeds_tolerance"] is False
