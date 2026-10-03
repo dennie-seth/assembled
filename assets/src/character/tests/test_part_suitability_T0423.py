@@ -211,7 +211,62 @@ class TestFigurePartSuitabilityReport:
     its two headline totals (mechanical vs. anatomically-usable, kept
     distinct per this round's own acceptance) and the specific overclaim
     corrections so a future edit to the evidence or the script can't drift
-    the README silently out of sync with what the code actually computes."""
+    the README silently out of sync with what the code actually computes.
+
+    [T-0428] `compute_report()` reads `gen._FIGURE_PART_SPECS_BY_KEY`/
+    `gen.PARTS_BY_PANEL` LIVE from the shared `gen_master_sheet_part_cutouts_
+    T0417` module rather than freezing its own copy. T-0428's arm re-scope
+    (upper_arm/lower_arm -> one arm part per side) intentionally changes
+    those same globals, so this fixture freezes `assess_figure_part_
+    suitability_T0423`'s own `gen` reference back to the exact historical
+    shape its already-committed `docs/assets/evidence/T-0417/
+    part_comparison.json` was actually produced against -- the committed
+    evidence and every value asserted below are unchanged; only the
+    now-mutable dependency this test didn't used to need to freeze is."""
+
+    @pytest.fixture(autouse=True)
+    def _freeze_historical_figure_part_shape(self, monkeypatch):
+        import assess_figure_part_suitability_T0423 as report
+
+        PartSpec = report.gen.PartSpec
+        specs = [
+            PartSpec("head", "", "head", 0),  # NOSE
+            PartSpec("torso", "", "torso_coat", 1, joint_b_pair=(8, 11)),  # NECK, R_HIP, L_HIP
+        ]
+        for side, shoulder, elbow, wrist in (
+            ("right", 2, 3, 4),
+            ("left", 5, 6, 7),
+        ):
+            specs.append(PartSpec(f"{side}_upper_arm", side, "upper_arm", shoulder, elbow))
+            specs.append(PartSpec(f"{side}_lower_arm", side, "lower_arm_hand", elbow, wrist))
+        monkeypatch.setattr(
+            report.gen, "_FIGURE_PART_SPECS_BY_KEY", {s.part_key: s for s in specs}
+        )
+        monkeypatch.setattr(
+            report.gen,
+            "PARTS_BY_PANEL",
+            {
+                "front_tpose": (
+                    "head",
+                    "torso",
+                    "right_upper_arm",
+                    "right_lower_arm",
+                    "left_upper_arm",
+                    "left_lower_arm",
+                ),
+                "back_tpose": (
+                    "head",
+                    "torso",
+                    "right_upper_arm",
+                    "right_lower_arm",
+                    "left_upper_arm",
+                    "left_lower_arm",
+                ),
+                "side_right_forward": ("head", "torso", "right_upper_arm", "right_lower_arm"),
+                "side_left_forward": ("head", "torso", "left_upper_arm", "left_lower_arm"),
+                "side_neutral": ("head", "torso", "right_upper_arm", "right_lower_arm"),
+            },
+        )
 
     def _report(self):
         import assess_figure_part_suitability_T0423 as report

@@ -29,11 +29,10 @@ if str(_CHARACTER_DIR) not in sys.path:
     sys.path.insert(0, str(_CHARACTER_DIR))
 sys.path.insert(0, str(_CHARACTER_DIR / "src"))
 
+import assess_figure_part_suitability_T0428 as assess  # noqa: E402
 import gen_master_sheet_cutout_compare_T0337 as compare_t0337  # noqa: E402
 import gen_master_sheet_part_cutouts_T0417 as gen  # noqa: E402
 import pose_rig_master_sheet_T0351 as rig  # noqa: E402
-
-import assess_figure_part_suitability_T0428 as assess  # noqa: E402
 
 PANEL = "side_right_forward"
 PART = "right_arm"

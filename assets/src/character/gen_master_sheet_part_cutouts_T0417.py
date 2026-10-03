@@ -36,12 +36,15 @@ short-circuit, never a silent substitute model.
 Usage (from the repo root, against the WSL2->Windows ComfyUI host):
     python3 assets/src/character/gen_master_sheet_part_cutouts_T0417.py [--part PART_KEY]
 
-Writes (per part, when SAM3 is available):
-    docs/assets/evidence/T-0417/panel_legs_part_{part}_sam3_after.png
-    docs/assets/evidence/T-0417/panel_legs_part_{part}_prompts.json
-    docs/assets/evidence/T-0417/panel_legs_part_{part}_descended.png (+.provenance.json,
+Writes (per part, when SAM3 is available, under this module's own
+`EVIDENCE_DIR` -- [T-0428] re-pointed from `docs/assets/evidence/T-0417/`
+to `docs/assets/evidence/T-0428/`, so a later card's run never overwrites
+an earlier card's committed evidence in place again):
+    <EVIDENCE_DIR>/panel_{panel}_part_{part}_sam3_after.png
+    <EVIDENCE_DIR>/panel_{panel}_part_{part}_prompts.json
+    <EVIDENCE_DIR>/panel_{panel}_part_{part}_descended.png (+.provenance.json,
         only when the part is present -- see PartResult.present)
-    docs/assets/evidence/T-0417/part_comparison.json
+    <EVIDENCE_DIR>/part_comparison.json
 """
 
 from __future__ import annotations
@@ -111,15 +114,24 @@ _px = compare_t0337._px
 # pose_rig_master_sheet_T0351.py's own private numbering rather than
 # reaching into that module's private attributes a second time.
 _NOSE = 0
-_R_SHOULDER, _R_ELBOW, _R_WRIST = 2, 3, 4
-_L_SHOULDER, _L_ELBOW, _L_WRIST = 5, 6, 7
+_R_SHOULDER, _R_WRIST = 2, 4
+_L_SHOULDER, _L_WRIST = 5, 7
+#: [T-0428] Needed for the head's own re-derived anchor -- see
+#: `_build_figure_part_specs`'s docstring for why NOSE alone is no longer
+#: used.
+_R_EAR, _L_EAR = 16, 17
 _midpoint = compare_t0337._midpoint
 _sam3_model_loader = compare_t0337._sam3_model_loader
 _panel_crop = compare_t0337._panel_crop
 _probe_sam3_availability = compare_t0337._probe_sam3_availability
 _png_bytes = compare_t0337._png_bytes
 
-EVIDENCE_DIR = REPO_ROOT / "docs" / "assets" / "evidence" / "T-0417"
+#: [T-0428] Was hardcoded to T-0417's own directory -- every later card's
+#: run against this same module overwrote T-0417's own committed evidence
+#: in place (see T-0427's own finding, which is what this card acts on).
+#: Points at this card's own directory now; T-0417's directory is never
+#: written to again by this module.
+EVIDENCE_DIR = REPO_ROOT / "docs" / "assets" / "evidence" / "T-0428"
 GENERATOR_PATH = "assets/src/character/gen_master_sheet_part_cutouts_T0417.py"
 
 
@@ -179,24 +191,39 @@ def _build_figure_part_specs() -> tuple[PartSpec, ...]:
     specs. `head`/`torso` carry `side=""`: they have no anatomical side to
     record, unlike every leg/arm part.
 
-    - `head` anchors on NOSE alone (`joint_b=None`) -- T-0338's own
-      part-to-joint chain names "head", and NOSE is the rig's own facial
-      anchor (`pose_rig_master_sheet_T0351`'s COCO-18 layout).
+    - [T-0428] `head` anchors on the EAR-to-EAR midpoint, not NOSE alone.
+      T-0427's own diagnosis of the only tolerance-exceeding overlap on
+      either side panel T-0338 needs (`head` x the forward arm) traced the
+      cause to NOSE: on a profile panel it is the forward-most point of the
+      face, 12-13px (horizontal) from the forward-extended arm's own
+      anchor, and the head mask itself came back wildly inconsistent and
+      mechanically rejected on both panels. The ear-to-ear midpoint sits
+      inside the skull instead of on its forward edge, widening that gap
+      substantially (see `part_prompt_points` callers' own regression for
+      the measured distance) without adding a second positive point.
     - `torso` anchors on NECK to the hip midpoint -- see `PartSpec`'s own
       docstring for the `joint_b_pair` design decision this needed.
-    - `upper_arm`/`lower_arm` mirror `_build_legs_part_specs`'s own
-      `for side, hip_idx, knee_idx, ankle_idx in (...)` shape exactly, one
-      `(shoulder, elbow, wrist)` triple per side."""
+      Untouched by this card -- the torso's own request is a separate,
+      later card's work.
+    - [T-0428] `arm` is ONE part per side, shoulder->wrist -- replacing the
+      former `upper_arm`/`lower_arm` split. T-0338 needs the arm to
+      separate from the TORSO for arm opposition, not to separate at the
+      elbow: scaled to the 40px figure `docs/design/13-asset-pipeline.md`
+      specifies, an upper arm alone is ~5.6-8.7px, well inside the range
+      the pipeline's own design doc says loses nearly all generated detail
+      in the descent -- an elbow articulation inside a ~13px limb is
+      exactly that lost detail. Mirrors `_build_legs_part_specs`'s own
+      `for side, hip_idx, knee_idx, ankle_idx in (...)` shape, one
+      `(shoulder, wrist)` pair per side."""
     specs: list[PartSpec] = [
-        PartSpec("head", "", "head", _NOSE),
+        PartSpec("head", "", "head", _R_EAR, _L_EAR),
         PartSpec("torso", "", "torso_coat", _NECK, joint_b_pair=(_R_HIP, _L_HIP)),
     ]
-    for side, shoulder_idx, elbow_idx, wrist_idx in (
-        ("right", _R_SHOULDER, _R_ELBOW, _R_WRIST),
-        ("left", _L_SHOULDER, _L_ELBOW, _L_WRIST),
+    for side, shoulder_idx, wrist_idx in (
+        ("right", _R_SHOULDER, _R_WRIST),
+        ("left", _L_SHOULDER, _L_WRIST),
     ):
-        specs.append(PartSpec(f"{side}_upper_arm", side, "upper_arm", shoulder_idx, elbow_idx))
-        specs.append(PartSpec(f"{side}_lower_arm", side, "lower_arm_hand", elbow_idx, wrist_idx))
+        specs.append(PartSpec(f"{side}_arm", side, "arm", shoulder_idx, wrist_idx))
     return tuple(specs)
 
 
@@ -231,25 +258,11 @@ _FIGURE_PANEL_KEYS: tuple[str, ...] = (
 #: show" edge case).
 PARTS_BY_PANEL: dict[str, tuple[str, ...]] = {
     "legs": tuple(spec.part_key for spec in _LEGS_PART_SPECS),
-    "front_tpose": (
-        "head",
-        "torso",
-        "right_upper_arm",
-        "right_lower_arm",
-        "left_upper_arm",
-        "left_lower_arm",
-    ),
-    "back_tpose": (
-        "head",
-        "torso",
-        "right_upper_arm",
-        "right_lower_arm",
-        "left_upper_arm",
-        "left_lower_arm",
-    ),
-    "side_right_forward": ("head", "torso", "right_upper_arm", "right_lower_arm"),
-    "side_left_forward": ("head", "torso", "left_upper_arm", "left_lower_arm"),
-    "side_neutral": ("head", "torso", "right_upper_arm", "right_lower_arm"),
+    "front_tpose": ("head", "torso", "right_arm", "left_arm"),
+    "back_tpose": ("head", "torso", "right_arm", "left_arm"),
+    "side_right_forward": ("head", "torso", "right_arm"),
+    "side_left_forward": ("head", "torso", "left_arm"),
+    "side_neutral": ("head", "torso", "right_arm"),
 }
 
 #: Adjacent, anatomically-sharing-a-joint part pairs per panel -- the pairs
@@ -272,26 +285,30 @@ def _figure_sibling_pairs(parts: tuple[str, ...]) -> tuple[tuple[str, str], ...]
     """[T-0423] The figure panels' own adjacency rule, restricted to
     whichever parts THIS panel's own `PARTS_BY_PANEL` entry actually lists
     (a profile panel's missing far arm never generates a pair) -- head/torso
-    share the neck, torso/upper_arm share the shoulder, upper_arm/lower_arm
-    share the elbow. Cross-side pairs are never adjacent (no shared joint),
-    same as legs' own right/left pairs being absent from this list."""
+    share the neck, torso/arm share the shoulder. [T-0428] `arm` is now one
+    part per side (shoulder->wrist), so there is no longer an upper_arm/
+    lower_arm pair to add here. `head`/`arm` share no joint and are
+    deliberately absent from this list -- any measured overlap between
+    them gets the zero non-adjacent tolerance via `_evaluate_overlaps`'s
+    general pairwise sweep, never the 0.25 joint-blur allowance. Cross-side
+    pairs are never adjacent (no shared joint), same as legs' own
+    right/left pairs being absent from this list."""
     pairs: list[tuple[str, str]] = []
     if "head" in parts and "torso" in parts:
         pairs.append(("head", "torso"))
     for side in ("right", "left"):
-        upper_arm, lower_arm = f"{side}_upper_arm", f"{side}_lower_arm"
-        if "torso" in parts and upper_arm in parts:
-            pairs.append(("torso", upper_arm))
-        if upper_arm in parts and lower_arm in parts:
-            pairs.append((upper_arm, lower_arm))
+        arm = f"{side}_arm"
+        if "torso" in parts and arm in parts:
+            pairs.append(("torso", arm))
     return tuple(pairs)
 
 
 #: Adjacent, anatomically-sharing-a-joint part pairs per panel -- the pairs
 #: the 0.25 joint-blur allowance (`PART_OVERLAP_FRACTION_TOLERANCE`) is
 #: actually meaningful for (thigh/lower-leg share the knee, lower-leg/boot
-#: share the ankle; [T-0423] head/torso share the neck, torso/upper_arm
-#: share the shoulder, upper_arm/lower_arm share the elbow).
+#: share the ankle; [T-0423] head/torso share the neck, torso/arm share the
+#: shoulder -- [T-0428] `arm` is one part per side now, replacing the
+#: former upper_arm/lower_arm pair that used to share the elbow here).
 #:
 #: [FIX ROUND finding 3] This list used to be the ONLY pairs
 #: `_evaluate_overlaps` checked -- cross-side pairs and upper_leg/boot were
@@ -659,11 +676,11 @@ def _run_one_part(
                 "palette": str(PALETTE_PATH.relative_to(REPO_ROOT)),
             },
             generator=GENERATOR_PATH,
-            card="T-0417",
+            card="T-0428",
             note=(
                 f"Evidence/demonstration descent, not a curated final -- descends the "
                 f"independent per-part SAM3 cutout for {panel_key}/{part_key}; see "
-                "docs/assets/evidence/T-0417/README.md."
+                "docs/assets/evidence/T-0428/README.md."
             ),
             run_id=run_id,
         )
