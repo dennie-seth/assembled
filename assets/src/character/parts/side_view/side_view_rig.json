@@ -1,0 +1,322 @@
+{
+  "note": "round 4 -- round 3's articulation unchanged, plus a bone-length correction. The thighs measured exactly equal; the entire left-leg shortfall was calf_L at 77.3% of calf_R (the far calf's top is occluded in a side view, so the cut is short even though the bone is not). Only calf_L is scaled.",
+  "bone_length_fix": {
+    "measured_before": {
+      "thigh_R": 246.7,
+      "calf_R": 330.2,
+      "near_chain": 577.0,
+      "thigh_L": 246.7,
+      "calf_L": 255.4,
+      "far_chain": 502.1,
+      "far_over_near_pct": 87.0
+    },
+    "scaled": {
+      "calf_L": 1.2929
+    },
+    "why_not_whole_leg": "scaling thigh_L too would make it longer than thigh_R -- a new asymmetry -- and a uniform +10% would still leave the chain 4.3% short"
+  },
+  "cell_px": 48,
+  "figure_px": 40,
+  "frames": 8,
+  "facing": "right",
+  "parts_source": "walk_preview_2026-10-04_round2/keyed_parts (already keyed and flipped)",
+  "sign_convention": {
+    "positive_angle": "swings a downward-hanging part's tip toward +x (forward)",
+    "calf": "thigh_angle - knee_flexion (knee bends the heel backward)",
+    "forearm": "shoulder_angle + elbow_flexion (elbow brings the hand forward)"
+  },
+  "curves_deg": {
+    "hip": [
+      [
+        0.0,
+        24
+      ],
+      [
+        0.3,
+        6
+      ],
+      [
+        0.5,
+        -12
+      ],
+      [
+        0.62,
+        -18
+      ],
+      [
+        0.8,
+        10
+      ],
+      [
+        1.0,
+        24
+      ]
+    ],
+    "knee_flexion": [
+      [
+        0.0,
+        6
+      ],
+      [
+        0.15,
+        18
+      ],
+      [
+        0.4,
+        4
+      ],
+      [
+        0.55,
+        26
+      ],
+      [
+        0.72,
+        62
+      ],
+      [
+        0.85,
+        34
+      ],
+      [
+        1.0,
+        6
+      ]
+    ],
+    "shoulder": [
+      [
+        0.0,
+        -18
+      ],
+      [
+        0.3,
+        -4
+      ],
+      [
+        0.5,
+        10
+      ],
+      [
+        0.62,
+        16
+      ],
+      [
+        0.8,
+        -8
+      ],
+      [
+        1.0,
+        -18
+      ]
+    ],
+    "elbow_flexion": [
+      [
+        0.0,
+        18
+      ],
+      [
+        0.25,
+        34
+      ],
+      [
+        0.5,
+        16
+      ],
+      [
+        0.75,
+        30
+      ],
+      [
+        1.0,
+        18
+      ]
+    ]
+  },
+  "per_frame_angles": [
+    {
+      "frame": 0,
+      "hip": 24.0,
+      "knee_flexion": 6.0,
+      "calf_absolute": 18.0,
+      "shoulder": -18.0,
+      "elbow_flexion": 18.0,
+      "forearm_absolute": 0.0
+    },
+    {
+      "frame": 1,
+      "hip": 16.5,
+      "knee_flexion": 16.0,
+      "calf_absolute": 0.5,
+      "shoulder": -12.2,
+      "elbow_flexion": 26.0,
+      "forearm_absolute": 13.8
+    },
+    {
+      "frame": 2,
+      "hip": 9.0,
+      "knee_flexion": 12.4,
+      "calf_absolute": -3.4,
+      "shoulder": -6.3,
+      "elbow_flexion": 34.0,
+      "forearm_absolute": 27.7
+    },
+    {
+      "frame": 3,
+      "hip": -0.8,
+      "knee_flexion": 5.4,
+      "calf_absolute": -6.2,
+      "shoulder": 1.3,
+      "elbow_flexion": 25.0,
+      "forearm_absolute": 26.2
+    },
+    {
+      "frame": 4,
+      "hip": -12.0,
+      "knee_flexion": 18.7,
+      "calf_absolute": -30.7,
+      "shoulder": 10.0,
+      "elbow_flexion": 16.0,
+      "forearm_absolute": 26.0
+    },
+    {
+      "frame": 5,
+      "hip": -17.2,
+      "knee_flexion": 41.9,
+      "calf_absolute": -59.1,
+      "shoulder": 15.3,
+      "elbow_flexion": 23.0,
+      "forearm_absolute": 38.3
+    },
+    {
+      "frame": 6,
+      "hip": 2.2,
+      "knee_flexion": 55.5,
+      "calf_absolute": -53.3,
+      "shoulder": -1.3,
+      "elbow_flexion": 30.0,
+      "forearm_absolute": 28.7
+    },
+    {
+      "frame": 7,
+      "hip": 15.2,
+      "knee_flexion": 29.3,
+      "calf_absolute": -14.1,
+      "shoulder": -11.7,
+      "elbow_flexion": 24.0,
+      "forearm_absolute": 12.3
+    }
+  ],
+  "rig": {
+    "torso": {
+      "pivot": [
+        0.5,
+        0.0
+      ],
+      "bone": "spine",
+      "z": 3
+    },
+    "head": {
+      "pivot": [
+        0.5,
+        0.92
+      ],
+      "bone": "neck",
+      "z": 4
+    },
+    "shoulder_R": {
+      "pivot": [
+        0.5,
+        0.08
+      ],
+      "bone": "upperarm.R",
+      "z": 1
+    },
+    "forearm_R": {
+      "pivot": [
+        0.5,
+        0.06
+      ],
+      "bone": "forearm.R",
+      "z": 1
+    },
+    "shoulder_L": {
+      "pivot": [
+        0.5,
+        0.08
+      ],
+      "bone": "upperarm.L",
+      "z": 5
+    },
+    "forearm_L": {
+      "pivot": [
+        0.5,
+        0.06
+      ],
+      "bone": "forearm.L",
+      "z": 5
+    },
+    "thigh_R": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "thigh.R",
+      "z": 0
+    },
+    "calf_R": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "shin.R",
+      "z": 0
+    },
+    "thigh_L": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "thigh.L",
+      "z": 2
+    },
+    "calf_L": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "shin.L",
+      "z": 2
+    }
+  },
+  "attach_torso_local_px": {
+    "neck": [
+      110.5,
+      5.14
+    ],
+    "shoulder": [
+      114.92,
+      30.84
+    ],
+    "hip": [
+      106.08,
+      236.44
+    ]
+  },
+  "root_bob_px": 5.65,
+  "far_limb_darken": 0.58,
+  "renders": [
+    {
+      "tag": "nearfar",
+      "cell_figure": [
+        26,
+        40
+      ]
+    },
+    {
+      "tag": "nearonly",
+      "cell_figure": [
+        26,
+        40
+      ]
+    }
+  ]
+}
