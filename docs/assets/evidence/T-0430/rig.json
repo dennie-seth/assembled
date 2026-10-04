@@ -1,0 +1,226 @@
+{
+  "note": "side-view IDLE loop. Legs solved by two-bone IK from a moving hip to FIXED ankles, so 'both feet planted' is true by construction rather than by inspection.",
+  "cell_px": 48,
+  "figure_px": 40,
+  "frames": 12,
+  "facing": "right",
+  "parts_source": "assets/src/character/parts/side_view (develop)",
+  "signals": {
+    "breath_cycles_per_loop": 2.0,
+    "shift_cycles_per_loop": 1.0,
+    "ratio": "2:1, harmonically clean so the two do not beat"
+  },
+  "measured": {
+    "descent_scale": 0.04132,
+    "breath_final_px": 1.15,
+    "shift_final_px": 0.935,
+    "ik_residual_max_src_px": 0.0,
+    "changed_px_per_frame": [
+      347,
+      196,
+      351,
+      313,
+      181,
+      331,
+      362,
+      172,
+      315,
+      319,
+      175,
+      319
+    ],
+    "loop_seam_changed_px": 319
+  },
+  "per_frame_pose": [
+    {
+      "frame": 0,
+      "hip_dx": 0.0,
+      "hip_dy": -16.06,
+      "torso_deg": 0.0,
+      "shoulder_deg": -1.45,
+      "elbow_deg": 13.08
+    },
+    {
+      "frame": 1,
+      "hip_dx": 5.65,
+      "hip_dy": -29.97,
+      "torso_deg": 2.71,
+      "shoulder_deg": -2.64,
+      "elbow_deg": 14.04
+    },
+    {
+      "frame": 2,
+      "hip_dx": 9.79,
+      "hip_dy": -29.97,
+      "torso_deg": 3.29,
+      "shoulder_deg": -1.76,
+      "elbow_deg": 14.97
+    },
+    {
+      "frame": 3,
+      "hip_dx": 11.31,
+      "hip_dy": -16.06,
+      "torso_deg": 1.6,
+      "shoulder_deg": 0.19,
+      "elbow_deg": 15.14
+    },
+    {
+      "frame": 4,
+      "hip_dx": 9.79,
+      "hip_dy": -2.15,
+      "torso_deg": -0.52,
+      "shoulder_deg": 1.35,
+      "elbow_deg": 14.53
+    },
+    {
+      "frame": 5,
+      "hip_dx": 5.65,
+      "hip_dy": -2.15,
+      "torso_deg": -1.11,
+      "shoulder_deg": 0.79,
+      "elbow_deg": 13.8
+    },
+    {
+      "frame": 6,
+      "hip_dx": 0.0,
+      "hip_dy": -16.06,
+      "torso_deg": -0.0,
+      "shoulder_deg": -0.6,
+      "elbow_deg": 13.62
+    },
+    {
+      "frame": 7,
+      "hip_dx": -5.65,
+      "hip_dy": -29.97,
+      "torso_deg": 1.11,
+      "shoulder_deg": -1.07,
+      "elbow_deg": 14.02
+    },
+    {
+      "frame": 8,
+      "hip_dx": -9.79,
+      "hip_dy": -29.97,
+      "torso_deg": 0.52,
+      "shoulder_deg": 0.1,
+      "elbow_deg": 14.39
+    },
+    {
+      "frame": 9,
+      "hip_dx": -11.31,
+      "hip_dy": -16.06,
+      "torso_deg": -1.6,
+      "shoulder_deg": 1.85,
+      "elbow_deg": 14.16
+    },
+    {
+      "frame": 10,
+      "hip_dx": -9.79,
+      "hip_dy": -2.15,
+      "torso_deg": -3.29,
+      "shoulder_deg": 2.36,
+      "elbow_deg": 13.41
+    },
+    {
+      "frame": 11,
+      "hip_dx": -5.65,
+      "hip_dy": -2.15,
+      "torso_deg": -2.71,
+      "shoulder_deg": 0.88,
+      "elbow_deg": 12.84
+    }
+  ],
+  "rig": {
+    "torso": {
+      "pivot": [
+        0.5,
+        0.0
+      ],
+      "bone": "spine",
+      "z": 3
+    },
+    "head": {
+      "pivot": [
+        0.5,
+        0.92
+      ],
+      "bone": "neck",
+      "z": 4
+    },
+    "shoulder_R": {
+      "pivot": [
+        0.5,
+        0.08
+      ],
+      "bone": "upperarm.R",
+      "z": 1
+    },
+    "forearm_R": {
+      "pivot": [
+        0.5,
+        0.06
+      ],
+      "bone": "forearm.R",
+      "z": 1
+    },
+    "shoulder_L": {
+      "pivot": [
+        0.5,
+        0.08
+      ],
+      "bone": "upperarm.L",
+      "z": 5
+    },
+    "forearm_L": {
+      "pivot": [
+        0.5,
+        0.06
+      ],
+      "bone": "forearm.L",
+      "z": 5
+    },
+    "thigh_R": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "thigh.R",
+      "z": 0
+    },
+    "calf_R": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "shin.R",
+      "z": 0
+    },
+    "thigh_L": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "thigh.L",
+      "z": 2
+    },
+    "calf_L": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "shin.L",
+      "z": 2
+    }
+  },
+  "bone_lengths": {
+    "head": 14.7,
+    "torso": 257.0,
+    "shoulder_R": 103.0,
+    "shoulder_L": 169.3,
+    "forearm_R": 198.3,
+    "forearm_L": 188.0,
+    "thigh_R": 246.7,
+    "thigh_L": 246.7,
+    "calf_R": 330.2,
+    "calf_L": 330.2
+  }
+}
