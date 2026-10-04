@@ -1,0 +1,138 @@
+{
+  "frame_count": 12,
+  "breath_cycles_per_loop": 2,
+  "sway_cycles_per_loop": 1,
+  "figure_height_native_px": 977.54,
+  "figure_px": 40,
+  "descend_scale": 0.040919041676043946,
+  "breath_amplitude_native_px": 55.0,
+  "sway_amplitude_native_px": 35.0,
+  "breath_amplitude_descended_px": 2.251,
+  "sway_amplitude_descended_px": 1.432,
+  "measured_opaque_centroid_y_range_descended_px": 2.181,
+  "measured_opaque_centroid_x_range_descended_px": 1.229,
+  "foot_bottom_rows_native_all_frames_identical": true,
+  "foot_bottom_rows_descended_all_frames_identical": true,
+  "foot_bottom_rows_native": [
+    1117,
+    1117
+  ],
+  "foot_bottom_rows_descended": [
+    47,
+    47
+  ],
+  "arm_lag_phase": 0.08,
+  "arm_lag_damping": 0.55,
+  "rig_attach_torso_local_px": {
+    "neck": [
+      110.5,
+      5.14
+    ],
+    "shoulder": [
+      114.92,
+      30.84
+    ],
+    "hip": [
+      106.08,
+      236.44
+    ]
+  },
+  "rig_bone_length_fix": {
+    "measured_before": {
+      "thigh_R": 246.7,
+      "calf_R": 330.2,
+      "near_chain": 577.0,
+      "thigh_L": 246.7,
+      "calf_L": 255.4,
+      "far_chain": 502.1,
+      "far_over_near_pct": 87.0
+    },
+    "scaled": {
+      "calf_L": 1.2929
+    },
+    "why_not_whole_leg": "scaling thigh_L too would make it longer than thigh_R -- a new asymmetry -- and a uniform +10% would still leave the chain 4.3% short"
+  },
+  "rig_pivots_and_z": {
+    "torso": {
+      "pivot": [
+        0.5,
+        0.0
+      ],
+      "bone": "spine",
+      "z": 3
+    },
+    "head": {
+      "pivot": [
+        0.5,
+        0.92
+      ],
+      "bone": "neck",
+      "z": 4
+    },
+    "shoulder_R": {
+      "pivot": [
+        0.5,
+        0.08
+      ],
+      "bone": "upperarm.R",
+      "z": 1
+    },
+    "forearm_R": {
+      "pivot": [
+        0.5,
+        0.06
+      ],
+      "bone": "forearm.R",
+      "z": 1
+    },
+    "shoulder_L": {
+      "pivot": [
+        0.5,
+        0.08
+      ],
+      "bone": "upperarm.L",
+      "z": 5
+    },
+    "forearm_L": {
+      "pivot": [
+        0.5,
+        0.06
+      ],
+      "bone": "forearm.L",
+      "z": 5
+    },
+    "thigh_R": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "thigh.R",
+      "z": 0
+    },
+    "calf_R": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "shin.R",
+      "z": 0
+    },
+    "thigh_L": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "thigh.L",
+      "z": 2
+    },
+    "calf_L": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "shin.L",
+      "z": 2
+    }
+  },
+  "parts_source": "assets/src/character/parts/side_view"
+}
