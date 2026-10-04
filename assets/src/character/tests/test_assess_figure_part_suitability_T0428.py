@@ -260,3 +260,80 @@ class TestLiveEvidenceReproducesThisCardsOwnResult:
         # Only side_left_forward/torso ends up anatomically usable by name --
         # the same corrected total README.md §2/§3 report.
         assert totals["anatomically_usable"] == 1
+
+
+class TestFrontTposeRightArmReconstruction:
+    """[T-0428 edge case] This card's own live run never re-submits
+    `front_tpose` through SAM3 -- it is scoped to the two side panels
+    T-0338 needs (see README.md's scope note). But the task's own edge-case
+    list names `front_tpose/right_upper_arm` specifically: "the strongest
+    existing candidate in the set", and requires an answer to whether it
+    becomes a straightforwardly usable `right_arm` under this card's
+    shoulder->wrist merge -- not a restatement of scope as if the question
+    did not apply.
+
+    Answering that needs no new SAM3 call: T-0417's own committed,
+    untouched `right_upper_arm`/`right_lower_arm` masks for this panel
+    already exist on disk, and a shoulder->wrist `arm` is exactly their
+    union. `front_tpose_right_arm_reconstruction()` reads those two
+    historical files directly (never writing into T-0417's own directory)
+    and reruns the same WRIST-based suitability check this card's live arms
+    use -- fully offline, no ComfyUI, no GPU, no mocking of the real data.
+
+    RED: `assess_figure_part_suitability_T0428` has no
+    `front_tpose_right_arm_reconstruction` yet -> `AttributeError`.
+    """
+
+    def test_reconstructed_mask_is_the_union_of_the_two_historical_masks(self):
+        result = assess.front_tpose_right_arm_reconstruction()
+        upper = np.array(
+            Image.open(
+                gen.REPO_ROOT
+                / "docs"
+                / "assets"
+                / "evidence"
+                / "T-0417"
+                / "panel_front_tpose_part_right_upper_arm_mask.png"
+            )
+        )
+        lower = np.array(
+            Image.open(
+                gen.REPO_ROOT
+                / "docs"
+                / "assets"
+                / "evidence"
+                / "T-0417"
+                / "panel_front_tpose_part_right_lower_arm_mask.png"
+            )
+        )
+        expected_px = int(np.logical_or(upper > 0, lower > 0).sum())
+        assert result["mask_px"] == expected_px
+
+    def test_front_tpose_right_arm_is_not_combined_past_the_wrist(self):
+        # T-0423's own OLD elbow-bounded check rejected this exact mask as
+        # "combined" at 46.9% beyond the ELBOW -- the task's own premise is
+        # that the new WRIST-bounded check should clear it instead, since
+        # T-0338 needs shoulder->wrist, not shoulder->elbow.
+        result = assess.front_tpose_right_arm_reconstruction()
+        assert result["combined"] is False
+        assert result["beyond_wrist_fraction"] < 0.20
+
+    def test_front_tpose_right_arm_does_not_overlap_torso_or_head(self):
+        result = assess.front_tpose_right_arm_reconstruction()
+        assert result["overlap_with_torso_fraction"] == 0.0
+
+    def test_front_tpose_right_arm_reconstruction_is_usable(self):
+        # The headline answer to the edge case: yes, it becomes a
+        # straightforwardly usable right_arm under the new scope.
+        result = assess.front_tpose_right_arm_reconstruction()
+        assert result["usable"] is True
+        assert result["panel"] == "front_tpose"
+        assert result["part"] == "right_arm"
+        assert "reconstructed" in result["source"]
+
+    def test_reconstruction_never_writes_into_t0417s_directory(self):
+        t0417_dir = gen.REPO_ROOT / "docs" / "assets" / "evidence" / "T-0417"
+        before = sorted(p.name for p in t0417_dir.iterdir())
+        assess.front_tpose_right_arm_reconstruction()
+        after = sorted(p.name for p in t0417_dir.iterdir())
+        assert before == after
