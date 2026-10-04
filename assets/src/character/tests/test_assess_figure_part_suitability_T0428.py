@@ -65,6 +65,10 @@ def _write_mask(tmp_path, panel: str, part: str, mask: np.ndarray):
 
 class TestArmSuitabilityJudgedAgainstWrist:
     def test_arm_extending_well_past_the_wrist_is_combined(self, tmp_path, monkeypatch):
+        # Isolate the WRIST-boundary geometry under test from this card's own
+        # real _VISUAL_FINDINGS entry for (side_right_forward, right_arm) --
+        # see TestArmPartsAreAlsoVisuallyJudged below for that override.
+        monkeypatch.setattr(assess, "_VISUAL_FINDINGS", {})
         monkeypatch.setattr(assess, "EVIDENCE_DIR", tmp_path)
         shoulder_px, wrist_px = _shoulder_wrist_px()
         assert shoulder_px[1] == wrist_px[1]  # side_right_forward's arm is horizontal
@@ -87,6 +91,7 @@ class TestArmSuitabilityJudgedAgainstWrist:
         assert totals["anatomically_usable"] == 0
 
     def test_arm_contained_within_shoulder_to_wrist_is_adequate(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(assess, "_VISUAL_FINDINGS", {})
         monkeypatch.setattr(assess, "EVIDENCE_DIR", tmp_path)
         shoulder_px, wrist_px = _shoulder_wrist_px()
 
@@ -111,6 +116,7 @@ class TestArmSuitabilityJudgedAgainstWrist:
         # A part that fails mechanical isolation stays labelled that, even
         # if it also happens to run past the wrist -- never double-counted
         # or relabelled as the (less severe-sounding) "combined".
+        monkeypatch.setattr(assess, "_VISUAL_FINDINGS", {})
         monkeypatch.setattr(assess, "EVIDENCE_DIR", tmp_path)
         shoulder_px, _wrist_px = _shoulder_wrist_px()
 
@@ -124,6 +130,43 @@ class TestArmSuitabilityJudgedAgainstWrist:
         row = next(r for r in per_part if r["part"] == PART)
         assert row["usable"] is False
         assert row["suitability"] == "mechanically rejected"
+
+
+class TestArmPartsAreAlsoVisuallyJudged:
+    """[T-0428 live run] `beyond_distal_joint_fraction` only answers "how much
+    of this mask lies past the distal joint" -- it has no notion of whether
+    the mask is shaped like a limb at all, so a costume detail that happens
+    to sit entirely within the shoulder-wrist bounding box (a clasp, a hood
+    streamer) passes it at 0.0% and would otherwise be quietly counted as a
+    usable arm. The same `_VISUAL_FINDINGS` override already used for
+    head/torso must also apply to `arm` parts so the committed, mechanical
+    report cannot disagree with this card's own documented visual finding
+    (see docs/assets/evidence/T-0428/README.md §3)."""
+
+    def test_geometrically_clean_arm_with_a_visual_finding_is_not_usable(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            assess,
+            "_VISUAL_FINDINGS",
+            {(PANEL, PART): "visually not an arm -- a costume clasp, not a limb"},
+        )
+        monkeypatch.setattr(assess, "EVIDENCE_DIR", tmp_path)
+        shoulder_px, wrist_px = _shoulder_wrist_px()
+
+        mask = np.zeros((PANEL_SIZE, PANEL_SIZE), dtype=bool)
+        y = shoulder_px[1]
+        x0 = shoulder_px[0] - 10
+        x1 = wrist_px[0] + 2  # geometrically "within tolerance" -- the bug this guards
+        mask[y - 10 : y + 10, x0:x1] = True
+        _write_mask(tmp_path, PANEL, PART, mask)
+        _write_panel(tmp_path, {PART: {"present": True, "isolated": True}})
+
+        per_part, totals = assess.compute_report()
+        row = next(r for r in per_part if r["part"] == PART)
+        assert row["usable"] is False
+        assert row["reason"] == "visually not an arm -- a costume clasp, not a limb"
+        assert totals["anatomically_usable"] == 0
 
 
 class TestNonArmPartsAreVisuallyJudged:
@@ -198,4 +241,22 @@ class TestLiveEvidenceReproducesThisCardsOwnResult:
             assert row["usable"] is False
         assert totals["requested"] == 6
         assert totals["mechanically_isolated"] == 5
-        assert totals["anatomically_usable"] == 3
+
+    def test_neither_forward_arm_is_anatomically_usable_by_name(self):
+        # [T-0428 live run] Both arm masks pass the geometric "0.0% beyond
+        # its own wrist" check, but visual inspection (README.md §3) found
+        # neither is actually the figure's own arm: side_right_forward's is
+        # the costume's chest clasp/buckle, side_left_forward's is a
+        # vertical hood/cloak streamer. The mechanical report must say so
+        # too, not just the prose -- a geometrically-clean mask that isn't
+        # shaped like the part it claims to be is still not usable.
+        per_part, totals = assess.compute_report()
+        for panel, arm_part in (
+            ("side_right_forward", "right_arm"),
+            ("side_left_forward", "left_arm"),
+        ):
+            row = next(r for r in per_part if r["panel"] == panel and r["part"] == arm_part)
+            assert row["usable"] is False
+        # Only side_left_forward/torso ends up anatomically usable by name --
+        # the same corrected total README.md §2/§3 report.
+        assert totals["anatomically_usable"] == 1

@@ -23,6 +23,16 @@ own acceptance wording):
       T-0423) -- completeness here is a VISUAL judgement made by
       inspecting each part's own `*_sam3_after.png`/`*_mask.png` evidence
       file, recorded in `_VISUAL_FINDINGS` below and cited by file.
+    - [T-0428 live run] `_VISUAL_FINDINGS` also overrides `arm` parts, not
+      just head/torso: `beyond_distal_joint_fraction` only measures how much
+      of a mask lies past the distal joint, it has no notion of whether the
+      mask is shaped like a limb at all. A costume detail (a clasp, a hood
+      streamer) that happens to sit entirely within the shoulder-wrist
+      bounding box passes that check at 0.0% and would otherwise be quietly
+      counted as a usable arm -- exactly what this card's own live evidence
+      produced on both forward panels (see README.md §3). The geometric
+      check still runs first and still catches a genuinely combined arm;
+      the visual finding, when present, overrides its verdict afterward.
 
 Iterates over whatever panels/parts are actually PRESENT in this card's own
 `part_comparison.json` -- this card's own live run is scoped to the two
@@ -101,6 +111,23 @@ _VISUAL_FINDINGS: dict[tuple[str, str], str | None] = {
         "silhouette (panel_side_right_forward_part_torso_sam3_after.png)"
     ),
     ("side_left_forward", "torso"): None,
+    # [T-0428 live run] Both arm masks pass beyond_distal_joint_fraction at
+    # 0.0% (geometrically "within tolerance"), but neither is visually the
+    # figure's own arm -- see README.md §3 for the full inspection.
+    ("side_right_forward", "right_arm"): (
+        "visually not an arm -- the mechanically isolated region is the "
+        "costume's chest clasp/buckle; the panel's figure is fully cloaked "
+        "with no visible limb silhouette anywhere, confirmed by inspecting "
+        "pixels at and around the wrist anchor "
+        "(panel_side_right_forward_part_right_arm_sam3_after.png)"
+    ),
+    ("side_left_forward", "left_arm"): (
+        "visually not the figure's own arm -- the mechanically isolated "
+        "region is a vertical hood/cloak streamer nearest the keypoint-"
+        "derived anchor; the panel's actual forward-extended gloved arm is "
+        "drawn well to the left of the rig's L_SHOULDER/L_WRIST keypoints "
+        "(panel_side_left_forward_part_left_arm_sam3_after.png)"
+    ),
 }
 
 
@@ -176,6 +203,17 @@ def compute_report() -> tuple[list[dict], dict]:
                     suitability = "combined" if isolated else "mechanically rejected"
                 else:
                     reason = f"{frac * 100:.1f}% beyond its own wrist (within tolerance)"
+                # [T-0428 live run] The geometric check above has no notion
+                # of whether the mask is actually shaped like a limb -- a
+                # costume detail entirely inside the shoulder-wrist bounding
+                # box passes it. A recorded visual finding overrides that
+                # verdict, same mechanism head/torso already use below.
+                finding = _VISUAL_FINDINGS.get((panel, part))
+                if finding is not None:
+                    usable = False
+                    reason = finding
+                    if suitability not in ("combined", "mechanically rejected"):
+                        suitability = finding.split(" -- ")[0].split(" AND")[0]
             else:  # head / torso_coat
                 finding = _VISUAL_FINDINGS.get((panel, part))
                 if finding is not None:

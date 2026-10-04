@@ -46,20 +46,25 @@ as diagnosed.
 |---|---|---|---|---|---|
 | `side_right_forward` | `head` | yes | **yes** | **not usable** | mechanically isolated hood/scarf cloth, 10,891px -- no facial features anywhere in the mask (`panel_side_right_forward_part_head_sam3_after.png`) |
 | `side_right_forward` | `torso` | yes | yes | partial | an elongated coat-fold strip, not the complete torso/coat silhouette, 110,781px (`panel_side_right_forward_part_torso_sam3_after.png`) |
-| `side_right_forward` | `right_arm` | yes | yes | **not usable** (overclaim corrected, see §3) | geometric check reports "0.0% beyond its own wrist," but visually this 6,768px mask is the costume's chest clasp/buckle, not a limb (`panel_side_right_forward_part_right_arm_sam3_after.png`) |
+| `side_right_forward` | `right_arm` | yes | yes | **not usable** | geometric check reports "0.0% beyond its own wrist," but visually this 6,768px mask is the costume's chest clasp/buckle, not a limb (`panel_side_right_forward_part_right_arm_sam3_after.png`) |
 | `side_left_forward` | `head` | yes | **no** (degenerate) | **not usable** | 1,811px -- below the 0.002 fraction floor (`PART_DEGENERATE_FRACTION_LOW`), a small bright fabric-fold highlight, not skin or a face (`panel_side_left_forward_part_head_sam3_after.png`) |
 | `side_left_forward` | `torso` | yes | yes | adequate | a coherent coat/robe silhouette matching the visible garment, 49,595px |
-| `side_left_forward` | `left_arm` | yes | yes | **not usable** (overclaim corrected, see §3) | geometric check reports "0.0% beyond its own wrist," but visually this 16,328px mask is a vertical hood/cloak streamer, not the figure's own visibly-extended, gloved arm (`panel_side_left_forward_part_left_arm_sam3_after.png`) |
+| `side_left_forward` | `left_arm` | yes | yes | **not usable** | geometric check reports "0.0% beyond its own wrist," but visually this 16,328px mask is a vertical hood/cloak streamer, not the figure's own visibly-extended, gloved arm (`panel_side_left_forward_part_left_arm_sam3_after.png`) |
 
-**Mechanical script totals (`assess_figure_part_suitability_T0428.py`,
-geometric-only arm check): 6 requested, 5 mechanically isolated, 3
-anatomically usable by name** (`head` judged visually, `arm` judged only by
-the beyond-wrist fraction -- see §3 for why that number overclaims for both
-arms here). **This README's own corrected total, folding in the arm visual
-check: 6 requested, 5 mechanically isolated, 1 anatomically usable by name
-(`side_left_forward/torso` only).**
+**`assess_figure_part_suitability_T0428.py`'s own committed report: 6
+requested, 5 mechanically isolated, 1 anatomically usable by name
+(`side_left_forward/torso` only).** This is a single source of truth, not a
+prose correction layered on top of a script that says something different:
+`_VISUAL_FINDINGS` (the same override mechanism T-0423 built for `head`/
+`torso`, where `beyond_distal_joint_fraction` has no second joint to check
+against) now also applies to `arm` parts, so a mask that passes the
+geometric "0.0% beyond its own wrist" check but is visually a costume detail
+rather than a limb is still reported `usable: False` by the script itself --
+see §3 for why that geometric check alone cannot catch this case, and
+`tests/test_assess_figure_part_suitability_T0428.py`'s
+`TestArmPartsAreAlsoVisuallyJudged` for the regression.
 
-## 3. Overclaim correction: neither `arm` mask is visually an arm
+## 3. Why the geometric check alone cannot catch either `arm` mask
 
 `char_gen.part_suitability.beyond_distal_joint_fraction` only answers "how
 much of this mask's own pixels lie past the distal joint" -- it has no
