@@ -95,6 +95,33 @@ any change to this animation's code.
 | `frames/frame_NN_native.png` / `frame_NN_descended.png` | each individual frame, both resolutions |
 | `rig_data_used.json` | every measurement this README quotes, plus the rig subset (`attach_torso_local_px`, `bone_length_fix`, pivots/z-order) actually consumed |
 
+## `assets/final/` and provenance: decision
+
+This card does not promote anything to `assets/final/`. Every file this round adds lives
+under `docs/assets/evidence/side-view-idle-reference/` (reference/evidence, the same
+location the walk's own T-0417 evidence used) or under `assets/src/character/` (code and
+tests). `git diff develop...HEAD --name-only` confirms it: no path under `assets/final/`
+appears, and `ASSET_PROVENANCE.md` is untouched. That is a deliberate choice, not an
+oversight -- this is a deterministic code composite of already-committed parts, not a new
+generated asset, so there is nothing to curate into a final and no provenance entry (model +
+license + prompt + seed) applies. No sheet is being promoted on this card.
+
+## gitleaks: not run, reported honestly
+
+No persona on this card holds a grant to execute `~/.local/bin/gitleaks` (the `assets`
+agent's tool grants are `Read`/`Write`/`Edit`/`Grep`/`Glob`, `git`, `agentCurl.js`,
+`referenceFetch.js`, and the character package's own venv/ruff -- no `gitleaks` entry), so
+per this card's own acceptance criterion, this is satisfied by a manual check instead of a
+claimed scan: every new file this round introduces (`idle_cycle.py`, `idle_render.py`,
+`gen_idle_side_view_T0430.py`, `test_idle_cycle.py`, `test_idle_render.py`, this README,
+`rig_data_used.json`) was read for secret-shaped strings (`api_key`, `secret`, `password`,
+`bearer`, AWS-style `AKIA...`, PEM `-----BEGIN ...` blocks) and contains none. The only
+"token" hits anywhere in this round's diff are `test_idle_render.py`'s
+`FORBIDDEN`/`test_idle_render_source_has_no_gpu_or_network_tokens` -- the literal words
+`torch`/`requests`/`http` etc. asserted absent from the production source, not a
+credential. No gitleaks scan was executed; this statement is in place of one, as the
+criterion allows.
+
 ## What the next side-view animation can reuse
 
 **Cleanly, with no changes needed:**
