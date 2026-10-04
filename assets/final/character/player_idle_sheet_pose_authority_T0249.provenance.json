@@ -168,6 +168,8 @@
   "method": "pose_rig_T0249 derives 18-keypoint COCO frame keypoints from committed animation parameters (pose_rig_T0249.json) -> gen_arm_a_idle_T0228.draw_pose_skeleton_cell renders each frame's skeleton (384x384, reused renderer, not re-authored) -> ControlNetApplyAdvanced (xinsir OpenPose) conditions a single-figure KSampler generation at 384x384 -- identical seed/prompt/negative/latent-size across all 9 frames, only the skeleton varies -> per-frame area descent to 48x48 (same x8 ratio as the grid path) -> frames assembled into a 144x144 sheet -> Oklab-nearest palette quantization (dithering off, §3.1) -> orphan cleanup.",
   "generator": "assets/src/character/gen_pose_authority_idle_T0249.py",
   "card": "T-0249",
+  "motion_class": "idle",
+  "motion_class_basis": "T-0359: this sidecar's own generator field names gen_pose_authority_idle_T0249.py -- an idle-pose generation script -- not a walk-gait or transition rig",
   "bake_off_arm": "round 2, pose authority (HANDOFF §24-b/§24.4), stacked on top of §24-a's player_identity_v2 -- not a new bake-off arm competing on DL-21's original criteria",
   "spec": "docs/decision-log.md DL-21 + docs/design/13-asset-pipeline.md §3.5 + HANDOFF §24.4",
   "comfyui_prompt_ids": [

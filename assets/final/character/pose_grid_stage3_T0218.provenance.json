@@ -22,5 +22,7 @@
   "prompt_negative": "realistic, photographic, clothing, skin, face detail, colored background, landscape, text, watermark, action pose, dark lines, pencil sketch",
   "role": "ControlNet conditioning image for player_idle_sheet_stage3_sdxl_T0218.png generation",
   "generator": "assets/src/character/comfyui_stage3_skeleton_T0218.json",
-  "workflow_json": "assets/src/character/comfyui_stage3_skeleton_T0218.json"
+  "workflow_json": "assets/src/character/comfyui_stage3_skeleton_T0218.json",
+  "motion_class": "idle",
+  "motion_class_basis": "T-0359: this sidecar's own prompt_positive describes 9 figures 'standing upright facing forward' with no frame-to-frame pose progression (negative_prompt explicitly excludes 'action pose'), and it is the ControlNet conditioning input for player_idle_sheet_stage3_sdxl_T0218.png -- itself labelled motion_class: \"idle\" by this same card. A static standing reference grid with no motion depicted is idle, not unclassifiable."
 }
