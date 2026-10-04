@@ -25,12 +25,14 @@ from __future__ import annotations
 from collections import deque
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 #: RGB manhattan distance within which a pixel counts as "the backdrop colour".
 DEFAULT_TOLERANCE = 42
 #: Width of the soft alpha ramp just outside the hard threshold, in the same units.
 DEFAULT_FEATHER = 22
+#: How far the alpha ramp may reach inward from the flooded background, in pixels.
+_EDGE_BAND_RADIUS = 3
 
 
 def _flood_from_border(candidate: np.ndarray) -> np.ndarray:
@@ -81,7 +83,16 @@ def key_background(
 
     alpha = np.where(background, 0.0, 1.0).astype(np.float32)
     if feather > 0:
-        near = (~background) & (dist < tolerance + feather)
+        # Ramp ONLY in a thin band hugging the flooded background. Feathering every
+        # pixel within the distance band would also ramp an ENCLOSED
+        # backdrop-coloured region down to zero -- destroying exactly the pixels the
+        # border flood exists to protect.
+        grown = np.asarray(
+            Image.fromarray((background * 255).astype(np.uint8), "L").filter(
+                ImageFilter.MaxFilter(2 * _EDGE_BAND_RADIUS + 1)
+            )
+        ) > 127
+        near = (~background) & grown & (dist < tolerance + feather)
         alpha[near] = np.clip((dist[near] - tolerance) / feather, 0.0, 1.0)
 
     figure = alpha > 0.5

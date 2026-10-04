@@ -57,9 +57,9 @@ class TestInteriorBackdropColouredRegionSurvives:
 
 class TestStatsDescribeTheResult:
     def test_touching_the_frame_is_reported(self):
-        full = Image.fromarray(np.full((40, 40, 3), GREEN, dtype=np.uint8), "RGB")
-        _, stats = key_background(full)
-        assert set(stats["figure_touches_frame"]) == {"left", "right", "top", "bottom"}
+        # figure runs off the left edge; the other three sides keep a backdrop margin
+        _, stats = key_background(_render(figure_box=(0, 10, 60, 70)))
+        assert stats["figure_touches_frame"] == ["left"]
 
     def test_a_figure_clear_of_the_frame_reports_no_contact(self):
         _, stats = key_background(_render())
