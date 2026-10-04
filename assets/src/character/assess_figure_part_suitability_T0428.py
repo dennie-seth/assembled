@@ -62,6 +62,10 @@ import gen_master_sheet_cutout_compare_T0337 as compare_t0337  # noqa: E402
 import gen_master_sheet_part_cutouts_T0417 as gen  # noqa: E402
 import pose_rig_master_sheet_T0351 as rig  # noqa: E402
 
+from char_gen.part_isolation import (  # noqa: E402
+    PART_OVERLAP_FRACTION_TOLERANCE,
+    mask_overlap_fraction,
+)
 from char_gen.part_suitability import (  # noqa: E402
     beyond_distal_joint_fraction,
     is_combined_with_next_segment,
@@ -133,6 +137,99 @@ _VISUAL_FINDINGS: dict[tuple[str, str], str | None] = {
 
 def _joint_px(panel: str, joint_idx: int) -> tuple[int, int]:
     return compare_t0337._px(_PANEL_KEYPOINTS[panel][joint_idx], compare_t0337.PANEL_SIZE)
+
+
+#: [T-0428 edge case] This card's own live run is scoped to the two side
+#: panels T-0338 needs and never re-submits `front_tpose` through SAM3 --
+#: see module docstring and README.md's scope note. But the task's own
+#: edge-case list names `front_tpose/right_upper_arm` by name: "the
+#: strongest existing candidate in the set", mechanically isolated at
+#: 29,077px with stray 0.0, rejected under T-0423's OLD elbow-bounded check
+#: purely for being combined with the forearm at 46.9% beyond the ELBOW.
+#: Answering whether it becomes a usable `right_arm` under this card's
+#: shoulder->wrist merge needs no new SAM3 call: T-0417's own committed,
+#: untouched `right_upper_arm`/`right_lower_arm` masks for this panel
+#: already exist on disk, and a shoulder->wrist arm is exactly their
+#: union -- read-only, never written back into T-0417's own directory.
+_T0417_HISTORICAL_EVIDENCE_DIR = gen.REPO_ROOT / "docs" / "assets" / "evidence" / "T-0417"
+
+
+def front_tpose_right_arm_reconstruction() -> dict:
+    """Offline (no ComfyUI, no GPU) answer to the edge case above: union
+    T-0417's committed `front_tpose` `right_upper_arm`/`right_lower_arm`
+    masks into what this card's single shoulder->wrist `right_arm` part
+    would have been, then run the same WRIST-based suitability check this
+    card's own live arms use. Not folded into `compute_report()`'s totals
+    -- no live SAM3 request produced this mask this run, so it is reported
+    separately as a reconstruction, never counted as if it were fresh
+    evidence."""
+    upper_mask = (
+        np.array(
+            Image.open(
+                _T0417_HISTORICAL_EVIDENCE_DIR
+                / "panel_front_tpose_part_right_upper_arm_mask.png"
+            )
+        )
+        > 0
+    )
+    lower_mask = (
+        np.array(
+            Image.open(
+                _T0417_HISTORICAL_EVIDENCE_DIR
+                / "panel_front_tpose_part_right_lower_arm_mask.png"
+            )
+        )
+        > 0
+    )
+    merged_mask = upper_mask | lower_mask
+
+    arm_spec = gen._FIGURE_PART_SPECS_BY_KEY["right_arm"]
+    proximal_px = _joint_px("front_tpose", arm_spec.joint_a)
+    distal_px = _joint_px("front_tpose", arm_spec.joint_b)
+    beyond_wrist_fraction = beyond_distal_joint_fraction(merged_mask, proximal_px, distal_px)
+    combined = is_combined_with_next_segment(beyond_wrist_fraction)
+
+    torso_mask = (
+        np.array(
+            Image.open(_T0417_HISTORICAL_EVIDENCE_DIR / "panel_front_tpose_part_torso_mask.png")
+        )
+        > 0
+    )
+    overlap_with_torso_fraction = mask_overlap_fraction(merged_mask, torso_mask)
+
+    usable = not combined and overlap_with_torso_fraction <= PART_OVERLAP_FRACTION_TOLERANCE
+    if usable:
+        reason = (
+            f"{beyond_wrist_fraction * 100:.1f}% beyond its own wrist (within tolerance), "
+            f"{overlap_with_torso_fraction * 100:.1f}% overlap with torso (within tolerance) "
+            "-- the merged shoulder->wrist union of T-0417's own committed upper_arm/"
+            "lower_arm masks is a straightforwardly usable right_arm"
+        )
+    elif combined:
+        reason = (
+            f"{beyond_wrist_fraction * 100:.1f}% of retained pixels lie past its own wrist -- "
+            "runs past the hand, not compositor-ready as arm"
+        )
+    else:
+        reason = (
+            f"{overlap_with_torso_fraction * 100:.1f}% overlap with torso exceeds the "
+            f"{PART_OVERLAP_FRACTION_TOLERANCE * 100:.0f}% joint-blur allowance"
+        )
+
+    return {
+        "panel": "front_tpose",
+        "part": "right_arm",
+        "source": (
+            "reconstructed from T-0417's committed right_upper_arm + right_lower_arm masks "
+            "(union); no new SAM3 call this run"
+        ),
+        "mask_px": int(merged_mask.sum()),
+        "beyond_wrist_fraction": beyond_wrist_fraction,
+        "combined": combined,
+        "overlap_with_torso_fraction": overlap_with_torso_fraction,
+        "usable": usable,
+        "reason": reason,
+    }
 
 
 def compute_report() -> tuple[list[dict], dict]:
@@ -268,6 +365,12 @@ def main() -> None:
     print(f"requested: {totals['requested']}")
     print(f"mechanically isolated: {totals['mechanically_isolated']}")
     print(f"anatomically usable by name: {totals['anatomically_usable']}")
+
+    print()
+    print("-- edge case: front_tpose/right_upper_arm reconstruction (not a live run; "
+          "see front_tpose_right_arm_reconstruction docstring) --")
+    recon = front_tpose_right_arm_reconstruction()
+    print(f"front_tpose/right_arm: usable={recon['usable']} ({recon['reason']})")
 
 
 if __name__ == "__main__":

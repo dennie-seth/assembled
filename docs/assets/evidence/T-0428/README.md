@@ -161,7 +161,41 @@ no ComfyUI/GPU:
   merely anticipated future one. Torso's own visual quality is still
   assessed independently in §2/§4, not inferred from this flip.
 
-## 6. Prerequisites and gates
+## 6. Edge case: `front_tpose/right_upper_arm`, answered by reconstruction, not a live run
+
+The task's own edge-case list names `front_tpose/right_upper_arm` specifically: "the
+strongest existing candidate in the set," mechanically isolated at 29,077px with stray
+0.0, rejected under T-0423's OLD elbow-bounded check purely for being combined with the
+forearm at 46.9% beyond the **elbow**. The edge case requires an answer to whether it
+becomes a straightforwardly usable `right_arm` under this card's shoulder->wrist merge --
+not a restatement of scope as if the question didn't apply, since `front_tpose` is outside
+this card's live-run scope (§ above).
+
+Answering needs no new SAM3 call: T-0417's own committed, untouched
+`panel_front_tpose_part_right_upper_arm_mask.png` and
+`panel_front_tpose_part_right_lower_arm_mask.png` already exist on disk, and a
+shoulder->wrist `right_arm` is exactly their union.
+`assess_figure_part_suitability_T0428.front_tpose_right_arm_reconstruction()` reads both
+files directly (never writing into T-0417's own directory -- read-only), unions them, and
+reruns this card's own WRIST-based suitability check against them, fully offline, no
+ComfyUI, no GPU:
+
+| source | mask px | beyond wrist (WRIST-bounded, this card) | beyond elbow (ELBOW-bounded, T-0423) | overlap with torso | verdict |
+|---|---|---|---|---|---|
+| `right_upper_arm` ∪ `right_lower_arm` (T-0417, committed) | 29,077 (lower_arm was `present: false`, 0px -- the union is upper_arm alone) | **11.9%** (tolerance 20%, passes) | 46.9% (tolerance 20%, **rejected**) | 0.0% (tolerance 25%, passes) | **usable** |
+
+**The task's own premise holds for this panel too:** the same mask T-0423 rejected under
+the old elbow-bounded check for being "the upper arm AND the forearm" is, under this
+card's new wrist-bounded check, exactly what T-0338 needs -- a clean shoulder->wrist arm,
+separated from the torso, with no overlap. This is a reconstruction from historical data,
+not fresh evidence from this run, and is reported as such (`front_tpose_right_arm_reconstruction`'s
+own `source` field says so) -- it is not folded into §2's totals, since no live SAM3
+request produced it this round. See
+`tests/test_assess_figure_part_suitability_T0428.py::TestFrontTposeRightArmReconstruction`
+for the offline regression, and the script's own trailing print for a live run of the
+same numbers.
+
+## 7. Prerequisites and gates
 
 - SAM3 availability probed and confirmed before both panel runs; no
   `Sam3SegmentationUnavailable` mid-run failure this round.
@@ -173,7 +207,7 @@ no ComfyUI/GPU:
   license family (same resolution as T-0417/T-0423/T-0427's own rows in
   `ASSET_PROVENANCE.md`) -- this card neither re-litigates nor needs to.
 
-## 7. Evidence directory separation (T-0417 untouched)
+## 8. Evidence directory separation (T-0417 untouched)
 
 `gen_master_sheet_part_cutouts_T0417.EVIDENCE_DIR` now points at this
 directory (`docs/assets/evidence/T-0428/`), not T-0417's
@@ -208,7 +242,7 @@ with no fixture freezing it. `TestLiveEvidenceReproducesThisCardsOwnResult`
 in `tests/test_assess_figure_part_suitability_T0428.py` is this card's own
 analogous pin against its own `part_comparison.json` in this directory.
 
-## 8. Demonstration descend geometry
+## 9. Demonstration descend geometry
 
 Every `*_descended.png` in this directory is **32x32** -- the evidence
 pipeline's own demonstration size
