@@ -6,10 +6,14 @@ instead of T-0423's `upper_arm`-vs-elbow. An arm that runs past its own
 wrist into whatever comes next must still be caught and labelled
 "combined", never quietly counted as a win.
 
-All tests here are fully offline: synthetic masks built in-process against
+Most tests here are fully offline: synthetic masks built in-process against
 the REAL rig keypoints for `side_right_forward` (so the geometry is real,
 not hand-waved), no ComfyUI, no GPU, no dependency on this card's own live
-evidence existing yet.
+evidence existing yet. `TestLiveEvidenceReproducesThisCardsOwnResult` is the
+one exception -- same "read the already-committed evidence PNGs/JSON
+directly, no mocking" pattern `tests/test_part_suitability_T0423.py` already
+uses for T-0417's directory: still no ComfyUI/GPU, just a file read of this
+card's own committed `docs/assets/evidence/T-0428/part_comparison.json`.
 
 RED state: `assess_figure_part_suitability_T0428` does not exist yet ->
 `ModuleNotFoundError` below.
@@ -22,6 +26,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
 _CHARACTER_DIR = Path(__file__).resolve().parents[1]
@@ -123,6 +128,12 @@ class TestArmSuitabilityJudgedAgainstWrist:
 
 class TestNonArmPartsAreVisuallyJudged:
     def test_head_with_no_recorded_finding_is_adequate(self, tmp_path, monkeypatch):
+        # [T-0428 live run] side_right_forward/head and side_left_forward/head
+        # both got real `_VISUAL_FINDINGS` entries from this card's own live
+        # evidence (see module docstring) -- this test is about the generic
+        # "no recorded finding -> adequate" path, so it clears the dict back
+        # to empty rather than relying on PANEL/"head" staying finding-free.
+        monkeypatch.setattr(assess, "_VISUAL_FINDINGS", {})
         monkeypatch.setattr(assess, "EVIDENCE_DIR", tmp_path)
         mask = np.zeros((PANEL_SIZE, PANEL_SIZE), dtype=bool)
         mask[100:150, 100:150] = True
@@ -149,3 +160,42 @@ class TestNonArmPartsAreVisuallyJudged:
         assert totals["requested"] == 1
         assert totals["mechanically_isolated"] == 0
         assert totals["anatomically_usable"] == 0
+
+
+class TestLiveEvidenceReproducesThisCardsOwnResult:
+    """[T-0428 live run] Reads this card's own already-committed
+    `docs/assets/evidence/T-0428/part_comparison.json` and the real
+    `_VISUAL_FINDINGS` entries above directly -- no monkeypatching, same
+    "pin the committed evidence's own numbers" pattern
+    `tests/test_part_suitability_T0423.py` already uses for T-0417's
+    directory. Pins the phantom-overlap hypothesis test (head x arm
+    overlap cleared on both panels by the ear-midpoint anchor) and the
+    honest, not-glossed result: both heads are mechanically isolated or
+    rejected, but neither is anatomically a usable head by name."""
+
+    def _comparison(self):
+        return json.loads((assess.EVIDENCE_DIR / "part_comparison.json").read_text())
+
+    def test_head_x_arm_overlap_is_cleared_on_both_panels(self):
+        data = self._comparison()
+        for panel, arm_part in (
+            ("side_right_forward", "right_arm"),
+            ("side_left_forward", "left_arm"),
+        ):
+            overlaps = data["panels"][panel]["overlaps"]
+            pair = next(
+                o
+                for o in overlaps
+                if {o["part_a"], o["part_b"]} == {"head", arm_part}
+            )
+            assert pair["overlap_fraction"] == pytest.approx(0.0)
+            assert pair["exceeds_tolerance"] is False
+
+    def test_neither_forward_head_is_anatomically_usable_by_name(self):
+        per_part, totals = assess.compute_report()
+        for panel in ("side_right_forward", "side_left_forward"):
+            row = next(r for r in per_part if r["panel"] == panel and r["part"] == "head")
+            assert row["usable"] is False
+        assert totals["requested"] == 6
+        assert totals["mechanically_isolated"] == 5
+        assert totals["anatomically_usable"] == 3

@@ -73,7 +73,35 @@ _PANEL_KEYPOINTS = {
 #: evidence PNG directly. `None` = visually complete, no finding. Filled in
 #: from this card's own live run (see docs/assets/evidence/T-0428/README.md
 #: for the inspection this records).
-_VISUAL_FINDINGS: dict[tuple[str, str], str | None] = {}
+#:
+#: [T-0428 live run] Both forward heads were already flagged by T-0423
+#: as "visually poor -- fragmentary hood streamers" on these exact two
+#: panels, BEFORE this card's ear-midpoint anchor change -- these entries
+#: are this card's own fresh visual re-check under the new anchor, not a
+#: carry-over assumption. The ear-midpoint anchor does clear the head x
+#: arm overlap on both panels (see README's hypothesis-test table), but
+#: neither resulting head mask is an anatomically legible head: the right
+#: panel's is mechanically isolated hood/scarf cloth with no facial
+#: features, and the left panel's is a mechanically-degenerate sliver of a
+#: fabric highlight. Torso is unmodified by this card (same point prompt,
+#: same panel) -- these entries record this run's own fresh visual check
+#: of its own output, not a re-assertion of T-0423's.
+_VISUAL_FINDINGS: dict[tuple[str, str], str | None] = {
+    ("side_right_forward", "head"): (
+        "visually not a head -- mechanically isolated hood/scarf cloth with no "
+        "facial features, no eyes/nose/jaw visible anywhere in the mask "
+        "(panel_side_right_forward_part_head_sam3_after.png)"
+    ),
+    ("side_left_forward", "head"): (
+        "visually not a head -- a small bright fabric-fold highlight, not skin "
+        "or a face (panel_side_left_forward_part_head_sam3_after.png)"
+    ),
+    ("side_right_forward", "torso"): (
+        "partial -- an elongated coat-fold strip, not the complete torso/coat "
+        "silhouette (panel_side_right_forward_part_torso_sam3_after.png)"
+    ),
+    ("side_left_forward", "torso"): None,
+}
 
 
 def _joint_px(panel: str, joint_idx: int) -> tuple[int, int]:
