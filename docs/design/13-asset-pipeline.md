@@ -131,6 +131,26 @@ Generation: **1024×1024 for a 16px tile (×64)**, or a sheet at an integer mult
 
 **Props:** grid sheet for small props (co-generation keeps style consistent across a pack); individual generations for large or hero props. Cutout via BiRefNet before descent.
 
+## Character views: SIDE VIEW ONLY
+
+**Decision, @DennieSeth 2026-10-04 — standing.** Every character animation is authored from
+the **side view**. Front and back views are **not produced**, and no animation depends on one.
+
+This follows the first complete animation built the current way (hand-cut parts →
+post-process key → deterministic rig and gait): the side view carried the whole walk on its
+own, and a front view would have doubled the cutting and rigging work for motion the game
+does not need.
+
+What it means in practice:
+
+- A character's part set is cut once, from a **side-view** source, facing `+x`.
+- `docs/design/21-character-rig-bones.md`'s part set and pivots are the side-view set.
+- **Front/back T-pose and turnaround generation is no longer required.** The six-panel master
+  sheet's front and back panels are history, not a dependency — nothing new should be scoped
+  around producing them.
+- A left-facing pose is produced by **mirroring at composite time**, not by cutting a second
+  set.
+
 **Characters — the hard class.** At 384×216 a figure is **40px tall**, so the pipeline optimizes for *silhouette clarity and stable proportion*, not detail. Nearly all generated detail is destroyed in the descent; what survives is shape and a few value blocks.
 
 | | |

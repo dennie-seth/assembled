@@ -9,6 +9,22 @@ That only works if everyone — the person cutting, the generator, and the compo
 on **which bone each part hangs from and where its pivot is**. This document is that
 agreement.
 
+## 0. Side view only
+
+**Decision, @DennieSeth 2026-10-04 — standing.** Characters are authored from the **side
+view** only; front and back views are not produced. See
+`docs/design/13-asset-pipeline.md`'s "Character views" section.
+
+Consequences for this document:
+
+- The part set below is the **side-view** set. A character needs one cut, not three.
+- Parts are authored facing **+x**; a left-facing pose is a mirror at composite time (§4).
+- In a side view the **far-side limbs are partly occluded**, so a far part is often cut
+  shorter than its near counterpart even though the *bone* is the same length. Correct that
+  with a per-part length scale rather than accepting an uneven chain — the reference walk
+  needed exactly one such correction, on the far calf.
+- Nothing in this spec requires a front or back T-pose.
+
 ## 1. Joint source of truth: COCO-18
 
 Every pose rig in this pipeline already emits the standard 18-keypoint COCO/OpenPose
