@@ -30,6 +30,24 @@ own README had been doing):
       something this script derives from pixels; the per-part findings
       below are hand-recorded from that inspection and cited by file.
 
+[T-0428] `_FIGURE_PANEL_KEYS`/`PARTS_BY_PANEL`/`_FIGURE_PART_SPECS_BY_KEY`
+used to be read LIVE from `gen_master_sheet_part_cutouts_T0417`. That broke
+the moment T-0428's own acceptance required this card to replace those same
+globals' figure-panel shape (`upper_arm`/`lower_arm` -> one `arm` part per
+side) in place: this script's `compute_report()` would then look up a part
+key (`right_arm`) that doesn't exist in `docs/assets/evidence/T-0417/
+part_comparison.json` (committed under the OLD `right_upper_arm`/
+`right_lower_arm` keys) and crash with `KeyError`. This script's own job --
+report on T-0417's own already-committed evidence -- never depended on
+whatever shape a LATER card's live generator module happens to carry; it
+depended on the shape T-0417's run actually used. `_HISTORICAL_FIGURE_PART_
+SPECS_BY_KEY`/`_HISTORICAL_PARTS_BY_PANEL` below pin that historical shape
+locally (the exact values `_build_figure_part_specs`/`PARTS_BY_PANEL` held
+before T-0428), so this script keeps producing T-0423's own already-verified
+24 requested / 8 mechanically isolated / 5 anatomically usable totals
+regardless of how many later cards reshape the live generator -- no
+monkeypatching required to prove it.
+
 Usage (from `assets/src/character/`, offline, no network):
     .venv/bin/python assess_figure_part_suitability_T0423.py
 """
@@ -49,8 +67,8 @@ if str(_CHARACTER_DIR) not in sys.path:
 sys.path.insert(0, str(_CHARACTER_DIR / "src"))
 
 import gen_master_sheet_cutout_compare_T0337 as compare_t0337  # noqa: E402
-import gen_master_sheet_part_cutouts_T0417 as gen  # noqa: E402
 import pose_rig_master_sheet_T0351 as rig  # noqa: E402
+from gen_master_sheet_part_cutouts_T0417 import PartSpec  # noqa: E402
 
 from char_gen.part_suitability import (  # noqa: E402
     beyond_distal_joint_fraction,
@@ -58,6 +76,59 @@ from char_gen.part_suitability import (  # noqa: E402
 )
 
 EVIDENCE_DIR = _CHARACTER_DIR.resolve().parents[2] / "docs" / "assets" / "evidence" / "T-0417"
+
+# COCO-18 joint indices, same numbering `gen_master_sheet_part_cutouts_T0417`
+# itself uses (mirrored, not imported live -- see module docstring above for
+# why this script no longer reaches into that module's mutable globals).
+_NOSE = 0
+_NECK = 1
+_R_SHOULDER, _R_ELBOW, _R_WRIST = 2, 3, 4
+_L_SHOULDER, _L_ELBOW, _L_WRIST = 5, 6, 7
+_R_HIP, _L_HIP = 8, 11
+
+#: [T-0428] The exact figure-panel `PartSpec`s T-0417's own run was produced
+#: against, frozen here rather than read live -- see module docstring.
+_HISTORICAL_FIGURE_PART_SPECS: tuple[PartSpec, ...] = (
+    PartSpec("head", "", "head", _NOSE),
+    PartSpec("torso", "", "torso_coat", _NECK, joint_b_pair=(_R_HIP, _L_HIP)),
+    PartSpec("right_upper_arm", "right", "upper_arm", _R_SHOULDER, _R_ELBOW),
+    PartSpec("right_lower_arm", "right", "lower_arm_hand", _R_ELBOW, _R_WRIST),
+    PartSpec("left_upper_arm", "left", "upper_arm", _L_SHOULDER, _L_ELBOW),
+    PartSpec("left_lower_arm", "left", "lower_arm_hand", _L_ELBOW, _L_WRIST),
+)
+_HISTORICAL_FIGURE_PART_SPECS_BY_KEY: dict[str, PartSpec] = {
+    spec.part_key: spec for spec in _HISTORICAL_FIGURE_PART_SPECS
+}
+
+#: [T-0428] The exact figure-panel part sets T-0417's own run was produced
+#: against, frozen here -- see module docstring.
+_HISTORICAL_PARTS_BY_PANEL: dict[str, tuple[str, ...]] = {
+    "front_tpose": (
+        "head",
+        "torso",
+        "right_upper_arm",
+        "right_lower_arm",
+        "left_upper_arm",
+        "left_lower_arm",
+    ),
+    "back_tpose": (
+        "head",
+        "torso",
+        "right_upper_arm",
+        "right_lower_arm",
+        "left_upper_arm",
+        "left_lower_arm",
+    ),
+    "side_right_forward": ("head", "torso", "right_upper_arm", "right_lower_arm"),
+    "side_left_forward": ("head", "torso", "left_upper_arm", "left_lower_arm"),
+    "side_neutral": ("head", "torso", "right_upper_arm", "right_lower_arm"),
+}
+
+#: The five whole-figure panels T-0417's run decomposed -- frozen locally
+#: for the same reason as the two dicts above (unaffected by T-0428's own
+#: change, but kept local so this script has zero dependency left on the
+#: live generator module's mutable state).
+_HISTORICAL_FIGURE_PANEL_KEYS: tuple[str, ...] = tuple(_HISTORICAL_PARTS_BY_PANEL)
 
 _PANEL_KEYPOINTS = {
     "front_tpose": rig.FRONT_TPOSE_KEYPOINTS_NORM,
@@ -120,8 +191,8 @@ def compute_report() -> tuple[list[dict], dict]:
     total_requested = 0
     per_part: list[dict] = []
 
-    for panel in gen._FIGURE_PANEL_KEYS:
-        for part in gen.PARTS_BY_PANEL[panel]:
+    for panel in _HISTORICAL_FIGURE_PANEL_KEYS:
+        for part in _HISTORICAL_PARTS_BY_PANEL[panel]:
             total_requested += 1
             rec = panels[panel]["parts"][part]
             if not rec["present"]:
@@ -140,7 +211,7 @@ def compute_report() -> tuple[list[dict], dict]:
             isolated = bool(rec["isolated"])
             mechanical_isolated += int(isolated)
 
-            spec = gen._FIGURE_PART_SPECS_BY_KEY[part]
+            spec = _HISTORICAL_FIGURE_PART_SPECS_BY_KEY[part]
             usable = isolated
             suitability = "adequate"
             reason = ""

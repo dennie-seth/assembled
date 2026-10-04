@@ -172,82 +172,34 @@ class TestEvidenceDirPointsAtThisCardsOwnDirectory:
         assert gen.EVIDENCE_DIR.parent.parent.name == "assets"
 
 
-#: [T-0428] `assess_figure_part_suitability_T0423.py`'s own `compute_report()`
-#: reads `gen._FIGURE_PART_SPECS_BY_KEY`/`gen.PARTS_BY_PANEL` LIVE from the
-#: shared `gen_master_sheet_part_cutouts_T0417` module -- it never freezes
-#: its own copy. This card's arm merge intentionally changes those same
-#: module globals (no `upper_arm`/`lower_arm` entry survives, by design --
-#: see `TestArmIsOnePartNotARenamedHalf` above), so invoking that script's
-#: `compute_report()` against today's `gen` module no longer matches the
-#: part names baked into the already-committed
-#: `docs/assets/evidence/T-0417/part_comparison.json`. That is a
-#: necessary consequence of the redesign, not evidence corruption: this
-#: test proves the EVIDENCE FILES themselves are untouched by freezing
-#: `assess_figure_part_suitability_T0423`'s own `gen` reference back to
-#: the exact historical shape T-0423's run actually used (same part keys,
-#: same labels, same anchors) for the duration of one computation, then
-#: confirms the unmodified `compute_report()` logic still reads those
-#: untouched files as 24/8/5 under that historical shape.
-def _historical_figure_part_specs(gen_module):
-    PartSpec = gen_module.PartSpec
-    specs = [
-        PartSpec("head", "", "head", _NOSE),
-        PartSpec("torso", "", "torso_coat", 1, joint_b_pair=(8, 11)),  # NECK, R_HIP, L_HIP
-    ]
-    for side, shoulder, elbow, wrist in (
-        ("right", 2, 3, 4),
-        ("left", 5, 6, 7),
-    ):
-        specs.append(PartSpec(f"{side}_upper_arm", side, "upper_arm", shoulder, elbow))
-        specs.append(PartSpec(f"{side}_lower_arm", side, "lower_arm_hand", elbow, wrist))
-    return specs
-
-
-_HISTORICAL_PARTS_BY_PANEL = {
-    "front_tpose": (
-        "head",
-        "torso",
-        "right_upper_arm",
-        "right_lower_arm",
-        "left_upper_arm",
-        "left_lower_arm",
-    ),
-    "back_tpose": (
-        "head",
-        "torso",
-        "right_upper_arm",
-        "right_lower_arm",
-        "left_upper_arm",
-        "left_lower_arm",
-    ),
-    "side_right_forward": ("head", "torso", "right_upper_arm", "right_lower_arm"),
-    "side_left_forward": ("head", "torso", "left_upper_arm", "left_lower_arm"),
-    "side_neutral": ("head", "torso", "right_upper_arm", "right_lower_arm"),
-}
-
-
+#: [T-0428] `assess_figure_part_suitability_T0423.py` used to read
+#: `gen._FIGURE_PART_SPECS_BY_KEY`/`gen.PARTS_BY_PANEL` LIVE from the shared
+#: `gen_master_sheet_part_cutouts_T0417` module. This card's arm merge
+#: intentionally changes those same module globals in place (no
+#: `upper_arm`/`lower_arm` entry survives, by design -- see
+#: `TestArmIsOnePartNotARenamedHalf` above), which broke that live read: a
+#: part name (`right_arm`) that doesn't exist in the already-committed
+#: `docs/assets/evidence/T-0417/part_comparison.json` (keyed by the OLD
+#: `right_upper_arm`/`right_lower_arm` names). `assess_figure_part_
+#: suitability_T0423.py` now carries its own frozen copy of that historical
+#: shape instead of reading the live module, so no monkeypatching is needed
+#: here: this test just imports the real, unmodified-in-behavior script and
+#: runs its real `compute_report()` against the real, untouched evidence
+#: directory.
 class TestT0417DirectoryUnregressed:
     """"T-0417's legs verdicts and T-0423's five usable figure parts are not
     regressed" (card's own acceptance wording) -- asserted, not assumed:
-    T-0423's own, UNMODIFIED `assess_figure_part_suitability_T0423.py`,
-    frozen back to the historical part shape it actually ran against (see
-    module-level comment above), still reads the still-intact
+    T-0423's own `assess_figure_part_suitability_T0423.py`, run for real
+    with no mocking of any kind, still reads the still-intact
     `docs/assets/evidence/T-0417/` directory as exactly 24 requested / 8
     mechanically isolated / 5 anatomically usable -- the same totals that
     script reported before this card touched anything."""
 
     @pytest.fixture(autouse=True)
-    def _load_assess_module(self, monkeypatch):
+    def _load_assess_module(self):
         import importlib
 
         self.assess = importlib.import_module("assess_figure_part_suitability_T0423")
-        historical_specs = _historical_figure_part_specs(gen)
-        monkeypatch.setattr(
-            self.assess.gen,
-            "_FIGURE_PART_SPECS_BY_KEY",
-            {s.part_key: s for s in historical_specs},
-        )
-        monkeypatch.setattr(self.assess.gen, "PARTS_BY_PANEL", _HISTORICAL_PARTS_BY_PANEL)
 
     def test_t0417_evidence_dir_exists_and_is_unmodified(self):
         assert self.assess.EVIDENCE_DIR.exists()

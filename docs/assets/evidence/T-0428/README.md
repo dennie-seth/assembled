@@ -175,22 +175,32 @@ directory (`docs/assets/evidence/T-0428/`), not T-0417's
 (`docs/assets/evidence/T-0417/`) -- see that module's own docstring. This
 card's live run only ever wrote files here; `git status` over
 `docs/assets/evidence/T-0417/` shows no changes from this card's run.
-`tests/test_part_suitability_T0423.py`'s own
-`_freeze_historical_figure_part_shape` fixture pins
-`assess_figure_part_suitability_T0423.compute_report()` back to its
-original `upper_arm`/`lower_arm` shape so its already-committed assertion
-against T-0417's own `part_comparison.json` (24 requested / 8 mechanically
-isolated / 5 anatomically usable) keeps passing even though this card's own
-code changed `gen_master_sheet_part_cutouts_T0417.py`'s live
-`PARTS_BY_PANEL`/`_FIGURE_PART_SPECS_BY_KEY` globals those scripts both
-import from. One honest caveat on this: invoking
-`assess_figure_part_suitability_T0423.py` directly from a shell now raises
-`KeyError` immediately, because that script (left byte-for-byte unmodified,
-per the card's own instruction) reads those same now-mutated live globals
-with no freezing of its own -- the test's own frozen-fixture run is what
-actually reproduces 24/8/5, not a raw re-invocation of the script after
-this card's changes land. `TestLiveEvidenceReproducesThisCardsOwnResult` in
-`tests/test_assess_figure_part_suitability_T0428.py` is this card's own
+
+**Revision note (this round):** an earlier pass of this card made
+`assess_figure_part_suitability_T0423.py` depend on
+`gen_master_sheet_part_cutouts_T0417.py`'s live `PARTS_BY_PANEL`/
+`_FIGURE_PART_SPECS_BY_KEY` globals, which this card's own arm re-scope
+mutates in place -- running that script for real then raised `KeyError`
+(`right_arm` isn't a key in T-0417's committed `part_comparison.json`,
+which is still keyed by `right_upper_arm`/`right_lower_arm`). A reviewer
+VALIDATION pass caught that the test covering this only passed because it
+monkeypatched `assess_figure_part_suitability_T0423`'s own `gen` reference
+back to the historical shape mid-test -- proving the test fixture was
+correct, not that the actual script still worked. The real fix:
+`assess_figure_part_suitability_T0423.py` now carries its own frozen,
+locally-defined copy of the historical figure-panel shape
+(`_HISTORICAL_FIGURE_PART_SPECS_BY_KEY`/`_HISTORICAL_PARTS_BY_PANEL`/
+`_HISTORICAL_FIGURE_PANEL_KEYS`) instead of reading `gen`'s mutable
+globals at all. `.venv/bin/python assess_figure_part_suitability_T0423.py`
+now runs for real, unmocked, straight from a shell, and reports 24
+requested / 8 mechanically isolated / 5 anatomically usable against
+T-0417's own untouched `part_comparison.json` -- no monkeypatching
+anywhere. `tests/test_part_suitability_T0423.py`'s
+`TestFigurePartSuitabilityReport` and
+`tests/test_gen_master_sheet_part_cutouts_T0428.py`'s
+`TestT0417DirectoryUnregressed` both now call `compute_report()` directly
+with no fixture freezing it. `TestLiveEvidenceReproducesThisCardsOwnResult`
+in `tests/test_assess_figure_part_suitability_T0428.py` is this card's own
 analogous pin against its own `part_comparison.json` in this directory.
 
 ## 8. Demonstration descend geometry
