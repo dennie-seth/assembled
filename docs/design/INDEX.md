@@ -124,3 +124,4 @@ Everything else is content budget or playtest data. Full inventory in `GDD-OPEN.
 | 2026-08-02 | rev 1 — merged duplicate uploads, `_2` copies taken wholesale | Claude |
 | 2026-08-02 | rev 2 — version drift fixed, A-1 and M-5 resolved, pipeline folded into HANDOFF, PLAN deltas applied | Claude |
 | 2026-08-02 | rev 3 — 03/04 written and 14/15 added to contents; concept-art stage folded into 13/05/HANDOFF; **V-5 resolved** by extraction; all appended amendments folded into their sections and removed | Claude |
+- [21 — Character rig: the canonical bone list](21-character-rig-bones.md) — the bones parts attach to, for every character
