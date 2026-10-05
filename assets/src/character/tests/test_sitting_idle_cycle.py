@@ -159,8 +159,9 @@ class TestMeasuredGeometry:
 class TestCompositedFrames:
     """Built from the real parts. Assertions run on the actual composited pixels."""
 
+    @classmethod
     @pytest.fixture(scope="class")
-    def result(self):
+    def result(cls):
         return render_frames()
 
     def test_frame_count(self, result):
