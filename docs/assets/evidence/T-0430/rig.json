@@ -7,27 +7,33 @@
   "parts_source": "assets/src/character/parts/side_view (develop)",
   "signal": {
     "breath_cycles_per_loop": 1.0,
-    "upper_body_travel_final_px": 1.134
+    "upper_body_travel_final_px": 1.105
+  },
+  "stance": {
+    "thigh_deg": 0.0,
+    "knee_flexion_deg": 0.0,
+    "far_leg_offset_frac": -0.055,
+    "note": "straight legs set directly; an earlier 0.93-extension IK rest pose resolved to 43.4deg of knee flexion -- a crouch, not a stand"
   },
   "measured": {
-    "descent_scale": 0.04086,
+    "descent_scale": 0.0398,
     "changed_px_per_frame": [
-      21,
-      74,
-      97,
-      93,
-      71,
-      27,
-      27,
-      71,
-      93,
-      97,
-      74,
-      21
+      18,
+      67,
+      91,
+      86,
+      68,
+      13,
+      13,
+      68,
+      86,
+      91,
+      67,
+      18
     ],
-    "loop_seam_changed_px": 21,
-    "lower_body_band_max_diff": 6,
-    "leg_rest_ik_residual_px": 0.0
+    "loop_seam_changed_px": 18,
+    "lower_body_band_max_diff": 14,
+    "legs_straight": true
   },
   "per_frame_pose": [
     {

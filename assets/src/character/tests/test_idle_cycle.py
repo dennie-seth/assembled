@@ -12,10 +12,13 @@ import pytest
 from char_gen.idle_cycle import (
     BREATH_CYCLES_PER_LOOP,
     ELBOW_REST_DEG,
+    IDLE_KNEE_FLEXION_DEG,
+    IDLE_THIGH_DEG,
     LEG_FOLLOW,
     SHOULDER_REST_DEG,
     ankle_of,
     breath,
+    idle_stance,
     pose_at,
     solve_leg,
     travel_at_final_height,
@@ -114,3 +117,24 @@ class TestLegIK:
         ankle = (400.0, 300.0 + 2.0 * (THIGH + CALF))
         ik = solve_leg(hip, ankle, THIGH, CALF)
         assert math.isfinite(ik.thigh_deg) and math.isfinite(ik.knee_flexion_deg)
+
+
+class TestIdleStanceIsStraight:
+    """Idle stands; it does not crouch. An earlier version ran the rest pose through the
+    IK at 0.93 extension, which resolved to 43.4 degrees of knee flexion with the thighs
+    ~25 degrees forward -- a walk pose carried into a standing animation."""
+
+    def test_the_thigh_hangs_vertical(self):
+        assert IDLE_THIGH_DEG == 0.0
+
+    def test_the_knee_is_straight(self):
+        assert IDLE_KNEE_FLEXION_DEG == 0.0
+
+    def test_the_stance_helper_agrees(self):
+        st = idle_stance()
+        assert st.thigh_deg == 0.0
+        assert st.knee_flexion_deg == 0.0
+        assert st.calf_deg == 0.0, "a straight leg means the calf continues the thigh"
+
+    def test_the_stance_does_not_vary_across_the_loop(self):
+        assert all(idle_stance() == idle_stance() for _ in PHASES)

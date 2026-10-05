@@ -46,6 +46,21 @@ HEAD_REST_DEG = 0.0
 #: identical in every frame and the feet cannot drift.
 LEG_FOLLOW = 0.0
 
+#: The idle STANCE: straight legs, thighs vertical, feet flat.
+#:
+#: These are set directly rather than solved. An earlier version ran the rest pose through
+#: `solve_leg` at 93% extension, which resolved to 43.4 degrees of knee flexion with the
+#: thighs ~25 degrees forward -- a crouch carried over from the walk, not a standing pose.
+#: A neutral stand has nothing to solve for: the thigh hangs vertical and the knee is
+#: straight, so saying so is both simpler and exactly right.
+IDLE_THIGH_DEG = 0.0
+IDLE_KNEE_FLEXION_DEG = 0.0
+
+#: Fore-aft offset of the FAR leg's hip, as a fraction of torso width. With both legs
+#: vertical they would otherwise coincide exactly and the far one would be invisible; in a
+#: side view the far leg sits slightly behind (negative is behind, since the figure faces +x).
+FAR_LEG_OFFSET_FRAC = -0.055
+
 
 @dataclass(frozen=True)
 class IdlePose:
@@ -111,6 +126,11 @@ def solve_leg(hip: tuple[float, float], ankle: tuple[float, float],
     a = math.degrees(math.acos(max(-1.0, min(1.0, cos_a))))
     b = math.degrees(math.acos(max(-1.0, min(1.0, cos_b))))
     return LegIK(thigh_deg=direction + a, knee_flexion_deg=180.0 - b)
+
+
+def idle_stance() -> LegIK:
+    """The standing pose the breath rides on: straight leg, thigh vertical."""
+    return LegIK(thigh_deg=IDLE_THIGH_DEG, knee_flexion_deg=IDLE_KNEE_FLEXION_DEG)
 
 
 def ankle_of(hip: tuple[float, float], ik: LegIK,
