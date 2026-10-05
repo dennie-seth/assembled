@@ -1,4 +1,5 @@
 import { parseHostActionRequest } from "../lib/hostActionRequest.js";
+import { CLAUDE_DIR_DENIAL_REASON, CLAUDE_DIR_BASH_DENIAL_REASON } from "./toolAllowlist.js";
 
 /**
  * The seven ways a card's auto-retry exhaustion is categorized (docs/design/escalation-workflow.md,
@@ -10,6 +11,15 @@ import { parseHostActionRequest } from "../lib/hostActionRequest.js";
  * match always beats a guess. `host-action` also has a *prose* fallback as the keyword table's
  * first entry (T-0323), for a diagnosis that names a host-only wall but never got wrapped in the
  * fenced block -- exactly the failure mode that produced the T-0321 misclassification.
+ *
+ * T-0412: the CLI's own `.claude/` sensitive-file denial (`CLAUDE_DIR_DENIAL_REASON`) and the
+ * board's matching Bash-write denial (`CLAUDE_DIR_BASH_DENIAL_REASON`, T-0411) are checked by
+ * literal containment, not a keyword guess, the same way the structural host-action check above
+ * is -- both denial strings live in `toolAllowlist.js` precisely so this file never duplicates or
+ * drifts from their exact wording. Before this, a FAIL note quoting either denial verbatim (e.g.
+ * T-0408 attempt 3's own `.claude/rules/planner.md` edit refusal) fell through every pattern below
+ * and defaulted to "code-test-bug" -- retrying a card against a wall no code fix can ever clear,
+ * instead of escalating it the way a genuine permission/grant denial should.
  */
 export const BLOCKER_CATEGORIES = [
   "host-action",
@@ -59,6 +69,9 @@ const CATEGORY_LABELS = {
  */
 export function categorizeFailure(text) {
   if (parseHostActionRequest(text)) return "host-action";
+  if (typeof text === "string" && (text.includes(CLAUDE_DIR_DENIAL_REASON) || text.includes(CLAUDE_DIR_BASH_DENIAL_REASON))) {
+    return "permission-grant";
+  }
   for (const { category, re } of CATEGORY_PATTERNS) {
     if (re.test(text)) return category;
   }
