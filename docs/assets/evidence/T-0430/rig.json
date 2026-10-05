@@ -1,0 +1,182 @@
+{
+  "note": "simplified idle -- ONE signal: a gentle vertical breath in the upper body. Hips and legs are solved once at rest and reused for every frame, so the feet are static by construction. No sway, pitch, roll or limb motion.",
+  "cell_px": 48,
+  "figure_px": 40,
+  "frames": 12,
+  "facing": "right",
+  "parts_source": "assets/src/character/parts/side_view (develop)",
+  "signal": {
+    "breath_cycles_per_loop": 1.0,
+    "upper_body_travel_final_px": 1.105
+  },
+  "stance": {
+    "thigh_deg": 0.0,
+    "knee_flexion_deg": 0.0,
+    "far_leg_offset_frac": -0.055,
+    "note": "straight legs set directly; an earlier 0.93-extension IK rest pose resolved to 43.4deg of knee flexion -- a crouch, not a stand"
+  },
+  "measured": {
+    "descent_scale": 0.0398,
+    "changed_px_per_frame": [
+      18,
+      67,
+      91,
+      86,
+      68,
+      13,
+      13,
+      68,
+      86,
+      91,
+      67,
+      18
+    ],
+    "loop_seam_changed_px": 18,
+    "lower_body_band_max_diff": 14,
+    "legs_straight": true
+  },
+  "per_frame_pose": [
+    {
+      "frame": 0,
+      "upper_dy": -0.0
+    },
+    {
+      "frame": 1,
+      "upper_dy": -1.86
+    },
+    {
+      "frame": 2,
+      "upper_dy": -6.94
+    },
+    {
+      "frame": 3,
+      "upper_dy": -13.88
+    },
+    {
+      "frame": 4,
+      "upper_dy": -20.82
+    },
+    {
+      "frame": 5,
+      "upper_dy": -25.9
+    },
+    {
+      "frame": 6,
+      "upper_dy": -27.76
+    },
+    {
+      "frame": 7,
+      "upper_dy": -25.9
+    },
+    {
+      "frame": 8,
+      "upper_dy": -20.82
+    },
+    {
+      "frame": 9,
+      "upper_dy": -13.88
+    },
+    {
+      "frame": 10,
+      "upper_dy": -6.94
+    },
+    {
+      "frame": 11,
+      "upper_dy": -1.86
+    }
+  ],
+  "rig": {
+    "torso": {
+      "pivot": [
+        0.5,
+        0.0
+      ],
+      "bone": "spine",
+      "z": 3
+    },
+    "head": {
+      "pivot": [
+        0.5,
+        0.92
+      ],
+      "bone": "neck",
+      "z": 4
+    },
+    "shoulder_R": {
+      "pivot": [
+        0.5,
+        0.08
+      ],
+      "bone": "upperarm.R",
+      "z": 1
+    },
+    "forearm_R": {
+      "pivot": [
+        0.5,
+        0.06
+      ],
+      "bone": "forearm.R",
+      "z": 1
+    },
+    "shoulder_L": {
+      "pivot": [
+        0.5,
+        0.08
+      ],
+      "bone": "upperarm.L",
+      "z": 5
+    },
+    "forearm_L": {
+      "pivot": [
+        0.5,
+        0.06
+      ],
+      "bone": "forearm.L",
+      "z": 5
+    },
+    "thigh_R": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "thigh.R",
+      "z": 0
+    },
+    "calf_R": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "shin.R",
+      "z": 0
+    },
+    "thigh_L": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "thigh.L",
+      "z": 2
+    },
+    "calf_L": {
+      "pivot": [
+        0.5,
+        0.04
+      ],
+      "bone": "shin.L",
+      "z": 2
+    }
+  },
+  "bone_lengths": {
+    "head": 14.7,
+    "torso": 257.0,
+    "shoulder_R": 103.0,
+    "shoulder_L": 169.3,
+    "forearm_R": 198.3,
+    "forearm_L": 188.0,
+    "thigh_R": 246.7,
+    "thigh_L": 246.7,
+    "calf_R": 330.2,
+    "calf_L": 330.2
+  }
+}
