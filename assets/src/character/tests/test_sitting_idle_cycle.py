@@ -194,10 +194,17 @@ class TestCompositedFrames:
 
     def test_the_loop_seam_is_not_the_worst_transition(self, result):
         """The cosine ease rests at both ends, so wrapping frame N-1 back to frame 0
-        should not be a bigger jump than any interior step."""
+        should not be a bigger jump than any interior step. `deltas[-1]` IS the seam
+        (frame N-1 -> frame 0, the wrap-around pair) -- it must be compared against the
+        OTHER pairs, never against a maximum that includes itself, or the assertion is
+        tautological and cannot fail for any input."""
         deltas = result.changed_px_per_frame_pair
-        seam = deltas[-1]
-        assert seam <= max(deltas), "the loop seam pops harder than an interior frame step"
+        *interior, seam = deltas
+        assert interior, "need at least one interior transition to compare the seam against"
+        assert seam <= max(interior), (
+            f"loop seam changed {seam}px, worse than the worst interior step "
+            f"({max(interior)}px) -- the seam pops harder than an interior frame transition"
+        )
 
     def test_some_motion_is_visible_between_frames(self, result):
         """A dead sheet (nothing changes) is a failure, not a pass."""
