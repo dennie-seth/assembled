@@ -1,5 +1,11 @@
 # Side-view idle — breathing/weight-shift loop, 2026-10-04 (T-0430)
 
+**Updated 2026-10-05:** @DennieSeth's review comment on this card -- "Make the skeleton
+wiggle sideways 50% less, it should look like breathing" -- halves `SWAY_AMPLITUDE_NATIVE_PX`
+from 35.0px to 17.5px. Every number below is regenerated from that change; see "Measured,
+not assumed" for the honest consequence (sway's own descended displacement is now
+sub-pixel) and why it's accepted rather than compensated for.
+
 Second user of the walk's own reference path (`docs/assets/evidence/side-view-walk-reference/`):
 hand-cut parts -> post-process key -> deterministic rig and gait, no GPU and no sampling
 anywhere. Same ten parts, same `side_view_rig.json` pivots/bone mapping/z-order, reused
@@ -51,14 +57,30 @@ the same run that produced the PNGs/GIFs below):
 
 | signal | native amplitude | descended amplitude | measured from composited pixels |
 |---|---|---|---|
-| breath (peak, curve) | 55.0px | **2.251px** | opaque-centroid Y range: **2.181px** |
-| sway (peak, curve) | 35.0px | **1.432px** | opaque-centroid X range: **1.229px** |
+| breath (peak, curve) | 55.0px | **2.251px** | opaque-centroid Y range: **2.095px** |
+| sway (peak, curve) | 17.5px (was 35.0px) | **0.716px** (was 1.432px) | opaque-centroid X range: **0.683px** (was 1.229px) |
 
 The pixel-measured ranges are a little smaller than the curve-peak figures because the
 centroid averages over the whole figure, including the legs, which never move and make up
-most of the opaque area -- that dilution is expected and is exactly why the curve
-amplitudes were sized with a >2x (breath) and >1.4x (sway) margin over the 1px floor
-instead of landing right on it. Both numbers clear 1px.
+most of the opaque area -- that dilution is expected and is why breath's amplitude was
+sized with a >2x margin over the 1px floor instead of landing right on it. Breath clears
+1px comfortably.
+
+**Sway no longer clears 1px, and that is a reported, deliberate tradeoff, not an
+oversight.** @DennieSeth's 2026-10-05 review comment asked for the lateral weight-shift
+to be halved so the loop reads as breathing rather than a side-to-side wiggle; halving
+`SWAY_AMPLITUDE_NATIVE_PX` (35.0px -> 17.5px) is the direct, literal implementation of
+that, and its honest consequence is that sway's own descended displacement (0.716px
+curve peak, 0.683px measured) is now below the "does it read at all" floor this card's
+own acceptance criteria established for a signal meant to be independently visible.
+Per that same criterion ("If a chosen amplitude turns out to be sub-pixel, report that
+... rather than shipping motion nobody can see"), that is exactly what this section
+does -- it is not raised back up to compensate, because the explicit direction was for
+it to recede, not to keep reading at the same strength. Breath is now the only signal
+this loop needs to read on its own; sway is intentionally a near-imperceptible secondary
+accent. `tests/test_idle_cycle.py::TestAmplitudeSurvivesDescent` pins both the halved
+amplitude and its sub-pixel descended value so a future change is a deliberate decision,
+not a silent drift.
 
 `FIGURE_HEIGHT_NATIVE_PX = 977.54` (head reach 169.28 + spine 231.3 + leg chain 576.96) is
 measured from the ten parts' own pixel dimensions and `side_view_rig.json`'s

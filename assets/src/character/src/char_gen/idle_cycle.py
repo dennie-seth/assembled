@@ -74,12 +74,22 @@ FIGURE_PX = 40
 FIGURE_HEIGHT_NATIVE_PX = 977.54
 DESCEND_SCALE = FIGURE_PX / FIGURE_HEIGHT_NATIVE_PX
 
-#: Native-resolution amplitudes, chosen so each signal clears 1px by a comfortable margin
-#: once descended (>2x and >1.4x respectively -- see test_idle_cycle.py's
-#: TestAmplitudeSurvivesDescent), with breath set larger than sway so breathing reads as
-#: the primary signal and weight shift as the secondary one.
+#: Native-resolution amplitudes. Breath is sized to clear 1px by a comfortable margin
+#: once descended (>2x -- see test_idle_cycle.py's TestAmplitudeSurvivesDescent) so
+#: breathing reads as the primary signal.
+#:
+#: Sway was originally 35.0px (descended 1.432px, a >1.4x margin over 1px).
+#: @DennieSeth's 2026-10-05 review comment on this card -- "Make the skeleton wiggle
+#: sideways 50% less, it should look like breathing" -- halves it to 17.5px. Descended,
+#: that is 0.716px: below the 1px floor this module's own amplitude choices otherwise
+#: hold to. This is a reported, deliberate tradeoff rather than an oversight or a case of
+#: compensating with a bigger number -- breath is the signal that has to read, weight
+#: shift is now intentionally a near-imperceptible secondary accent, and the actual
+#: measured value is pinned in test_idle_cycle.py::TestAmplitudeSurvivesDescent and
+#: documented in docs/assets/evidence/side-view-idle-reference/README.md rather than
+#: silently dropped.
 BREATH_AMPLITUDE_NATIVE_PX = 55.0
-SWAY_AMPLITUDE_NATIVE_PX = 35.0
+SWAY_AMPLITUDE_NATIVE_PX = 17.5
 
 #: How far behind the torso's own sway the arms trail, as a fraction of one full loop, and
 #: how strongly damped that trail is. Both must be nonzero/sub-1.0 for the arms to read as

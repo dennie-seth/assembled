@@ -17,6 +17,7 @@ from char_gen.idle_cycle import (
     FIGURE_PX,
     LEG_REST_ANGLE_DEG,
     SWAY,
+    SWAY_AMPLITUDE_NATIVE_PX,
     SWAY_CYCLES_PER_LOOP,
     offsets_at,
 )
@@ -70,11 +71,28 @@ class TestAmplitudeSurvivesDescent:
             f"breath only moves {descended:.2f}px at a {FIGURE_PX}px figure height -- sub-pixel"
         )
 
-    def test_sway_displacement_is_above_a_pixel_at_final_figure_height(self):
+    def test_sway_amplitude_was_halved_per_human_review_comment(self):
+        """@DennieSeth, 2026-10-05: "Make the skeleton wiggle sideways 50% less, it
+        should look like breathing." Pins the literal halving (35.0px -> 17.5px) so a
+        future change to this value is a deliberate decision, not a silent drift."""
+        assert SWAY_AMPLITUDE_NATIVE_PX == pytest.approx(17.5)
+
+    def test_sway_displacement_is_now_below_a_pixel_at_final_figure_height(self):
+        """Halving sway's amplitude for the above reason puts its own descended
+        displacement under this module's 1px "does it read" floor (0.716px, where the
+        prior 35.0px amplitude gave 1.432px -- see TestAmplitudeSurvivesDescent's other
+        tests, which still require breath to clear that floor). This is a reported,
+        accepted tradeoff per T-0430's own acceptance criterion ("If a chosen amplitude
+        turns out to be sub-pixel, report that ... rather than shipping motion nobody
+        can see") -- not an oversight. Pinning the actual value, rather than deleting
+        the assertion, still catches an unintended future drift in either direction.
+        """
         peak = max(v for _, v in SWAY)
         descended = peak * DESCEND_SCALE
-        assert descended > 1.0, (
-            f"sway only moves {descended:.2f}px at a {FIGURE_PX}px figure height -- sub-pixel"
+        assert descended == pytest.approx(0.716, abs=0.01), (
+            f"sway displacement is {descended:.3f}px at a {FIGURE_PX}px figure height -- "
+            "update this pinned value and docs/assets/evidence/side-view-idle-reference/"
+            "README.md together if the amplitude changes again"
         )
 
     def test_breath_is_the_larger_signal(self):
