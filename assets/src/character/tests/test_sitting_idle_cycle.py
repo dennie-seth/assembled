@@ -336,9 +336,24 @@ class TestArmRestPose:
         assert ELBOW_DEG_CROUCH != idle_cycle.ELBOW_REST_DEG
 
     def test_the_arm_solve_reaches_the_near_knee(self):
-        assert ARM_STANCE.wrist_to_knee_distance_native_px < 1e-6, (
-            f"wrist landed {ARM_STANCE.wrist_to_knee_distance_native_px:.3f} native px "
-            "from the near knee -- the solve did not reach the target"
+        # Round 5: this used to assert the distance was < 1e-6 -- an EXACT landing. That
+        # requirement is what broke the arm: the shoulder-to-knee reach is 259 native px
+        # against a 301px fully-extended arm, so "touch the knee exactly" forced a nearly
+        # straight arm, and the IK settled on the branch with the upper arm swung 81
+        # degrees forward at shoulder height and the forearm folded back down. Exact, and
+        # anatomically broken. The contract is now the DRAPE @DennieSeth drew: upper arm
+        # hanging, forearm swinging forward, hand resting near the knee -- with the
+        # distance measured and bounded (below) rather than driven to zero.
+        upper_arm_from_vertical = abs(SHOULDER_DEG_CROUCH)
+        assert upper_arm_from_vertical < 25.0, (
+            f"the upper arm sits {upper_arm_from_vertical:.1f} degrees off straight down "
+            "-- it must hang, not swing forward to shoulder height (that is the round-3/4 "
+            "broken-arm configuration)"
+        )
+        forearm_abs = SHOULDER_DEG_CROUCH + ELBOW_DEG_CROUCH
+        assert forearm_abs > 40.0, (
+            f"the forearm sits at {forearm_abs:.1f} degrees -- it must swing forward "
+            "toward the knee, which is what makes the arm read as resting rather than hanging"
         )
 
     def test_wrist_to_knee_distance_in_final_pixels_is_small(self):

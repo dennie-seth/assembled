@@ -96,8 +96,14 @@ HIP_HEIGHT_ABOVE_GROUND = 300.0
 #: own worked feasibility check verbatim: both reaches (313.2, 305.9) are comfortably
 #: inside the leg's (83.52, 576.96) workspace, both solves are exact (not clamped), and
 #: the separation is ~6 final px -- clearly visible, not round 2's 0.48px.
-ANKLE_X_FRONT = 90.0
-ANKLE_X_BACK = -60.0
+#: Round 5: re-solved from @DennieSeth's marked-up frame
+#: (`dennie_markup_arms_legs.png`). His red leg lines put the forward ankle ~198 native
+#: px ahead of the hip and the trailing ankle ~85 behind it -- a 283px stance, nearly
+#: double round 4's 150px, which is why the legs did not read as standing. At this
+#: stance the forward shin resolves to 8 degrees off vertical (he drew it vertical) and
+#: both solves stay exact inside the leg's (83.5, 577.0) workspace.
+ANKLE_X_FRONT = 198.0
+ANKLE_X_BACK = -85.0
 
 #: Round 4 (@DennieSeth: "something weird in the very middle"). Diagnosed from the
 #: composite: the offender is `thigh_R`. Its hand-cut crop is a near-rectangle
@@ -107,7 +113,12 @@ ANKLE_X_BACK = -60.0
 #: Neither the part nor the shared rig is touched -- this pose alone draws `thigh_R`
 #: behind the torso (z=3), which hides the surplus box where it crosses the body while
 #: the real thigh still reads in front of the far leg.
-CROUCH_Z_OVERRIDE = {"thigh_R": 3.5}
+CROUCH_Z_OVERRIDE = {"thigh_R": 3.5, "thigh_L": 3.6}
+#: Round 5 adds `thigh_L`. Widening the stance to @DennieSeth's marked-up geometry
+#: swings the trailing thigh's crop -- also a near-rectangle (bbox fill 0.94, the
+#: least-traced part of the ten) -- across the front of the body, where it filled the
+#: gap between the legs and read as one green mass rather than two legs. Behind the
+#: torso it stops competing with the silhouette and the stance reads.
 
 #: Round 4 (@DennieSeth: the forward foot should sit flat on the floor). The leading
 #: foot is the near/R leg -- `ANKLE_X_FRONT` above. Applied as a rotation about the
@@ -226,10 +237,33 @@ class ArmStance:
     clamped: bool
 
 
+#: Round 5: the arm angles now come from @DennieSeth's own red arm line rather than
+#: from a two-bone IK solve.
+#:
+#: WHY. Rounds 3-4 solved the arm so the wrist landed EXACTLY on the knee. The
+#: shoulder-to-knee reach is 259-285 native px against an arm that is only 301px fully
+#: extended, so "touch the knee" forced a nearly straight arm -- and the solver settled
+#: on the branch with the upper arm swung 81 degrees forward (nearly horizontal, at
+#: shoulder height) and the forearm folded back down. Geometrically exact, anatomically
+#: broken: that is the "mangled/disjointed" arm. It was identical in round 3; round 4
+#: only made it visible, by moving `thigh_R` off the top of the z-order where it had
+#: been covering ~23% of the arm.
+#:
+#: His line instead drapes: upper arm hanging near-vertical (+13.7 degrees off straight
+#: down), forearm swinging forward to the knee. Fixing the upper arm at his angle and
+#: choosing the elbow that gets closest to the knee lands the wrist 14 native px away --
+#: 0.56px at the final figure, i.e. resting on the knee to the eye, without pretending
+#: the arm is long enough to stretch there.
+SHOULDER_DRAPE_DEG = 10.67
+ELBOW_DRAPE_DEG = 57.0
+
+
 def arm_stance(
     shoulder_len: float, forearm_len: float, attach: dict,
     hip: tuple[float, float], knee_target: tuple[float, float],
     torso_deg: float = TORSO_LEAN_DEG,
+    shoulder_deg: float = SHOULDER_DRAPE_DEG,
+    elbow_deg: float = ELBOW_DRAPE_DEG,
 ) -> ArmStance:
     """Solve this pose's own `(shoulder_deg, elbow_deg)` so the (near) wrist lands at
     `knee_target` -- the same two-bone IK `crouch_stance()` uses for a leg, reused
@@ -257,13 +291,18 @@ def arm_stance(
     reach = math.hypot(knee_target[0] - shoulder_world[0], knee_target[1] - shoulder_world[1])
     lo, hi = abs(shoulder_len - forearm_len), shoulder_len + forearm_len
 
-    ik = idle_cycle.solve_leg(shoulder_world, knee_target, shoulder_len, forearm_len)
-    wrist = idle_cycle.ankle_of(shoulder_world, ik, shoulder_len, forearm_len)
+    # The pose is GIVEN (see SHOULDER_DRAPE_DEG above), not solved: place the elbow from
+    # the shoulder at the drape angle, then the wrist from the elbow at the additive
+    # forearm angle -- `side_view_rig.json`'s own `sign_convention.forearm`. The
+    # wrist-to-knee distance below is therefore a MEASUREMENT of how close the drape
+    # happens to rest, never a residual that was driven to zero.
+    elbow_xy = rig_compositor.distal_joint(shoulder_world, shoulder_len, shoulder_deg)
+    wrist = rig_compositor.distal_joint(elbow_xy, forearm_len, shoulder_deg + elbow_deg)
     distance = math.hypot(wrist[0] - knee_target[0], wrist[1] - knee_target[1])
 
     return ArmStance(
-        shoulder_deg=ik.thigh_deg - torso_deg,
-        elbow_deg=-ik.knee_flexion_deg,
+        shoulder_deg=shoulder_deg,
+        elbow_deg=elbow_deg,
         wrist_xy=wrist,
         knee_target_xy=knee_target,
         wrist_to_knee_distance_native_px=distance,

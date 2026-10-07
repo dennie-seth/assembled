@@ -53,7 +53,7 @@ pinned to any plane, and now genuinely shared by both legs (`far_leg_offset_frac
 |---|---|---|
 | ground plane | y = 300.0 | y = 300.0 |
 | hip | shared, y = 0.0 (300.0px above ground) | shared, y = 0.0 |
-| ankle x-target | **+90.0** | **-60.0** |
+| ankle x-target | **+198.0** | **-85.0** |  <!-- round 5; was +90.0 / -60.0 -->
 | thigh | **87.86deg** | **61.18deg** |
 | knee flexion | **116.15deg** | **117.93deg** |
 | reach | 313.2px (of a (83.5, 577.0) workspace) | 305.9px (of the same workspace) |
@@ -66,7 +66,7 @@ hip height, not round 1's seat-pinned exact 90.0deg (`test_no_legs_thigh_is_pinn
 pins the distinction). Both legs stay well past 90deg of knee flexion -- the stagger
 changes the stance, not the depth.
 
-**Stagger separation: 5.97 final px** (`(90.0 - (-60.0)) * 0.0398`), clearly visible at
+**Stagger separation: 11.26 final px** (`(198.0 - (-85.0)) * 0.0398`) as of round 5, clearly visible at
 the 40px figure convention -- round 2's bug was 0.48px, sub-pixel and invisible.
 
 Torso lean: **-12.0deg**, a gentle forward lean ("hunched a little over the knees, not
@@ -106,6 +106,9 @@ which is only possible if `torso_deg` reaches `Image.rotate`.
 untouched by the upper body's own rotation.
 
 ## The crouch's own arm rest pose
+
+> **SUPERSEDED BY ROUND 5 (below).** The IK solve described here is exactly what
+> made the arm read as broken: it is kept for the record, not as current behaviour.
 
 Round 2's arms used `idle_cycle.SHOULDER_REST_DEG` (0.0) / `idle_cycle.ELBOW_REST_DEG`
 (14.0) verbatim -- the STANDING idle's hanging-arm rest pose. `arm_stance()` solves this
@@ -285,3 +288,70 @@ quadrilateral. Z-order cannot hide it -- nothing is drawn there to hide it behin
 clipping it to the bone axis was tried and rejected because it amputates the trailing boot.
 Removing it needs a tighter re-cut of `calf_L` (and to a lesser extent `thigh_L`), which is
 hand-cut source art and deliberately out of scope for a composite-time fix.
+
+## Round 5 -- re-solved from @DennieSeth's marked-up frame (2026-10-07)
+
+Source of truth: `dennie_markup_arms_legs.png`, his red skeleton drawn over the round-4
+frame. The red strokes were extracted programmatically (red-channel mask -> connected
+components -> traced polylines -> corner vertices) rather than read by eye, giving joint
+targets in cell coordinates.
+
+### Why the arm read as broken
+
+**It was never newly broken -- round 4 uncovered it.** The arm angles were byte-identical
+in rounds 3 and 4; round 4 only moved `thigh_R` off the top of the z-order, and `thigh_R`
+had been covering **22.6%** of the near arm (it covers 10.1% now).
+
+The real fault was the round-3 acceptance requirement that the wrist land *exactly* on the
+knee. Shoulder-to-knee reach is 259 native px against an arm only 301 px fully extended, so
+"touch the knee" forced a nearly straight arm -- and the two-bone solve settled on the
+branch with the **upper arm swung 81.2 degrees forward**, horizontal at shoulder height,
+with the forearm folded back down. Geometrically exact (residual 1.2e-14 px) and
+anatomically broken. That is the disjointed arm.
+
+@DennieSeth's red arm line is a **drape**: upper arm hanging near-vertical, forearm
+swinging forward to the knee.
+
+| | round 3-4 (IK reach) | round 5 (drape) | his line |
+|---|---|---|---|
+| upper arm, off straight down | +81.25 | **+10.67** | +13.67 |
+| forearm, absolute | +41.87 | **+67.67** | +71.24 |
+| wrist to knee | 0.000 final px | **0.384 final px** | n/a |
+
+The arm is no longer solved. The angles are constants taken from his line, and the
+wrist-to-knee distance is now a **measurement** that is bounded, not a residual driven to
+zero. `test_the_arm_solve_reaches_the_near_knee` was rewritten accordingly: it now asserts
+the upper arm hangs (within 25 degrees of straight down -- which the old +81.25 would fail)
+and the forearm swings forward past 40 degrees.
+
+### Why the legs did not stand
+
+His leg lines put the forward ankle ~198 native px ahead of the hip and the trailing ankle
+~85 behind it: a **283 px stance**, nearly double round 4's 150 px. Widening it to match is
+most of the fix -- at round 4's stance the two feet were only 5.97 final px apart.
+
+`thigh_L` joins `thigh_R` behind the torso. Widening the stance swings the trailing thigh's
+crop -- a near-rectangle, alpha fill **0.94**, the least-traced of the ten parts -- across
+the front of the body, filling the gap between the legs so the figure read as one green
+mass. Behind the torso it stops competing with the silhouette.
+
+### How close the result is to his lines
+
+Hip-aligned (the cell auto-centres the figure, so absolute x is not a free parameter):
+
+| joint | ours | his line | delta |
+|---|---|---|---|
+| forward ankle | (30.7, 44.0) | (30.7, 42.9) | **1.14** cell px |
+| forward knee | (32.6, 31.0) | (30.5, 33.6) | 3.29 |
+| trailing ankle | (19.4, 44.0) | (19.4, 39.5) | 4.54 |
+| trailing knee | (30.9, 37.6) | (24.5, 37.2) | 6.43 |
+
+**His sketch is not exactly realizable, and this is worth recording.** Measured against the
+real parts, his drawn thigh is 197 px and his drawn calf 234 px, against actual bones of
+246.7 and 330.2 -- his limbs are ~20-30% short. Solving the forward leg algebraically for
+his ankle position gives only two thigh angles, **+96.2 degrees (knee above the hip, what we
+ship) or -29.4 degrees (knee behind the hip, a kneel)**; there is no "knee slightly below the
+hip" solution at all. So the forward ankle and the stance width match him closely, while the
+knees sit where the real bone lengths put them. The trailing ankle differs because he drew
+that heel raised while both ankles here stay on the one ground plane, which is what the
+contact assertions depend on.
