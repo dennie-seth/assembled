@@ -1,16 +1,24 @@
-"""Regressions for `char_gen.sitting_idle_cycle` (T-0269 round 2).
+"""Regressions for `char_gen.sitting_idle_cycle` (T-0269 round 3).
 
-Round 2 replaces round 1's chair-sit (`seat_plane_y`, thigh 90deg, knee flexion 90deg)
-with a crouch, and replaces its per-pose descent scale (0.05473, derived from the
-seated figure's own height) with the ONE shared `char_gen.character_scale` constant,
-also consumed by `char_gen.idle_cycle`. `TestCrouchStance` pins the new pose.
-`TestSharedScale` is the cross-state check this round adds: it renders BOTH the crouch
-and the standing idle through the same `char_gen.rig_compositor` and asserts they agree
-on the one thing a shared scale promises (shared parts, same pixel size; a shared
-ground row) while differing on the one thing a crouch is SUPPOSED to differ on (overall
-figure height). `TestComposited*` builds real frames from the ten committed parts and
-asserts the two contacts are provably still, the amplitude survives the descent, and
-the loop closes -- from the actual composited pixels, not from the intent.
+Round 3 is pose refinement only, on top of round 2's settled crouch (no seat plane, one
+shared `character_scale.CHARACTER_SCALE`, which this file's `TestNoSeatPlaneAnywhere`
+and `TestSharedScale` still cover unchanged). Three refinements, three new test groups:
+
+* `TestTorsoLeanIsApplied` -- round 2's `TORSO_LEAN_DEG` was recorded but never
+  consumed (`rig_compositor.UpperPose` had no rotation field at all). This group
+  proves the opposite from rendered pixels: the HEAD part's own rotated bitmap, not
+  just its placement coordinate, differs with and without the lean.
+* `TestArmRestPose` -- the crouch's own solved shoulder/elbow angles, proven (not
+  asserted) to land the near wrist on the near knee, with the wrist-to-knee distance
+  stated in both native and final pixels.
+* `TestStagger` -- two independent per-leg IK solves to two different ankle x-targets
+  on the shared ground plane, proven exact (not clamped) and clearly separated in
+  final pixels (round 2's bug landed 0.48px apart; this round's own test pins a much
+  larger floor).
+
+`TestCompositedFrames` extends round 2's per-point contact-pixel proof from
+`{hip, ankle_r, ankle_l}` to also cover both knees, closing the round-3 human-comment
+gap ("a band that actually includes the hip and the knees").
 """
 from __future__ import annotations
 
@@ -20,17 +28,24 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from char_gen import idle_cycle
+from char_gen import idle_cycle, rig_compositor
 from char_gen.character_scale import CELL_PX, CHARACTER_SCALE, FIGURE_PX, GROUND_ANCHOR_CELL_Y
-from char_gen.idle_cycle import ELBOW_REST_DEG, HEAD_REST_DEG, SHOULDER_REST_DEG
 from char_gen.rig_compositor import load_parts, load_rig, measured_bone_lengths
 from char_gen.sitting_idle_cycle import (
+    ANKLE_X_BACK,
+    ANKLE_X_FRONT,
+    ARM_STANCE,
     CROUCH_BREATH_RISE_FRAC,
+    CROUCH_STANCE,
+    ELBOW_DEG_CROUCH,
+    EVIDENCE_DIR,
     FRAME_COUNT,
-    HIP_FORWARD_OF_ANKLE,
     HIP_HEIGHT_ABOVE_GROUND,
+    SHOULDER_DEG_CROUCH,
     TORSO_LEAN_DEG,
+    arm_stance,
     crouch_stance,
+    leg_stance,
     pose_at,
     render_frames,
 )
@@ -39,7 +54,13 @@ from char_gen.walk_cycle import bone_length
 # Measured, matching docs/assets/evidence/T-0430/rig.json and
 # assets/src/character/parts/side_view/side_view_rig.json -- same ten parts, unchanged.
 THIGH, CALF = 246.72, 330.24
+SHOULDER_LEN, FOREARM_LEN = 103.04, 198.34
 PHASES = [i / FRAME_COUNT for i in range(FRAME_COUNT)]
+#: Radius wide enough that every contact point's own window is opaque, yet narrow
+#: enough it never catches a phase-varying edge -- swept empirically (see the T-0269
+#: round 3 dev log): radius 9 is the widest that is still pixel-identical for every one
+#: of the five contact points at once; radius 10 already breaks hip_px/knee_r_px.
+CONTACT_WINDOW_RADIUS = 9
 
 
 class TestNoSeatPlaneAnywhere:
@@ -63,72 +84,82 @@ class TestNoSeatPlaneAnywhere:
 
 
 class TestCrouchStance:
-    """The crouch base pose: a free hip, solved to reach a chosen (not inherited)
-    ankle target. Both ankles on the ground plane are the only contact constraint."""
+    """The crouch base pose: a shared, free hip; each leg solved independently to its
+    own ankle target. Both ankles on the ground plane, at different x, are the only
+    contact constraint."""
 
     def test_the_only_ground_constraint_is_the_ankle(self):
-        stance = crouch_stance(THIGH, CALF)
+        stance = crouch_stance(THIGH, CALF, THIGH, CALF)
         assert stance.ground_plane_y == HIP_HEIGHT_ABOVE_GROUND
 
-    def test_the_hip_is_a_free_point_not_pinned_to_a_plane(self):
-        stance = crouch_stance(THIGH, CALF)
+    def test_the_hip_is_a_free_point_shared_by_both_legs(self):
+        stance = crouch_stance(THIGH, CALF, THIGH, CALF)
         assert stance.hip_y == 0.0
-        assert stance.hip_forward_of_ankle_x == HIP_FORWARD_OF_ANKLE
 
-    def test_the_solve_reaches_the_target_exactly(self):
-        """Forward-kinematics check: the solved angles must actually put the ankle at
-        the chosen (hip_forward_of_ankle_x, ground_plane_y) target, not a clamped
-        approximation."""
-        stance = crouch_stance(THIGH, CALF)
-        ik = idle_cycle.LegIK(stance.thigh_deg, stance.knee_flexion_deg)
+    @pytest.mark.parametrize("side", ["r", "l"])
+    def test_each_sides_solve_reaches_its_own_target_exactly(self, side):
+        """Forward-kinematics check per leg: the solved angles must actually put that
+        side's ankle at its OWN chosen x-target, not a clamped approximation."""
+        stance = crouch_stance(THIGH, CALF, THIGH, CALF)
+        ankle_x = getattr(stance, f"ankle_x_{side}")
+        thigh_deg = getattr(stance, f"thigh_deg_{side}")
+        knee_flexion_deg = getattr(stance, f"knee_flexion_deg_{side}")
+        ik = idle_cycle.LegIK(thigh_deg, knee_flexion_deg)
         got = idle_cycle.ankle_of((0.0, stance.hip_y), ik, THIGH, CALF)
-        target = (stance.hip_forward_of_ankle_x, stance.ground_plane_y)
+        target = (ankle_x, stance.ground_plane_y)
         assert math.hypot(got[0] - target[0], got[1] - target[1]) < 1e-6, (
-            "the two-bone solve did not reach the chosen hip/ground target exactly -- "
+            f"the {side} leg's two-bone solve did not reach its own target exactly -- "
             "it clamped instead of solving"
         )
 
-    def test_the_reach_is_not_at_the_clamp_boundary(self):
-        stance = crouch_stance(THIGH, CALF)
-        reach = math.hypot(
-            stance.hip_forward_of_ankle_x, stance.ground_plane_y - stance.hip_y
-        )
+    @pytest.mark.parametrize("side", ["r", "l"])
+    def test_each_sides_reach_is_not_at_the_clamp_boundary(self, side):
+        stance = crouch_stance(THIGH, CALF, THIGH, CALF)
+        ankle_x = getattr(stance, f"ankle_x_{side}")
+        reach = math.hypot(ankle_x, stance.ground_plane_y - stance.hip_y)
         lo, hi = abs(THIGH - CALF), THIGH + CALF
-        assert lo + 1.0 < reach < hi - 1.0, f"reach {reach:.1f} is at the IK's clamp edge"
+        assert lo + 1.0 < reach < hi - 1.0, f"{side} reach {reach:.1f} is at the IK's clamp edge"
 
-    def test_the_reach_is_shorter_than_round_1s_chair_sit(self):
+    @pytest.mark.parametrize("side", ["r", "l"])
+    def test_each_leg_is_shorter_reach_than_round_1s_chair_sit(self, side):
         """The fold must be visibly more compact than the retired chair-sit's 412.1px
         reach -- that is what "deep knee flexion" costs in hip-to-ankle distance."""
-        stance = crouch_stance(THIGH, CALF)
-        reach = math.hypot(
-            stance.hip_forward_of_ankle_x, stance.ground_plane_y - stance.hip_y
-        )
+        stance = crouch_stance(THIGH, CALF, THIGH, CALF)
+        ankle_x = getattr(stance, f"ankle_x_{side}")
+        reach = math.hypot(ankle_x, stance.ground_plane_y - stance.hip_y)
         round_1_reach = math.hypot(THIGH, CALF)  # the retired chair-sit's own reach
         assert reach < round_1_reach * 0.9, (
-            f"reach {reach:.1f}px is not meaningfully shorter than the retired "
+            f"{side} reach {reach:.1f}px is not meaningfully shorter than the retired "
             f"chair-sit's {round_1_reach:.1f}px -- the fold is not deep enough"
         )
 
-    def test_the_thigh_is_not_horizontal(self):
-        """Round 1's bug, pinned so it cannot silently return: a horizontal thigh
-        (~90deg) is the chair-sit this round replaces."""
-        stance = crouch_stance(THIGH, CALF)
-        assert stance.thigh_deg < 85.0, (
-            f"thigh at {stance.thigh_deg:.1f} deg reads as horizontal -- that is the "
-            "retired chair-sit, not a crouch"
-        )
+    def test_no_legs_thigh_is_pinned_to_round_1s_exact_90_degrees(self):
+        """Round 1's bug was an EXACT 90.0deg thigh from a seat-plane pin. Round 3's
+        front leg is legitimately close to horizontal (an IK consequence of staggering
+        the ankle forward at a fixed hip height, not a seat pin) -- the regression
+        guard is therefore "not the exact chair-sit value", not an arbitrary angle
+        threshold that no longer fits a genuinely staggered stance."""
+        stance = crouch_stance(THIGH, CALF, THIGH, CALF)
+        for side in ("r", "l"):
+            thigh_deg = getattr(stance, f"thigh_deg_{side}")
+            assert thigh_deg != pytest.approx(90.0, abs=0.05), (
+                f"{side} thigh at {thigh_deg:.2f} deg is round 1's exact chair-sit "
+                "horizontal, not a genuine IK solve"
+            )
 
-    def test_the_knee_flexion_is_deeper_than_round_1s_90_degrees(self):
-        stance = crouch_stance(THIGH, CALF)
-        assert stance.knee_flexion_deg > 100.0, (
-            f"knee flexion {stance.knee_flexion_deg:.2f} deg is not substantially "
-            "deeper than round 1's 90.00 deg"
-        )
+    def test_both_knee_flexions_are_deeper_than_round_1s_90_degrees(self):
+        stance = crouch_stance(THIGH, CALF, THIGH, CALF)
+        for side in ("r", "l"):
+            flex = getattr(stance, f"knee_flexion_deg_{side}")
+            assert flex > 100.0, (
+                f"{side} knee flexion {flex:.2f} deg is not substantially deeper than "
+                "round 1's 90.00 deg"
+            )
 
     def test_the_hip_sits_lower_than_round_1s_chair_sit_hip(self):
         """Round 1's hip sat CALF_LEN above the ground (330.24px, the thigh being
         horizontal). This round's hip must sit lower."""
-        stance = crouch_stance(THIGH, CALF)
+        stance = crouch_stance(THIGH, CALF, THIGH, CALF)
         hip_height_above_ground = stance.ground_plane_y - stance.hip_y
         assert hip_height_above_ground < CALF, (
             f"hip height {hip_height_above_ground:.1f}px is not lower than round 1's "
@@ -136,28 +167,227 @@ class TestCrouchStance:
         )
 
     def test_the_stance_is_deterministic(self):
-        assert crouch_stance(THIGH, CALF) == crouch_stance(THIGH, CALF)
+        assert crouch_stance(THIGH, CALF, THIGH, CALF) == crouch_stance(THIGH, CALF, THIGH, CALF)
 
-    def test_torso_is_upright(self):
-        """A small forward lean was allowed by the card; this module chooses none --
-        state the angle rather than leaving it implicit."""
-        assert TORSO_LEAN_DEG == 0.0
+
+class TestStagger:
+    """T-0269 round 3's second refinement: two different ankle x-targets on the SAME
+    ground plane, each solved independently from the ONE shared hip -- not
+    `far_leg_offset_frac` shifting one leg's pose sideways (round 2's bug, which left
+    the two ankles 0.48 final px apart)."""
+
+    def test_the_two_ankle_targets_are_different(self):
+        assert ANKLE_X_FRONT != ANKLE_X_BACK
+        assert CROUCH_STANCE.ankle_x_r != CROUCH_STANCE.ankle_x_l
+
+    def test_the_two_legs_resolve_different_knee_flexion(self):
+        assert CROUCH_STANCE.knee_flexion_deg_r != pytest.approx(
+            CROUCH_STANCE.knee_flexion_deg_l, abs=0.5
+        ), "both legs resolved the same flexion -- that is one pose shifted, not a stagger"
+
+    def test_both_legs_reaches_are_inside_the_workspace_not_clamped(self):
+        lo, hi = abs(THIGH - CALF), THIGH + CALF
+        for ankle_x in (CROUCH_STANCE.ankle_x_r, CROUCH_STANCE.ankle_x_l):
+            reach = math.hypot(ankle_x, HIP_HEIGHT_ABOVE_GROUND)
+            assert lo + 1.0 < reach < hi - 1.0, (
+                f"ankle_x={ankle_x} reach {reach:.1f}px is at or past the leg's own "
+                f"({lo:.1f}, {hi:.1f}) workspace -- the solve would have to clamp"
+            )
+
+    def test_both_legs_stay_deep_past_90_degrees(self):
+        """The stagger must change the stance, not the depth."""
+        assert CROUCH_STANCE.knee_flexion_deg_r > 100.0
+        assert CROUCH_STANCE.knee_flexion_deg_l > 100.0
+
+    def test_the_separation_is_clearly_visible_at_the_final_figure(self):
+        """Round 2's two ankles were 0.48 final px apart -- sub-pixel, invisible. This
+        round's must be unambiguous at the 40px figure convention."""
+        separation = abs(CROUCH_STANCE.ankle_x_r - CROUCH_STANCE.ankle_x_l) * CHARACTER_SCALE
+        assert separation > 3.0, (
+            f"{separation:.2f} final px of separation is not clearly visible -- round "
+            "2's bug was 0.48px"
+        )
+
+    def test_the_hip_is_genuinely_shared_not_offset_per_leg(self):
+        """`far_leg_offset_frac` must be 0.0 for this pose -- the card is explicit that
+        each leg solves from the SHARED hip, and widening this offset is a different
+        (and rejected) way of faking a stagger."""
+        leg = leg_stance(THIGH, CALF, THIGH, CALF)
+        assert leg.far_leg_offset_frac == 0.0
+        hip_points = rig_compositor.leg_hip_points(leg, torso_width=221.0)
+        assert hip_points["R"] == hip_points["L"] == leg.hip
+
+
+class TestTorsoLeanIsApplied:
+    """T-0269 round 3's headline fix. Round 2 recorded `TORSO_LEAN_DEG` into rig.json
+    without ever consuming it -- `rig_compositor.UpperPose` had no rotation field, so
+    the recorded 0.0 was correct only by coincidence. Every test below proves the
+    CURRENT, non-zero lean reaches the render, from the actual composited/placed
+    pixels, not from reading the constant back."""
+
+    @staticmethod
+    def _placements_for(torso_deg):
+        parts = load_parts()
+        rig = load_rig()
+        scaled = rig_compositor.scaled_parts(parts, rig)
+        lengths = measured_bone_lengths(parts, rig)
+        leg = leg_stance(THIGH, CALF, THIGH, CALF)
+        pose = rig_compositor.UpperPose(
+            upper_dy=0.0, shoulder_deg=SHOULDER_DEG_CROUCH, elbow_deg=ELBOW_DEG_CROUCH,
+            head_deg=idle_cycle.HEAD_REST_DEG, torso_deg=torso_deg,
+        )
+        return rig_compositor.build_placements(
+            pose, leg, scaled, rig["rig"], rig["attach_torso_local_px"], lengths
+        )
+
+    def test_torso_lean_deg_is_non_zero(self):
+        assert TORSO_LEAN_DEG != 0.0, (
+            "a zero lean is indistinguishable from round 2's unconsumed constant -- "
+            "this round must actually lean the torso"
+        )
+
+    def test_rotate_offset_agrees_with_distal_joint_for_a_downward_vector(self):
+        """`rotate_offset` generalizes `distal_joint`'s own sign convention --
+        `distal_joint(origin, L, deg)` must be the special case `offset=(0, L)`."""
+        from char_gen.walk_cycle import distal_joint
+
+        length = 123.4
+        for deg in (-30.0, 0.0, 17.0, 90.0):
+            got = rig_compositor.rotate_offset((0.0, length), deg)
+            want = distal_joint((0.0, 0.0), length, deg)
+            assert got == pytest.approx(want, abs=1e-9)
+
+    def test_the_heads_own_rendered_pixels_change_with_the_lean(self):
+        """The strongest proof: the HEAD part's own rotated bitmap -- not just its
+        placement coordinate -- must differ between two DIFFERENT non-zero torso
+        angles. (Comparing against `torso_deg=0.0` would compare a rotated-and-padded
+        image against an untouched one of a different size -- `place()` only pads for
+        rotation when `angle_deg` is truthy -- so this compares two angles that both
+        trigger the same padding, isolating the rotation itself.) This is only
+        possible if `torso_deg` reaches `Image.rotate`, which is exactly what round 2
+        never did."""
+        leaned = self._placements_for(TORSO_LEAN_DEG)
+        half_leaned = self._placements_for(TORSO_LEAN_DEG / 2.0)
+        leaned_head = next(p for p in leaned if p.name == "head")
+        half_leaned_head = next(p for p in half_leaned if p.name == "head")
+        assert leaned_head.image.size == half_leaned_head.image.size
+        leaned_arr = np.asarray(leaned_head.image)
+        half_arr = np.asarray(half_leaned_head.image)
+        assert not np.array_equal(leaned_arr, half_arr), (
+            "the head's own rendered pixels are identical at two different "
+            "TORSO_LEAN_DEG values -- the lean is not reaching Image.rotate, round "
+            "2's bug"
+        )
+
+    def test_the_shoulders_own_rendered_pixels_change_with_the_lean(self):
+        """Whatever rides on the torso must follow -- proven the same way for the arms."""
+        leaned = self._placements_for(TORSO_LEAN_DEG)
+        half_leaned = self._placements_for(TORSO_LEAN_DEG / 2.0)
+        leaned_sh = next(p for p in leaned if p.name == "shoulder_R")
+        half_leaned_sh = next(p for p in half_leaned if p.name == "shoulder_R")
+        assert not np.array_equal(np.asarray(leaned_sh.image), np.asarray(half_leaned_sh.image)), (
+            "the shoulder's own rendered pixels are identical at two different "
+            "TORSO_LEAN_DEG values -- the arms are not following the torso"
+        )
+
+    def test_the_lean_moves_the_head_toward_the_knees_not_away(self):
+        """TORSO_LEAN_DEG is NEGATIVE in this rig's convention (see the module
+        docstring's sign note: the torso's own hip->neck vector points mostly straight
+        up, and the same spin that swings a downward vector toward +x swings an upward
+        one toward -x). A forward lean must move the head toward +x (over the knees),
+        checked on the real placement this round's lean actually produces."""
+        leaned = self._placements_for(TORSO_LEAN_DEG)
+        upright = self._placements_for(0.0)
+        leaned_x = next(p for p in leaned if p.name == "head").target_xy[0]
+        upright_x = next(p for p in upright if p.name == "head").target_xy[0]
+        assert leaned_x > upright_x, (
+            f"leaning the torso moved the head's x from {upright_x:.1f} to "
+            f"{leaned_x:.1f} -- that is backward (-x), not forward over the knees"
+        )
+
+    def test_the_lean_does_not_move_any_contact(self):
+        """Rotating the torso must not shift the hip or either ankle -- those are leg
+        geometry, untouched by the upper body's own rotation."""
+        leg = leg_stance(THIGH, CALF, THIGH, CALF)
+
+        def is_leg_part(name):
+            return "thigh" in name or "calf" in name
+
+        leaned_by_name = {
+            p.name: p.target_xy for p in self._placements_for(TORSO_LEAN_DEG) if is_leg_part(p.name)
+        }
+        upright_by_name = {
+            p.name: p.target_xy for p in self._placements_for(0.0) if is_leg_part(p.name)
+        }
+        assert leaned_by_name == upright_by_name, (
+            "a leg part's placement target changed when only the torso's lean "
+            "changed -- the lean is leaking into leg geometry"
+        )
+        assert leg.hip == (0.0, 0.0)
+
+
+class TestArmRestPose:
+    """T-0269 round 3's second refinement: the crouch's OWN solved shoulder/elbow
+    angles, not `idle_cycle`'s standing-rest constants, landing the near wrist at the
+    near knee."""
+
+    def test_shoulder_and_elbow_are_this_poses_own_not_idles(self):
+        assert SHOULDER_DEG_CROUCH != idle_cycle.SHOULDER_REST_DEG
+        assert ELBOW_DEG_CROUCH != idle_cycle.ELBOW_REST_DEG
+
+    def test_the_arm_solve_reaches_the_near_knee(self):
+        assert ARM_STANCE.wrist_to_knee_distance_native_px < 1e-6, (
+            f"wrist landed {ARM_STANCE.wrist_to_knee_distance_native_px:.3f} native px "
+            "from the near knee -- the solve did not reach the target"
+        )
+
+    def test_wrist_to_knee_distance_in_final_pixels_is_small(self):
+        final_px = ARM_STANCE.wrist_to_knee_distance_native_px * CHARACTER_SCALE
+        assert final_px < 0.5, f"{final_px:.3f} final px -- not 'at or near' the knee"
+
+    def test_the_arm_solve_is_not_clamped(self):
+        lo, hi = ARM_STANCE.reach_workspace
+        assert not ARM_STANCE.clamped, (
+            f"reach {ARM_STANCE.reach:.1f} is outside the arm's own ({lo:.1f}, "
+            f"{hi:.1f}) workspace -- the solve clamped instead of reaching exactly"
+        )
+        assert lo + 1.0 < ARM_STANCE.reach < hi - 1.0
+
+    def test_the_elbow_is_bent_not_locked_straight(self):
+        """A believable resting bend, not a fully extended (0deg) or fully folded
+        (180deg) singularity."""
+        assert 5.0 < abs(ELBOW_DEG_CROUCH) < 175.0
+
+    def test_arm_stance_is_deterministic(self):
+        rig = load_rig()
+        attach = rig["attach_torso_local_px"]
+        leg = leg_stance(THIGH, CALF, THIGH, CALF)
+        knee_r, _ = rig_compositor.leg_chain(leg.hip, THIGH, CALF, leg, "R")
+        a = arm_stance(SHOULDER_LEN, FOREARM_LEN, attach, leg.hip, knee_r)
+        b = arm_stance(SHOULDER_LEN, FOREARM_LEN, attach, leg.hip, knee_r)
+        assert a == b
 
 
 class TestOnlyTheUpperBodyMoves:
     """Sitting idle carries exactly one signal, same as the standing idle it borrows
-    `breath` from. Anything else reappearing here is the rejected 'too busy' idle."""
+    `breath` from. The arms and the torso lean are each a fixed REST configuration
+    (this pose's own, not idle_cycle's) -- constant across every phase; only
+    `upper_dy` varies."""
 
     @pytest.mark.parametrize("phase", PHASES)
-    def test_the_arms_are_a_fixed_hanging_pose(self, phase):
+    def test_the_arms_are_a_fixed_pose(self, phase):
         p = pose_at(phase, 257.0)
-        assert p.shoulder_deg == SHOULDER_REST_DEG
-        assert p.elbow_deg == ELBOW_REST_DEG
+        assert p.shoulder_deg == SHOULDER_DEG_CROUCH
+        assert p.elbow_deg == ELBOW_DEG_CROUCH
 
     @pytest.mark.parametrize("phase", PHASES)
-    def test_the_head_does_not_rotate(self, phase):
+    def test_the_head_does_not_rotate_on_its_own(self, phase):
+        assert pose_at(phase, 257.0).head_deg == idle_cycle.HEAD_REST_DEG
+
+    @pytest.mark.parametrize("phase", PHASES)
+    def test_the_torso_lean_is_fixed(self, phase):
         p = pose_at(phase, 257.0)
-        assert p.head_deg == HEAD_REST_DEG
+        assert p.torso_deg == TORSO_LEAN_DEG
 
     def test_the_upper_body_actually_moves(self):
         span = max(pose_at(ph, 257.0).upper_dy for ph in PHASES) - \
@@ -202,41 +432,39 @@ class TestCompositedFrames:
         assert len(result.native_frames) == FRAME_COUNT
         assert len(result.descended_frames) == FRAME_COUNT
 
-    def test_both_contacts_are_provably_still(self, result):
-        """The hip and both ankles never move -- assert it on the pixels, not the
-        intent. Everything below the lower-body band is placed from constants that do
-        not vary with phase, so it must be bit-for-bit identical across every frame.
-
-        This band alone proves the ANKLES: it starts below the upper body's own
-        lowest reach across every phase, so it cannot contain anything the breath
-        touches. It does NOT reach up as far as the hip -- the hanging forearms pass
-        close by the hip on their way down, so a band wide enough to clear them starts
-        below it. The hip itself is proven separately, below."""
+    def test_the_lower_body_band_is_still_bit_identical(self, result):
+        """Everything below the lower-body band is placed from constants that do not
+        vary with phase, so it must be bit-for-bit identical across every frame. The
+        band alone does not reach the hip or the knees (the breathing upper body, and
+        now the arm resting on the near knee, overlap that region) -- those are proven
+        separately below, per-point."""
         band = result.lower_body_band
         arrays = [np.asarray(f.crop(band)) for f in result.native_frames]
         base = arrays[0]
         for i, arr in enumerate(arrays[1:], start=1):
             assert np.array_equal(arr, base), (
-                f"frame {i}'s lower body differs from frame 0 -- the hip/ankle "
-                "contacts moved when they must not"
+                f"frame {i}'s lower body band differs from frame 0 -- static leg "
+                "geometry moved when it must not"
             )
 
     @pytest.mark.parametrize(
-        "point_name", ["hip_px", "ankle_r_px", "ankle_l_px"]
+        "point_name", ["hip_px", "knee_r_px", "knee_l_px", "ankle_r_px", "ankle_l_px"]
     )
     def test_each_contact_pixel_is_identical_across_every_frame(self, result, point_name):
-        """The hip proof the band above cannot give: the near leg (thigh_R/calf_R) is
-        the topmost z-order layer in every frame (`rig_compositor.build_placements`
-        draws it last), so wherever it is opaque the composited pixel is its own
-        phase-invariant content, full stop, regardless of what the breathing torso or
-        hanging arms are doing underneath. Sampling an 11x11 neighbourhood at the
-        contact's own canvas coordinate -- the same `leg_chain` two-bone solve that
-        placed the calf there, not a separately re-derived point -- and requiring it
-        both opaque and pixel-identical across every frame is the direct proof this
-        band-only test could not give for the hip."""
+        """The direct, per-point proof the band above cannot give for the hip or the
+        knees (T-0269 round 3 human comment: "the contact-stillness assertion must
+        cover a band that actually includes the hip and the knees"). The near leg
+        (thigh_R/calf_R) is the topmost z-order layer in every frame
+        (`rig_compositor.build_placements` draws it last), so wherever it is opaque the
+        composited pixel is its own phase-invariant content, full stop, regardless of
+        what the breathing torso, leaning head, or resting arm are doing underneath.
+        `CONTACT_WINDOW_RADIUS` is swept empirically to the widest radius that stays
+        both opaque and pixel-identical for every one of these five points at once --
+        see its own comment above."""
         px = getattr(result, point_name)
+        r = CONTACT_WINDOW_RADIUS
         windows = [
-            np.asarray(f.crop((px[0] - 5, px[1] - 5, px[0] + 6, px[1] + 6)))
+            np.asarray(f.crop((px[0] - r, px[1] - r, px[0] + r + 1, px[1] + r + 1)))
             for f in result.native_frames
         ]
         base = windows[0]
@@ -263,9 +491,9 @@ class TestCompositedFrames:
         assert travel < 2.0, f"{travel:.2f}px reads as a bob, not a breath"
 
     def test_the_breath_was_raised_above_the_unmodified_idle_amplitude(self, result):
-        """BREATH_RISE_FRAC unmodified lands near 1.1px at the corrected scale --
-        clears the floor but with far less margin than round 1's 1.52px. This pose
-        must use a raised amplitude, not the bare idle constant."""
+        """BREATH_RISE_FRAC unmodified lands near 1.1px at the shared scale -- clears
+        the floor but with far less margin than this pose's own re-measured amplitude.
+        This pose must use its own raised amplitude, not the bare idle constant."""
         assert CROUCH_BREATH_RISE_FRAC > idle_cycle.BREATH_RISE_FRAC
 
     def test_the_loop_seam_is_not_the_worst_transition(self, result):
@@ -379,6 +607,37 @@ class TestSharedScale:
         states, so a sprite swap cannot make the character hop."""
         assert crouch.cell_px == CELL_PX == standing.cell_px
         assert crouch.ground_anchor_cell_y == standing.ground_anchor_cell_y == GROUND_ANCHOR_CELL_Y
+
+    def test_standing_idle_is_unaffected_by_the_torso_deg_field(self, standing):
+        """`idle_cycle` never sets `torso_deg` -- `UpperPose`'s default (0.0) must
+        leave its render identical to before this field existed. Pinned against the
+        approved docs/assets/evidence/T-0430 figure height."""
+        standing_final_h = standing.native_figure_height * standing.character_scale
+        assert FIGURE_PX * 0.9 < standing_final_h < FIGURE_PX * 1.1
+
+
+class TestEvidenceHasNoAbsolutePaths:
+    """T-0269 round 3 human comment: `rig.json` must not record absolute worktree
+    paths -- those are only valid on the machine/run that produced them."""
+
+    def test_committed_rig_json_has_no_absolute_paths(self):
+        import json
+
+        rig_json_path = EVIDENCE_DIR / "rig.json"
+        data = json.loads(rig_json_path.read_text())
+
+        def walk(value):
+            if isinstance(value, str):
+                assert not value.startswith("/"), f"absolute path recorded: {value!r}"
+                assert "worktrees" not in value, f"worktree-scoped path recorded: {value!r}"
+            elif isinstance(value, dict):
+                for v in value.values():
+                    walk(v)
+            elif isinstance(value, list):
+                for v in value:
+                    walk(v)
+
+        walk(data)
 
 
 def test_walk_cycle_bone_length_is_unmodified_by_this_module():

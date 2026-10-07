@@ -150,12 +150,16 @@ def ankle_of(hip: tuple[float, float], ik: LegIK,
 def leg_stance(thigh_len: float, calf_len: float) -> rig_compositor.LegStance:
     """The standing stance as a `rig_compositor.LegStance`: hip directly above the
     ankle, straight leg (`IDLE_THIGH_DEG`/`IDLE_KNEE_FLEXION_DEG`), ankle on the ground
-    plane `thigh_len + calf_len` below the hip."""
+    plane `thigh_len + calf_len` below the hip. Both sides get the SAME angles -- the
+    standing idle has no stagger -- `LegStance`'s per-side split (T-0269 round 3) only
+    matters to a pose that actually wants two different leg angles."""
     return rig_compositor.LegStance(
         hip=(0.0, 0.0),
         ground_plane_y=thigh_len + calf_len,
-        thigh_deg=IDLE_THIGH_DEG,
-        knee_flexion_deg=IDLE_KNEE_FLEXION_DEG,
+        thigh_deg_r=IDLE_THIGH_DEG,
+        knee_flexion_deg_r=IDLE_KNEE_FLEXION_DEG,
+        thigh_deg_l=IDLE_THIGH_DEG,
+        knee_flexion_deg_l=IDLE_KNEE_FLEXION_DEG,
         far_leg_offset_frac=FAR_LEG_OFFSET_FRAC,
     )
 

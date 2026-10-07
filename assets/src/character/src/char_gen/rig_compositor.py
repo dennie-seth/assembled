@@ -78,24 +78,59 @@ def measured_bone_lengths(parts: dict[str, Image.Image], rig: dict) -> dict[str,
 @dataclass(frozen=True)
 class UpperPose:
     """Resolved upper-body pose at one phase. Only `upper_dy` is meant to vary across a
-    loop -- the rest is each pose's own rest configuration, held constant."""
+    loop -- the rest is each pose's own rest configuration, held constant.
+
+    `torso_deg` rotates the torso itself about the hip attach point (T-0269 round 3).
+    Default 0.0 so every caller that predates this field (`idle_cycle`) renders exactly
+    as before. Everything that rides on the torso -- head, both shoulders, both
+    forearms -- inherits it as a PARENT rotation (`child absolute angle = torso_deg +
+    child's own local angle`, same additive-chain convention the legs and arms already
+    use), so a leaning torso carries its head and arms with it rather than leaving them
+    behind -- round 2's bug, where `TORSO_LEAN_DEG` was recorded but never consumed."""
     upper_dy: float
     shoulder_deg: float
     elbow_deg: float
     head_deg: float
+    torso_deg: float = 0.0
 
 
 @dataclass(frozen=True)
 class LegStance:
-    """Phase-independent leg geometry: a fixed hip and both leg angles. Both ankles rest
-    on `ground_plane_y` -- the only ground contact any pose needs. No seat, chair, or
+    """Phase-independent leg geometry: a shared hip and EACH SIDE'S OWN leg angles
+    (T-0269 round 3). A real stagger needs two different ankle targets, and therefore
+    two different knee-flexion solves -- `far_leg_offset_frac` (a sideways shift of one
+    hip) was round 2's bug, not a stagger: an identical leg pose shifted sideways still
+    has both ankles landing a fraction of a pixel apart. Both ankles still rest on
+    `ground_plane_y` -- the only ground contact any pose needs. No seat, chair, or
     other plane is part of this shape; a pose that wants one hip-pinning convention or
     another expresses it when it computes `hip`, not here."""
     hip: tuple[float, float]
     ground_plane_y: float
-    thigh_deg: float
-    knee_flexion_deg: float
+    thigh_deg_r: float
+    knee_flexion_deg_r: float
+    thigh_deg_l: float
+    knee_flexion_deg_l: float
     far_leg_offset_frac: float
+
+
+def leg_angles(leg: LegStance, side: str) -> tuple[float, float]:
+    """This side's own `(thigh_deg, knee_flexion_deg)` -- the per-leg split a stagger
+    needs, factored out so `build_placements` and `leg_chain` read it the same way."""
+    return (leg.thigh_deg_r, leg.knee_flexion_deg_r) if side == "R" \
+        else (leg.thigh_deg_l, leg.knee_flexion_deg_l)
+
+
+def rotate_offset(offset: tuple[float, float], angle_deg: float) -> tuple[float, float]:
+    """Rotate a LOCAL offset by `angle_deg`, in the SAME sign convention `distal_joint`
+    (and therefore `Image.rotate`, which it was derived to match) already use --
+    `distal_joint(origin, L, deg)` is the special case `offset=(0, L)`. A parent's
+    rotation must carry its children's attachment points exactly as far as it carries
+    its own rendered pixels, or a rotated torso visually detaches from the head and
+    arms riding on it."""
+    rad = math.radians(angle_deg)
+    cos_a, sin_a = math.cos(rad), math.sin(rad)
+    ox, oy = offset
+    return (ox * cos_a + oy * sin_a, -ox * sin_a + oy * cos_a)
 
 
 @dataclass
@@ -161,25 +196,46 @@ def build_placements(
 
     placements: list[Placement] = []
 
-    hip = leg.hip
-    torso_tl = (hip[0] - attach["hip"][0], hip[1] - attach["hip"][1] + upper.upper_dy)
-    placements.append(Placement("torso", torso, (0.0, 0.0), torso_tl, rig_entries["torso"]["z"]))
+    hip_local = tuple(attach["hip"])
+    hip_world = (leg.hip[0], leg.hip[1] + upper.upper_dy)
 
-    neck_world = (torso_tl[0] + attach["neck"][0], torso_tl[1] + attach["neck"][1])
-    placements.append(place("head", upper.head_deg, neck_world))
+    if upper.torso_deg:
+        torso_img, torso_pivot_px = pad_for_rotation(torso, hip_local)
+        torso_img = torso_img.rotate(
+            upper.torso_deg, center=torso_pivot_px, resample=Image.Resampling.BICUBIC,
+            expand=False,
+        )
+    else:
+        torso_img, torso_pivot_px = torso, hip_local
+    placements.append(
+        Placement("torso", torso_img, torso_pivot_px, hip_world, rig_entries["torso"]["z"])
+    )
 
-    shoulder_world = (torso_tl[0] + attach["shoulder"][0], torso_tl[1] + attach["shoulder"][1])
+    def attach_world(point_name: str) -> tuple[float, float]:
+        """World position of a torso-local attach point, carrying the torso's own
+        `torso_deg` rotation -- identity (the old unrotated formula) when it is 0."""
+        local = attach[point_name]
+        local_offset = (local[0] - hip_local[0], local[1] - hip_local[1])
+        world_offset = rotate_offset(local_offset, upper.torso_deg)
+        return (hip_world[0] + world_offset[0], hip_world[1] + world_offset[1])
+
+    neck_world = attach_world("neck")
+    placements.append(place("head", upper.torso_deg + upper.head_deg, neck_world))
+
+    shoulder_world = attach_world("shoulder")
+    shoulder_abs_deg = upper.torso_deg + upper.shoulder_deg
     for side in ("R", "L"):
         sh_name, fa_name = f"shoulder_{side}", f"forearm_{side}"
-        placements.append(place(sh_name, upper.shoulder_deg, shoulder_world))
-        elbow = distal_joint(shoulder_world, lengths[sh_name], upper.shoulder_deg)
-        placements.append(place(fa_name, upper.shoulder_deg + upper.elbow_deg, elbow))
+        placements.append(place(sh_name, shoulder_abs_deg, shoulder_world))
+        elbow = distal_joint(shoulder_world, lengths[sh_name], shoulder_abs_deg)
+        placements.append(place(fa_name, shoulder_abs_deg + upper.elbow_deg, elbow))
 
     for side, hip_side in leg_hip_points(leg, torso.width).items():
         th_name, cf_name = f"thigh_{side}", f"calf_{side}"
-        placements.append(place(th_name, leg.thigh_deg, hip_side))
-        knee, _ankle = leg_chain(hip_side, lengths[th_name], lengths[cf_name], leg)
-        calf_deg = leg.thigh_deg - leg.knee_flexion_deg
+        thigh_deg, knee_flexion_deg = leg_angles(leg, side)
+        placements.append(place(th_name, thigh_deg, hip_side))
+        knee, _ankle = leg_chain(hip_side, lengths[th_name], lengths[cf_name], leg, side)
+        calf_deg = thigh_deg - knee_flexion_deg
         placements.append(place(cf_name, calf_deg, knee))
 
     return placements
@@ -188,20 +244,25 @@ def build_placements(
 def leg_hip_points(leg: LegStance, torso_width: float) -> dict[str, tuple[float, float]]:
     """Each side's hip point -- the near (R) leg's hip is `leg.hip` itself; the far (L)
     leg's hip is offset by `far_leg_offset_frac` of the torso's width, same convention
-    `build_placements` has always used to keep the two legs from coinciding exactly."""
+    `build_placements` has always used to keep the two legs from coinciding exactly.
+    A real stagger (T-0269 round 3) comes from each side's own `leg_angles`, not from
+    widening this offset -- a pose with a genuine stagger sets `far_leg_offset_frac` to
+    0.0 and lets the two different ankle targets do the separating."""
     far_leg_dx = leg.far_leg_offset_frac * torso_width
     return {"R": leg.hip, "L": (leg.hip[0] + far_leg_dx, leg.hip[1])}
 
 
 def leg_chain(
-    hip_side: tuple[float, float], thigh_len: float, calf_len: float, leg: LegStance
+    hip_side: tuple[float, float], thigh_len: float, calf_len: float, leg: LegStance, side: str
 ) -> tuple[tuple[float, float], tuple[float, float]]:
     """`(knee, ankle)` for one leg side -- the same two-bone forward kinematics
     `build_placements` uses to place that side's calf, factored out so a contact-point
     check can read the exact ankle coordinate the render actually used rather than a
-    separately re-derived one."""
-    knee = distal_joint(hip_side, thigh_len, leg.thigh_deg)
-    ankle = distal_joint(knee, calf_len, leg.thigh_deg - leg.knee_flexion_deg)
+    separately re-derived one. `side` selects that leg's OWN `(thigh_deg,
+    knee_flexion_deg)` pair via `leg_angles` -- the two sides generally differ now."""
+    thigh_deg, knee_flexion_deg = leg_angles(leg, side)
+    knee = distal_joint(hip_side, thigh_len, thigh_deg)
+    ankle = distal_joint(knee, calf_len, thigh_deg - knee_flexion_deg)
     return knee, ankle
 
 
@@ -228,6 +289,8 @@ class RenderResult:
     native_figure_height: float
     lower_body_band: tuple[int, int, int, int]
     hip_px: tuple[int, int]
+    knee_r_px: tuple[int, int]
+    knee_l_px: tuple[int, int]
     ankle_r_px: tuple[int, int]
     ankle_l_px: tuple[int, int]
     changed_px_per_frame_pair: list[int]
@@ -331,13 +394,15 @@ def render_frames(
     # has to dodge the breathing upper body. Same `leg_chain` two-bone solve
     # `build_placements` used to place each calf -- not a second, re-derived geometry.
     hip_points = leg_hip_points(leg, scaled["torso"].width)
-    ankle_r = leg_chain(hip_points["R"], lengths["thigh_R"], lengths["calf_R"], leg)[1]
-    ankle_l = leg_chain(hip_points["L"], lengths["thigh_L"], lengths["calf_L"], leg)[1]
+    knee_r, ankle_r = leg_chain(hip_points["R"], lengths["thigh_R"], lengths["calf_R"], leg, "R")
+    knee_l, ankle_l = leg_chain(hip_points["L"], lengths["thigh_L"], lengths["calf_L"], leg, "L")
 
     def to_canvas(pt: tuple[float, float]) -> tuple[int, int]:
         return (round(pt[0] + offset[0]), round(pt[1] + offset[1]))
 
     hip_px = to_canvas(leg.hip)
+    knee_r_px = to_canvas(knee_r)
+    knee_l_px = to_canvas(knee_l)
     ankle_r_px = to_canvas(ankle_r)
     ankle_l_px = to_canvas(ankle_l)
 
@@ -359,6 +424,8 @@ def render_frames(
         native_figure_height=native_fig_h,
         lower_body_band=lower_body_band,
         hip_px=hip_px,
+        knee_r_px=knee_r_px,
+        knee_l_px=knee_l_px,
         ankle_r_px=ankle_r_px,
         ankle_l_px=ankle_l_px,
         changed_px_per_frame_pair=changed_px,

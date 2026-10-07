@@ -6,36 +6,53 @@
   "crouch_stance": {
     "ground_plane_y": 300.0,
     "hip_y": 0.0,
-    "hip_forward_of_ankle_x": 0.0,
-    "thigh_deg": 73.59324980231129,
-    "knee_flexion_deg": 119.37363708853394,
-    "torso_lean_deg": 0.0,
-    "feet_planted": "flat"
+    "torso_lean_deg": -12.0,
+    "feet_planted": "flat",
+    "leg_r": {
+      "ankle_x": 90.0,
+      "thigh_deg": 87.85766660296807,
+      "knee_flexion_deg": 116.15464470804179,
+      "role": "front (near, leads)"
+    },
+    "leg_l": {
+      "ankle_x": -60.0,
+      "thigh_deg": 61.18343459326108,
+      "knee_flexion_deg": 117.93117867646697,
+      "role": "back (far, trails)"
+    },
+    "stagger_separation_final_px": 5.970000000000001
+  },
+  "arm_stance": {
+    "shoulder_deg": 81.24688169603928,
+    "elbow_deg": -39.370310905707555,
+    "reach_native_px": 285.57674407253296,
+    "reach_workspace_native_px": [
+      95.29999999999997,
+      301.38
+    ],
+    "clamped": false,
+    "wrist_to_knee_distance_final_px": 2.3501437294586494e-15
   },
   "contacts": {
-    "hip_xy": [
-      0.0,
-      0.0
-    ],
-    "ankle_r_xy": [
-      0.0,
-      300.0
-    ],
-    "ankle_l_xy": [
-      -12.155,
-      300.0
-    ],
     "hip_canvas_px": [
-      336,
-      443
+      345,
+      508
+    ],
+    "knee_r_canvas_px": [
+      592,
+      517
+    ],
+    "knee_l_canvas_px": [
+      561,
+      627
     ],
     "ankle_r_canvas_px": [
-      336,
-      743
+      435,
+      808
     ],
     "ankle_l_canvas_px": [
-      324,
-      743
+      285,
+      808
     ]
   },
   "native_figure_height_px": {
@@ -54,21 +71,21 @@
     "crouch": 1.53429
   },
   "changed_px_per_frame_pair": [
-    66164,
-    70970,
-    67841,
-    67841,
-    70970,
-    66164
+    84472,
+    92217,
+    90117,
+    90117,
+    92217,
+    84472
   ],
-  "loop_seam_changed_px": 66164,
+  "loop_seam_changed_px": 84472,
   "lower_body_band": [
-    4,
-    628,
-    961,
-    902
+    25,
+    849,
+    981,
+    1013
   ],
-  "sheet": "/home/dennieseth/dev/assembled-board/worktrees/T-0269/docs/assets/evidence/T-0269/sitting_idle_sheet_48.png",
-  "gif": "/home/dennieseth/dev/assembled-board/worktrees/T-0269/docs/assets/evidence/T-0269/sitting_idle_loop_x8.gif",
-  "comparison": "/home/dennieseth/dev/assembled-board/worktrees/T-0269/docs/assets/evidence/T-0269/scale_match_crouch_vs_standing.png"
+  "sheet": "sitting_idle_sheet_48.png",
+  "gif": "sitting_idle_loop_x8.gif",
+  "comparison": "scale_match_crouch_vs_standing.png"
 }
