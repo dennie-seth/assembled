@@ -16,10 +16,22 @@ import { CLAUDE_DIR_DENIAL_REASON, CLAUDE_DIR_BASH_DENIAL_REASON } from "./toolA
  * board's matching Bash-write denial (`CLAUDE_DIR_BASH_DENIAL_REASON`, T-0411) are checked by
  * literal containment, not a keyword guess, the same way the structural host-action check above
  * is -- both denial strings live in `toolAllowlist.js` precisely so this file never duplicates or
- * drifts from their exact wording. Before this, a FAIL note quoting either denial verbatim (e.g.
- * T-0408 attempt 3's own `.claude/rules/planner.md` edit refusal) fell through every pattern below
- * and defaulted to "code-test-bug" -- retrying a card against a wall no code fix can ever clear,
- * instead of escalating it the way a genuine permission/grant denial should.
+ * drifts from their exact wording. Before this, a FAIL note quoting either denial verbatim fell
+ * through every pattern below and defaulted to "code-test-bug", mislabeling the blocker report
+ * and remediation card text for a card that had already stopped.
+ *
+ * T-0412 round 2 correction: this fix changes what the escalation report *says*, never whether or
+ * when a card stops retrying, and never which agent a remediation card is routed to.
+ * `categorizeFailure` is reached only from `buildBlockerReport`, itself called only from
+ * `_escalateIfGenuineBlocker` in runOrchestrator.js -- which runs only after `stopping`
+ * (`isFinalAttempt || noProgress`) is already true, i.e. after the retry loop has already finished
+ * on its own. By the time this function ever sees a FAIL note, every retry that was going to happen
+ * already has. `draftRemediationCard` (escalationRemediation.js) also sets `agent: "dispatch"`
+ * unconditionally for every category, so the classification doesn't change routing either -- see
+ * runOrchestrator.escalation.test.js's and escalationRemediation.test.js's T-0412-round-2 tests,
+ * which pin both of those orderings in code. Round 1 of this card claimed the opposite (that this
+ * fix lets a card "escalate instead of retrying" / "instead of burning retry attempts") -- that
+ * claim was false and is retracted; see tasks/T-0412.md.
  */
 export const BLOCKER_CATEGORIES = [
   "host-action",
