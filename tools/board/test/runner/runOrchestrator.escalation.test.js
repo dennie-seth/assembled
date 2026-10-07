@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { RunOrchestrator, MAX_AUTO_RETRY_ATTEMPTS } from "../../src/runner/runOrchestrator.js";
+import { CLAUDE_DIR_DENIAL_REASON } from "../../src/runner/toolAllowlist.js";
 
 const IMPLEMENTER_DEF = { name: "infra", model: "sonnet", body: "# infra\nImplements board tooling." };
 const REVIEWER_DEF = { name: "reviewer", model: "opus", body: "# reviewer\nRead-only VALIDATION gate." };
@@ -275,6 +276,33 @@ describe("RunOrchestrator escalation -- genuine blocker after auto-retry exhaust
 
     const remediation = (await store.list()).find((t) => t.id !== "T-0001");
     expect(remediation.body).toContain("Tool");
+  });
+
+  it("exhausts every MAX_AUTO_RETRY_ATTEMPTS attempt even when EVERY attempt's FAIL note already carries the permission-grant denial text -- categorizeFailure cannot shorten or skip retries, since it only runs after the retry loop has already stopped itself (T-0412 round 2: retracts round 1's claim that this category 'routes to a human instead of burning retry attempts')", async () => {
+    const store = makeStore([baseTask()]);
+    const git = makeGit();
+    const runner = makeRunner();
+    const orchestrator = makeOrchestrator({ store, git, runner });
+
+    const runPromise = orchestrator.runCard("T-0001");
+    await exhaustToBlocked(runner, {
+      notesOverrideForAttempt: (n) => `issue round ${n} -- ${CLAUDE_DIR_DENIAL_REASON}`
+    });
+    await runPromise;
+
+    // Every single attempt -- not just the last -- already reported the denial verbatim. If
+    // categorization could influence the stop decision, this would be the shape to trigger an
+    // early stop on attempt 1. It does not: the implementer/reviewer pair still ran exactly
+    // MAX_AUTO_RETRY_ATTEMPTS times before the card was blocked.
+    expect(runner.start).toHaveBeenCalledTimes(MAX_AUTO_RETRY_ATTEMPTS * 2);
+
+    const original = await store.get("T-0001");
+    expect(original.status).toBe("blocked");
+    expect(original.attempts).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+
+    const remediation = (await store.list()).find((t) => t.id !== "T-0001");
+    expect(remediation.agent).toBe("dispatch");
+    expect(remediation.body).toContain("Permission/grant");
   });
 });
 
