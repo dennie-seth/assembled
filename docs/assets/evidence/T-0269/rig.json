@@ -20,6 +20,10 @@
       "knee_flexion_deg": 117.93117867646697,
       "role": "back (far, trails)"
     },
+    "front_foot_flatten_deg": 15.0,
+    "crouch_z_override": {
+      "thigh_R": 3.5
+    },
     "stagger_separation_final_px": 5.970000000000001
   },
   "arm_stance": {
@@ -36,23 +40,23 @@
   "contacts": {
     "hip_canvas_px": [
       345,
-      508
+      500
     ],
     "knee_r_canvas_px": [
       592,
-      517
+      509
     ],
     "knee_l_canvas_px": [
       561,
-      627
+      619
     ],
     "ankle_r_canvas_px": [
       435,
-      808
+      800
     ],
     "ankle_l_canvas_px": [
       285,
-      808
+      800
     ]
   },
   "native_figure_height_px": {
@@ -64,26 +68,26 @@
     "standing": 38.90609200000001
   },
   "breath_rise_frac": {
-    "crouch": 0.15,
+    "crouch": 0.117,
     "standing_idle_cycle": 0.108
   },
   "upper_body_travel_final_px": {
-    "crouch": 1.53429
+    "crouch": 1.1967462000000002
   },
   "changed_px_per_frame_pair": [
-    84472,
-    92217,
-    90117,
-    90117,
-    92217,
-    84472
+    88224,
+    95036,
+    91937,
+    91937,
+    95036,
+    88224
   ],
-  "loop_seam_changed_px": 84472,
+  "loop_seam_changed_px": 88224,
   "lower_body_band": [
     25,
-    849,
-    981,
-    1013
+    841,
+    947,
+    1004
   ],
   "sheet": "sitting_idle_sheet_48.png",
   "gif": "sitting_idle_loop_x8.gif",

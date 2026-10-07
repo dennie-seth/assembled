@@ -99,6 +99,21 @@ HIP_HEIGHT_ABOVE_GROUND = 300.0
 ANKLE_X_FRONT = 90.0
 ANKLE_X_BACK = -60.0
 
+#: Round 4 (@DennieSeth: "something weird in the very middle"). Diagnosed from the
+#: composite: the offender is `thigh_R`. Its hand-cut crop is a near-rectangle
+#: (bbox_fill 0.87, not a traced silhouette), and at this crouch's ~88deg thigh rotation
+#: that opaque box swings across the belly. Because `side_view_rig.json` puts the near
+#: leg frontmost (z=0), the box painted OVER the torso, reading as an unidentified slab.
+#: Neither the part nor the shared rig is touched -- this pose alone draws `thigh_R`
+#: behind the torso (z=3), which hides the surplus box where it crosses the body while
+#: the real thigh still reads in front of the far leg.
+CROUCH_Z_OVERRIDE = {"thigh_R": 3.5}
+
+#: Round 4 (@DennieSeth: the forward foot should sit flat on the floor). The leading
+#: foot is the near/R leg -- `ANKLE_X_FRONT` above. Applied as a rotation about the
+#: shin's own ANKLE, so the solved contact stays exactly on the ground plane.
+FRONT_FOOT_FLATTEN_DEG = 15.0
+
 #: Forward torso lean (T-0269 round 3) -- NEGATIVE in this rig's convention; see the
 #: module docstring's sign note. A small lean, not a bow: ~12 degrees, "hunched a
 #: little over the knees, not bolt upright."
@@ -115,7 +130,10 @@ FEET_PLANTED = "flat"
 #: 1px floor with the same margin round 2 had, well under the 2px "bob, not breath"
 #: ceiling. `idle_cycle`'s own BREATH_RISE_FRAC is untouched -- the standing idle keeps
 #: its own calibration.
-CROUCH_BREATH_RISE_FRAC = 0.15
+#: Round 4 (@DennieSeth: "breathing a little less tense"). 0.15 measured 1.534px of
+#: travel at the final figure; 0.117 measures ~1.197px -- softer, still clearing the
+#: ~1px floor that makes it read at all.
+CROUCH_BREATH_RISE_FRAC = 0.117
 
 
 @dataclass(frozen=True)
@@ -298,6 +316,8 @@ def render_frames(frame_count: int = FRAME_COUNT, **kwargs) -> rig_compositor.Re
     stance = leg_stance(
         lengths["thigh_R"], lengths["calf_R"], lengths["thigh_L"], lengths["calf_L"]
     )
+    kwargs.setdefault("z_override", CROUCH_Z_OVERRIDE)
+    kwargs.setdefault("foot_flatten", {"calf_R": FRONT_FOOT_FLATTEN_DEG})
     return rig_compositor.render_frames(stance, pose_at, frame_count, **kwargs)
 
 
@@ -389,6 +409,8 @@ def main() -> None:
                 "knee_flexion_deg": stance.knee_flexion_deg_l,
                 "role": "back (far, trails)",
             },
+            "front_foot_flatten_deg": FRONT_FOOT_FLATTEN_DEG,
+            "crouch_z_override": CROUCH_Z_OVERRIDE,
             "stagger_separation_final_px": stagger_separation_final_px,
         },
         "arm_stance": {

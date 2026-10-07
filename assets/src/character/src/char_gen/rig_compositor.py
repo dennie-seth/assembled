@@ -173,6 +173,9 @@ def build_placements(
     rig_entries: dict,
     attach: dict,
     lengths: dict[str, float],
+    *,
+    z_override: dict[str, float] | None = None,
+    foot_flatten: dict[str, float] | None = None,
 ) -> list[Placement]:
     """Place all ten parts for one phase. Generic over pose: the hip, both leg angles
     and the far-leg offset all come from `leg`; the only thing that may differ frame to
@@ -234,10 +237,24 @@ def build_placements(
         th_name, cf_name = f"thigh_{side}", f"calf_{side}"
         thigh_deg, knee_flexion_deg = leg_angles(leg, side)
         placements.append(place(th_name, thigh_deg, hip_side))
-        knee, _ankle = leg_chain(hip_side, lengths[th_name], lengths[cf_name], leg, side)
+        knee, ankle = leg_chain(hip_side, lengths[th_name], lengths[cf_name], leg, side)
         calf_deg = thigh_deg - knee_flexion_deg
+        extra = (foot_flatten or {}).get(cf_name, 0.0)
+        if extra:
+            # Rotate the shin about its OWN ANKLE rather than the knee: the sole plants
+            # flat while the solved ankle stays exactly where the IK put it, so the
+            # ground-contact assertions still hold. The knee end absorbs the offset.
+            flat_deg = calf_deg + extra
+            moved = distal_joint(knee, lengths[cf_name], flat_deg)
+            knee = (knee[0] + (ankle[0] - moved[0]), knee[1] + (ankle[1] - moved[1]))
+            calf_deg = flat_deg
         placements.append(place(cf_name, calf_deg, knee))
 
+    if z_override:
+        placements = [
+            Placement(p.name, p.image, p.pivot_px, p.target_xy, z_override.get(p.name, p.z))
+            for p in placements
+        ]
     return placements
 
 
@@ -308,6 +325,8 @@ def render_frames(
     ground_anchor_cell_y: float = GROUND_ANCHOR_CELL_Y,
     parts_dir: Path = PARTS_DIR,
     rig_path: Path = RIG_PATH,
+    z_override: dict[str, float] | None = None,
+    foot_flatten: dict[str, float] | None = None,
 ) -> RenderResult:
     """Composite `frame_count` frames for one pose. `character_scale` and
     `ground_anchor_cell_y` default to the one shared convention in
@@ -324,7 +343,7 @@ def render_frames(
     phases = [i / frame_count for i in range(frame_count)]
     all_placements = [
         build_placements(upper_pose_at(ph, torso_height), leg, scaled, rig_entries, attach,
-                          lengths)
+                          lengths, z_override=z_override, foot_flatten=foot_flatten)
         for ph in phases
     ]
 

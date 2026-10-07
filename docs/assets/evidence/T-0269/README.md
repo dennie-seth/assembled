@@ -167,16 +167,16 @@ the breath signal itself):
 
 | | value |
 |---|---|
-| `CROUCH_BREATH_RISE_FRAC` | 0.15 (unchanged from round 2 -- the lean/arm change does not touch this signal) |
-| upper-body travel at the final figure | **1.53px** |
+| `CROUCH_BREATH_RISE_FRAC` | 0.117 (round 4: softened from 0.15 on @DennieSeth's "breathing a little less tense") |
+| upper-body travel at the final figure | **1.20px** (was 1.53px in round 3) |
 
-Travel clears the 1px floor by over 50% and stays well under the 2px "bob, not breath"
+Travel clears the 1px floor by ~20% -- deliberately less margin than round 3's 50%, which read as tense -- and stays well under the 2px "bob, not breath"
 ceiling (`test_the_upper_body_amplitude_clears_a_pixel_at_the_final_height` /
 `test_the_amplitude_stays_a_breath_not_a_bob`). `idle_cycle.BREATH_RISE_FRAC` itself is
 untouched -- the standing idle keeps its own calibration.
 
 **Hands on the knees across the breath:** the breath moves the upper body (and
-everything riding it, including the resting arm) by ~1.53 final px while the knees are
+everything riding it, including the resting arm) by ~1.20 final px while the knees are
 static. The wrist-to-knee solve is computed at the rest pose (phase 0, `upper_dy = 0`);
 across the loop the hand stays close to the knee but is not independently re-solved
 per frame, so a sub-2px drift is expected and not hidden -- it is well within what
@@ -189,18 +189,7 @@ breathing upper body overlaps it) and did not explicitly cover the knees either.
 round extends the same per-point proof from `{hip, ankle_r, ankle_l}` to
 `{hip, knee_r, knee_l, ankle_r, ankle_l}`:
 
-`thigh_R`/`calf_R` (the near leg) are the topmost z-order layer in every frame --
-`build_placements` draws them last -- so wherever they are opaque, the composited pixel
-is their own phase-invariant content regardless of what the breathing torso, leaning
-head, or resting arm are doing underneath. `rig_compositor.RenderResult` now returns
-`hip_px`, `knee_r_px`, `knee_l_px`, `ankle_r_px` and `ankle_l_px` -- the exact canvas
-coordinate of each contact, computed with the same `leg_chain` two-bone solve that
-placed that leg's calf, not a separately re-derived point.
-`test_each_contact_pixel_is_identical_across_every_frame` samples a 19x19 neighbourhood
-(radius 9 -- empirically the widest radius that stays both opaque and pixel-identical
-for all five points at once; radius 10 already picks up a phase-varying edge near the
-hip/knee) at each coordinate from every native frame, asserts it is opaque (not a
-vacuous all-transparent match), and asserts it is pixel-identical across every frame.
+`calf_R` (the near shin) is the topmost z-order layer at the ANKLES, so the two ground contacts are proven directly from composited pixels. `thigh_R` is NOT topmost any more -- round 4 draws it behind the torso -- so the hip and the near knee can legitimately show breathing torso, and leg stillness is proven instead by `test_the_leg_placements_are_identical_across_every_phase`, which compares every leg part's bitmap, pivot, target and z across all six frames and so cannot be confounded by layering at all.
 
 The lower-body band (`test_the_lower_body_band_is_still_bit_identical`) remains a
 second, complementary proof over a larger region (mostly the calves/feet) -- it no
@@ -269,3 +258,30 @@ doing its job, same shape as the standing idle's own seam measurement.
   future pose supplies only its own `LegStance`, its own arm rest angles, and its own
   `phase -> UpperPose` function -- no new compositor.
 - `char_gen.character_scale` -- the one shared scale and ground anchor.
+
+## Round 4 -- @DennieSeth's three pose notes (2026-10-07)
+
+**1. The slab in the middle was `thigh_R`.** Diagnosed from the composite rather than
+guessed: at the figure's centre the front-most opaque part was `thigh_R`, covering 83% of
+a centred box and owning every sampled centre pixel. Its hand-cut crop is a near-rectangle
+(alpha fill 0.87, not a traced silhouette), and at this crouch's ~88 degree thigh rotation
+that opaque box swings across the belly; because `side_view_rig.json` puts the near leg
+frontmost (z=0) it painted straight over the torso. Fix: this pose alone draws `thigh_R`
+behind the torso (`CROUCH_Z_OVERRIDE`). The part, the rig and the walk/standing idle are
+all untouched.
+
+**2. The breath is calmer.** `CROUCH_BREATH_RISE_FRAC` 0.15 -> 0.117, travel 1.53px ->
+1.20px at the final figure -- still above the ~1px floor that makes it read.
+
+**3. The forward foot plants flat.** The leading foot is the near/R leg (`ANKLE_X_FRONT`),
+rotated `FRONT_FOOT_FLATTEN_DEG` = 15 degrees about **its own ankle**, so the solved ground
+contact does not move -- pinned by
+`test_the_forward_foot_is_flattened_without_moving_its_ankle`.
+
+**Known remaining artifact, not fixed here.** `calf_L` (the trailing shin) also carries
+surplus costume in its hand-cut crop (alpha fill 0.70), which the back leg's large rotation
+swings into open space below and right of the figure, where it reads as a flat green
+quadrilateral. Z-order cannot hide it -- nothing is drawn there to hide it behind -- and
+clipping it to the bone axis was tried and rejected because it amputates the trailing boot.
+Removing it needs a tighter re-cut of `calf_L` (and to a lesser extent `thigh_L`), which is
+hand-cut source art and deliberately out of scope for a composite-time fix.

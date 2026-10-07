@@ -447,20 +447,23 @@ class TestCompositedFrames:
                 "geometry moved when it must not"
             )
 
-    @pytest.mark.parametrize(
-        "point_name", ["hip_px", "knee_r_px", "knee_l_px", "ankle_r_px", "ankle_l_px"]
-    )
+    @pytest.mark.parametrize("point_name", ["ankle_r_px", "ankle_l_px"])
     def test_each_contact_pixel_is_identical_across_every_frame(self, result, point_name):
-        """The direct, per-point proof the band above cannot give for the hip or the
-        knees (T-0269 round 3 human comment: "the contact-stillness assertion must
-        cover a band that actually includes the hip and the knees"). The near leg
-        (thigh_R/calf_R) is the topmost z-order layer in every frame
-        (`rig_compositor.build_placements` draws it last), so wherever it is opaque the
-        composited pixel is its own phase-invariant content, full stop, regardless of
-        what the breathing torso, leaning head, or resting arm are doing underneath.
-        `CONTACT_WINDOW_RADIUS` is swept empirically to the widest radius that stays
-        both opaque and pixel-identical for every one of these five points at once --
-        see its own comment above."""
+        """Per-point proof for the two GROUND contacts, from composited pixels.
+
+        Round 4 narrows this from five points to the two ankles, and the reason is a
+        premise that stopped being true rather than a weakened standard. It used to
+        read the hip and both knees too, resting on the near leg (thigh_R/calf_R)
+        being the topmost z-order layer -- so whatever it covered was its own
+        phase-invariant content. Round 4 draws `thigh_R` BEHIND the torso (its
+        rectangular crop was painting over the body), so a composited pixel at the hip
+        or the near knee can now legitimately be breathing torso, and asserting it is
+        frozen would be asserting the breath does not happen.
+
+        The ankles are unaffected -- the shins are still frontmost down there, and they
+        are the only contacts the pose actually makes with the ground. Stillness of the
+        legs as a whole is proven, more strongly and without any layering assumption, by
+        `test_the_leg_placements_are_identical_across_every_phase` below."""
         px = getattr(result, point_name)
         r = CONTACT_WINDOW_RADIUS
         windows = [
@@ -476,6 +479,91 @@ class TestCompositedFrames:
                 f"frame {i}'s pixels around {point_name} ({px}) differ from frame 0 -- "
                 f"the {point_name.replace('_px', '')} contact moved when it must not"
             )
+
+    def test_the_leg_placements_are_identical_across_every_phase(self):
+        """Every leg part is placed with the same bitmap, pivot, target and z in every
+        frame. This is what "the legs are static" actually means, and unlike a pixel
+        window it cannot be confounded by whatever is layered on top of them."""
+        from char_gen import rig_compositor, sitting_idle_cycle
+
+        parts = rig_compositor.load_parts()
+        rig = rig_compositor.load_rig()
+        scaled = rig_compositor.scaled_parts(parts, rig)
+        lengths = rig_compositor.measured_bone_lengths(parts, rig)
+        stance = sitting_idle_cycle.leg_stance(
+            lengths["thigh_R"], lengths["calf_R"], lengths["thigh_L"], lengths["calf_L"]
+        )
+        torso_h = scaled["torso"].height
+
+        def leg_signature(phase):
+            placements = rig_compositor.build_placements(
+                sitting_idle_cycle.pose_at(phase, torso_h), stance, scaled, rig["rig"],
+                rig["attach_torso_local_px"], lengths,
+                z_override=sitting_idle_cycle.CROUCH_Z_OVERRIDE,
+                foot_flatten={"calf_R": sitting_idle_cycle.FRONT_FOOT_FLATTEN_DEG},
+            )
+            return {
+                p.name: (p.target_xy, p.pivot_px, p.z, p.image.tobytes())
+                for p in placements
+                if p.name in rig_compositor.LEG_PART_NAMES
+            }
+
+        base = leg_signature(0.0)
+        assert set(base) == set(rig_compositor.LEG_PART_NAMES), (
+            "the leg signature must cover every leg part, or it proves less than it claims"
+        )
+        for i in range(1, FRAME_COUNT):
+            got = leg_signature(i / FRAME_COUNT)
+            for name in base:
+                assert got[name] == base[name], (
+                    f"leg part {name} is placed differently at phase {i}/{FRAME_COUNT} "
+                    "than at phase 0 -- the legs must be static across the whole loop"
+                )
+
+    def test_the_forward_foot_is_flattened_without_moving_its_ankle(self):
+        """Round 4 (@DennieSeth): the leading foot plants flat. The rotation is applied
+        about the shin's own ankle, so the solved ground contact must not move."""
+        from char_gen import rig_compositor, sitting_idle_cycle
+
+        parts = rig_compositor.load_parts()
+        rig = rig_compositor.load_rig()
+        scaled = rig_compositor.scaled_parts(parts, rig)
+        lengths = rig_compositor.measured_bone_lengths(parts, rig)
+        stance = sitting_idle_cycle.leg_stance(
+            lengths["thigh_R"], lengths["calf_R"], lengths["thigh_L"], lengths["calf_L"]
+        )
+        torso_h = scaled["torso"].height
+        upper = sitting_idle_cycle.pose_at(0.0, torso_h)
+        common = (upper, stance, scaled, rig["rig"], rig["attach_torso_local_px"], lengths)
+
+        plain = {p.name: p for p in rig_compositor.build_placements(*common)}
+        flat = {
+            p.name: p
+            for p in rig_compositor.build_placements(
+                *common, foot_flatten={"calf_R": sitting_idle_cycle.FRONT_FOOT_FLATTEN_DEG}
+            )
+        }
+
+        hips = rig_compositor.leg_hip_points(stance, scaled["torso"].width)
+        _knee, ankle = rig_compositor.leg_chain(
+            hips["R"], lengths["thigh_R"], lengths["calf_R"], stance, "R"
+        )
+        thigh_deg, knee_flex = rig_compositor.leg_angles(stance, "R")
+        flat_deg = thigh_deg - knee_flex + sitting_idle_cycle.FRONT_FOOT_FLATTEN_DEG
+        landed = rig_compositor.distal_joint(
+            flat["calf_R"].target_xy, lengths["calf_R"], flat_deg
+        )
+        assert landed == pytest.approx(ankle, abs=1e-6), (
+            f"flattening the forward foot moved its ankle from {ankle} to {landed} -- "
+            "it must rotate about the ankle, not the knee"
+        )
+        assert flat["calf_R"].target_xy != plain["calf_R"].target_xy, (
+            "the flattened shin was not repositioned at all -- the rotation cannot have "
+            "been applied about the ankle"
+        )
+        assert flat["calf_L"].target_xy == plain["calf_L"].target_xy, (
+            "flattening the FORWARD foot must not disturb the trailing leg"
+        )
 
     def test_the_upper_body_amplitude_clears_a_pixel_at_the_final_height(self, result):
         torso_h = load_parts()["torso"].height
