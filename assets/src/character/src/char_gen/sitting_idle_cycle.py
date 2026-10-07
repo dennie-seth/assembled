@@ -237,6 +237,9 @@ def main() -> None:
             "hip_xy": [0.0, stance.hip_y],
             "ankle_r_xy": list(ankle_r),
             "ankle_l_xy": list(ankle_l),
+            "hip_canvas_px": list(result.hip_px),
+            "ankle_r_canvas_px": list(result.ankle_r_px),
+            "ankle_l_canvas_px": list(result.ankle_l_px),
         },
         "native_figure_height_px": {
             "crouch": result.native_figure_height,

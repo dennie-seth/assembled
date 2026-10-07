@@ -112,11 +112,28 @@ untouched -- the standing idle keeps its own calibration.
 
 ## Both contacts, proven from the composited pixels
 
-`render_frames()`'s `lower_body_band` is clipped to start just below the lowest point any
-part of the upper body (torso, head, or either arm -- all of which ride the breath) ever
-reaches across all six frames, so it is provably free of anything that moves, and it still
-covers both knees and both ankles. `test_both_contacts_are_provably_still` crops that band
-from every native frame and asserts byte-for-byte equality against frame 0.
+Two complementary pixel proofs, because one band cannot cover all three contacts at once:
+the hanging forearms pass close by the hip on their way down, so a band wide enough to
+clear them (and the rest of the breathing upper body) necessarily starts below the hip,
+even though it comfortably covers both knees and both ankles.
+
+1. **Both ankles (and both calves), by band.** `render_frames()`'s `lower_body_band` is
+   clipped to start just below the lowest point any part of the upper body (torso, head, or
+   either arm -- all of which ride the breath) ever reaches across all six frames, so it is
+   provably free of anything that moves. `test_both_contacts_are_provably_still` crops that
+   band from every native frame and asserts byte-for-byte equality against frame 0.
+2. **The hip, by its own topmost-layer pixel.** `thigh_R`/`calf_R` (the near leg) are the
+   topmost z-order layer in every frame -- `build_placements` draws them last -- so wherever
+   they are opaque, the composited pixel is their own phase-invariant content regardless of
+   what the breathing torso or hanging arms are doing underneath. `render_frames()` now
+   returns `hip_px`, `ankle_r_px` and `ankle_l_px`: the exact canvas coordinate of each
+   contact, computed with the same `leg_chain` two-bone solve that placed that leg's calf,
+   not a separately re-derived point. `test_each_contact_pixel_is_identical_across_every_frame`
+   samples an 11x11 neighbourhood at each coordinate from every native frame, asserts it is
+   opaque (not a vacuous all-transparent match), and asserts it is pixel-identical across
+   every frame -- the hip proof the band alone could not give. The three resolved canvas
+   points (`hip_canvas_px` 336,443; `ankle_r_canvas_px` 336,743; `ankle_l_canvas_px` 324,743)
+   are recorded in `rig.json`'s `contacts`.
 
 ## Shared ground anchor
 

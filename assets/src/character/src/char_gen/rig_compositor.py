@@ -175,16 +175,34 @@ def build_placements(
         elbow = distal_joint(shoulder_world, lengths[sh_name], upper.shoulder_deg)
         placements.append(place(fa_name, upper.shoulder_deg + upper.elbow_deg, elbow))
 
-    far_leg_dx = leg.far_leg_offset_frac * torso.width
-    for side, dx in (("R", 0.0), ("L", far_leg_dx)):
-        hip_side = (hip[0] + dx, hip[1])
+    for side, hip_side in leg_hip_points(leg, torso.width).items():
         th_name, cf_name = f"thigh_{side}", f"calf_{side}"
         placements.append(place(th_name, leg.thigh_deg, hip_side))
-        knee = distal_joint(hip_side, lengths[th_name], leg.thigh_deg)
+        knee, _ankle = leg_chain(hip_side, lengths[th_name], lengths[cf_name], leg)
         calf_deg = leg.thigh_deg - leg.knee_flexion_deg
         placements.append(place(cf_name, calf_deg, knee))
 
     return placements
+
+
+def leg_hip_points(leg: LegStance, torso_width: float) -> dict[str, tuple[float, float]]:
+    """Each side's hip point -- the near (R) leg's hip is `leg.hip` itself; the far (L)
+    leg's hip is offset by `far_leg_offset_frac` of the torso's width, same convention
+    `build_placements` has always used to keep the two legs from coinciding exactly."""
+    far_leg_dx = leg.far_leg_offset_frac * torso_width
+    return {"R": leg.hip, "L": (leg.hip[0] + far_leg_dx, leg.hip[1])}
+
+
+def leg_chain(
+    hip_side: tuple[float, float], thigh_len: float, calf_len: float, leg: LegStance
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """`(knee, ankle)` for one leg side -- the same two-bone forward kinematics
+    `build_placements` uses to place that side's calf, factored out so a contact-point
+    check can read the exact ankle coordinate the render actually used rather than a
+    separately re-derived one."""
+    knee = distal_joint(hip_side, thigh_len, leg.thigh_deg)
+    ankle = distal_joint(knee, calf_len, leg.thigh_deg - leg.knee_flexion_deg)
+    return knee, ankle
 
 
 def placement_bbox(placements: list[Placement]) -> tuple[float, float, float, float]:
@@ -209,6 +227,9 @@ class RenderResult:
     ground_anchor_cell_y: float
     native_figure_height: float
     lower_body_band: tuple[int, int, int, int]
+    hip_px: tuple[int, int]
+    ankle_r_px: tuple[int, int]
+    ankle_l_px: tuple[int, int]
     changed_px_per_frame_pair: list[int]
     leg: LegStance
     torso_px_size: tuple[int, int]
@@ -302,6 +323,24 @@ def render_frames(
         min(canvas_h, math.ceil(leg_box[3] + offset[1])),
     )
 
+    # The hip itself sits UNDER the band above (the near leg's own top edge covers it,
+    # not a separate exclusion) -- the near leg (thigh_R/calf_R) is the topmost z-order
+    # layer of every frame, so wherever it is opaque the composited pixel is its own,
+    # phase-invariant content regardless of what moves underneath. That makes the hip's
+    # own canvas pixel, and both ankles', a direct pixel proof rather than a band that
+    # has to dodge the breathing upper body. Same `leg_chain` two-bone solve
+    # `build_placements` used to place each calf -- not a second, re-derived geometry.
+    hip_points = leg_hip_points(leg, scaled["torso"].width)
+    ankle_r = leg_chain(hip_points["R"], lengths["thigh_R"], lengths["calf_R"], leg)[1]
+    ankle_l = leg_chain(hip_points["L"], lengths["thigh_L"], lengths["calf_L"], leg)[1]
+
+    def to_canvas(pt: tuple[float, float]) -> tuple[int, int]:
+        return (round(pt[0] + offset[0]), round(pt[1] + offset[1]))
+
+    hip_px = to_canvas(leg.hip)
+    ankle_r_px = to_canvas(ankle_r)
+    ankle_l_px = to_canvas(ankle_l)
+
     arrays = [np.asarray(f) for f in native_frames]
     changed_px = [
         int(np.count_nonzero(np.any(arrays[i] != arrays[(i + 1) % frame_count], axis=-1)))
@@ -319,6 +358,9 @@ def render_frames(
         ground_anchor_cell_y=ground_anchor_cell_y,
         native_figure_height=native_fig_h,
         lower_body_band=lower_body_band,
+        hip_px=hip_px,
+        ankle_r_px=ankle_r_px,
+        ankle_l_px=ankle_l_px,
         changed_px_per_frame_pair=changed_px,
         leg=leg,
         torso_px_size=scaled["torso"].size,

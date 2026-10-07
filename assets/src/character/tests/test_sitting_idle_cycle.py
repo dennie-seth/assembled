@@ -205,7 +205,13 @@ class TestCompositedFrames:
     def test_both_contacts_are_provably_still(self, result):
         """The hip and both ankles never move -- assert it on the pixels, not the
         intent. Everything below the lower-body band is placed from constants that do
-        not vary with phase, so it must be bit-for-bit identical across every frame."""
+        not vary with phase, so it must be bit-for-bit identical across every frame.
+
+        This band alone proves the ANKLES: it starts below the upper body's own
+        lowest reach across every phase, so it cannot contain anything the breath
+        touches. It does NOT reach up as far as the hip -- the hanging forearms pass
+        close by the hip on their way down, so a band wide enough to clear them starts
+        below it. The hip itself is proven separately, below."""
         band = result.lower_body_band
         arrays = [np.asarray(f.crop(band)) for f in result.native_frames]
         base = arrays[0]
@@ -213,6 +219,34 @@ class TestCompositedFrames:
             assert np.array_equal(arr, base), (
                 f"frame {i}'s lower body differs from frame 0 -- the hip/ankle "
                 "contacts moved when they must not"
+            )
+
+    @pytest.mark.parametrize(
+        "point_name", ["hip_px", "ankle_r_px", "ankle_l_px"]
+    )
+    def test_each_contact_pixel_is_identical_across_every_frame(self, result, point_name):
+        """The hip proof the band above cannot give: the near leg (thigh_R/calf_R) is
+        the topmost z-order layer in every frame (`rig_compositor.build_placements`
+        draws it last), so wherever it is opaque the composited pixel is its own
+        phase-invariant content, full stop, regardless of what the breathing torso or
+        hanging arms are doing underneath. Sampling an 11x11 neighbourhood at the
+        contact's own canvas coordinate -- the same `leg_chain` two-bone solve that
+        placed the calf there, not a separately re-derived point -- and requiring it
+        both opaque and pixel-identical across every frame is the direct proof this
+        band-only test could not give for the hip."""
+        px = getattr(result, point_name)
+        windows = [
+            np.asarray(f.crop((px[0] - 5, px[1] - 5, px[0] + 6, px[1] + 6)))
+            for f in result.native_frames
+        ]
+        base = windows[0]
+        assert base[:, :, 3].max() > 0, (
+            f"{point_name} at {px} is fully transparent -- this proves nothing"
+        )
+        for i, win in enumerate(windows[1:], start=1):
+            assert np.array_equal(win, base), (
+                f"frame {i}'s pixels around {point_name} ({px}) differ from frame 0 -- "
+                f"the {point_name.replace('_px', '')} contact moved when it must not"
             )
 
     def test_the_upper_body_amplitude_clears_a_pixel_at_the_final_height(self, result):

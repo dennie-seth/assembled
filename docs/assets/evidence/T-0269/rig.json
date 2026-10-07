@@ -24,6 +24,18 @@
     "ankle_l_xy": [
       -12.155,
       300.0
+    ],
+    "hip_canvas_px": [
+      336,
+      443
+    ],
+    "ankle_r_canvas_px": [
+      336,
+      743
+    ],
+    "ankle_l_canvas_px": [
+      324,
+      743
     ]
   },
   "native_figure_height_px": {
