@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from char_gen import rig_compositor
 from char_gen.walk_cycle import bone_length, distal_joint  # noqa: F401  (shared geometry)
 
 #: One gentle rise-and-fall per loop. Two reads as panting at this frame count.
@@ -138,3 +139,43 @@ def ankle_of(hip: tuple[float, float], ik: LegIK,
     """Forward-kinematics check: where the solved chain actually puts the ankle."""
     knee = distal_joint(hip, thigh_len, ik.thigh_deg)
     return distal_joint(knee, calf_len, ik.calf_deg)
+
+
+# ------------------------------------------------------------------- compositing ----
+# Added for T-0269 round 2: the only way to prove the shared `character_scale`
+# convention actually holds the standing idle at its approved ~40px figure height is to
+# render it, next to the crouch, through the same compositor. Purely additive -- every
+# function above this line is untouched, so their resolved values are unaffected.
+
+def leg_stance(thigh_len: float, calf_len: float) -> rig_compositor.LegStance:
+    """The standing stance as a `rig_compositor.LegStance`: hip directly above the
+    ankle, straight leg (`IDLE_THIGH_DEG`/`IDLE_KNEE_FLEXION_DEG`), ankle on the ground
+    plane `thigh_len + calf_len` below the hip."""
+    return rig_compositor.LegStance(
+        hip=(0.0, 0.0),
+        ground_plane_y=thigh_len + calf_len,
+        thigh_deg=IDLE_THIGH_DEG,
+        knee_flexion_deg=IDLE_KNEE_FLEXION_DEG,
+        far_leg_offset_frac=FAR_LEG_OFFSET_FRAC,
+    )
+
+
+def _upper_pose_at(phase: float, torso_height: float) -> rig_compositor.UpperPose:
+    p = pose_at(phase, torso_height)
+    return rig_compositor.UpperPose(
+        upper_dy=p.upper_dy, shoulder_deg=p.shoulder_deg, elbow_deg=p.elbow_deg,
+        head_deg=p.head_deg,
+    )
+
+
+def render_frames(frame_count: int = 12, **kwargs) -> rig_compositor.RenderResult:
+    """Composite the standing idle through the shared compositor, at the one shared
+    `char_gen.character_scale.CHARACTER_SCALE` -- the render this round adds so the
+    standing idle's own figure height can be measured and compared against a crouch,
+    rather than asserted from intent. Does not touch, and is not used to regenerate,
+    the already-approved `docs/assets/evidence/T-0430` files."""
+    parts = rig_compositor.load_parts()
+    rig = rig_compositor.load_rig()
+    lengths = rig_compositor.measured_bone_lengths(parts, rig)
+    stance = leg_stance(lengths["thigh_R"], lengths["calf_R"])
+    return rig_compositor.render_frames(stance, _upper_pose_at, frame_count, **kwargs)

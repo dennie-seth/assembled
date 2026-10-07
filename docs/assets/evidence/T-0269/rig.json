@@ -1,0 +1,62 @@
+{
+  "frames": 6,
+  "cell_px": 48,
+  "character_scale": 0.0398,
+  "ground_anchor_cell_y": 44.0,
+  "crouch_stance": {
+    "ground_plane_y": 300.0,
+    "hip_y": 0.0,
+    "hip_forward_of_ankle_x": 0.0,
+    "thigh_deg": 73.59324980231129,
+    "knee_flexion_deg": 119.37363708853394,
+    "torso_lean_deg": 0.0,
+    "feet_planted": "flat"
+  },
+  "contacts": {
+    "hip_xy": [
+      0.0,
+      0.0
+    ],
+    "ankle_r_xy": [
+      0.0,
+      300.0
+    ],
+    "ankle_l_xy": [
+      -12.155,
+      300.0
+    ]
+  },
+  "native_figure_height_px": {
+    "crouch": 700.58,
+    "standing": 977.5400000000001
+  },
+  "final_figure_height_px_at_common_scale": {
+    "crouch": 27.883084000000004,
+    "standing": 38.90609200000001
+  },
+  "breath_rise_frac": {
+    "crouch": 0.15,
+    "standing_idle_cycle": 0.108
+  },
+  "upper_body_travel_final_px": {
+    "crouch": 1.53429
+  },
+  "changed_px_per_frame_pair": [
+    66164,
+    70970,
+    67841,
+    67841,
+    70970,
+    66164
+  ],
+  "loop_seam_changed_px": 66164,
+  "lower_body_band": [
+    4,
+    628,
+    961,
+    902
+  ],
+  "sheet": "/home/dennieseth/dev/assembled-board/worktrees/T-0269/docs/assets/evidence/T-0269/sitting_idle_sheet_48.png",
+  "gif": "/home/dennieseth/dev/assembled-board/worktrees/T-0269/docs/assets/evidence/T-0269/sitting_idle_loop_x8.gif",
+  "comparison": "/home/dennieseth/dev/assembled-board/worktrees/T-0269/docs/assets/evidence/T-0269/scale_match_crouch_vs_standing.png"
+}
