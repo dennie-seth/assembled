@@ -1,0 +1,214 @@
+{
+  "sheet": "player_walk_sheet_deterministic_T0431.png",
+  "grid": {
+    "cols": 4,
+    "rows": 2,
+    "cell_px": 48,
+    "frame_cells": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        0,
+        3
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        1,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        1,
+        3
+      ]
+    ]
+  },
+  "motion_class": "locomotion",
+  "thresholds": {
+    "frame_delta_cap": 0.5,
+    "frame_delta_cap_diagnostic_only": true,
+    "arm_c_benchmark": [
+      0.072,
+      0.112
+    ]
+  },
+  "frame_pairs": [
+    {
+      "pair": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "pixel_delta_count": 274,
+      "silhouette_delta_ratio": 0.39947780678851175,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ]
+      ],
+      "pixel_delta_count": 248,
+      "silhouette_delta_ratio": 0.37037037037037035,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ]
+      ],
+      "pixel_delta_count": 216,
+      "silhouette_delta_ratio": 0.2765273311897106,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "pixel_delta_count": 276,
+      "silhouette_delta_ratio": 0.43010752688172044,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "pixel_delta_count": 265,
+      "silhouette_delta_ratio": 0.3974358974358974,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "pixel_delta_count": 265,
+      "silhouette_delta_ratio": 0.37329700272479566,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "pixel_delta_count": 220,
+      "silhouette_delta_ratio": 0.22950819672131148,
+      "within_frame_delta_cap": true
+    },
+    {
+      "pair": [
+        [
+          1,
+          3
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "pixel_delta_count": 264,
+      "silhouette_delta_ratio": 0.40625,
+      "within_frame_delta_cap": true
+    }
+  ],
+  "pixel_delta_summary": {
+    "counts": [
+      274,
+      248,
+      216,
+      276,
+      265,
+      265,
+      220,
+      264
+    ],
+    "max": 276,
+    "min": 216,
+    "max_min_ratio": 1.2777777777777777
+  },
+  "silhouette_delta_range": [
+    0.22950819672131148,
+    0.43010752688172044
+  ],
+  "checks": {
+    "character_arm_c_provenance": {
+      "passed": true,
+      "reason": "player_walk_sheet_deterministic_T0431.png: frame_delta_range + Arm-C benchmark comparison both recorded"
+    },
+    "character_frame_delta_cap": {
+      "passed": true,
+      "reason": "player_walk_sheet_deterministic_T0431.png: motion_class='locomotion' -- the whole-silhouette XOR/union frame-delta cap is retired for locomotion/transition/loop (T-0340, docs/decision-log.md DL-31); see check_character_motion_fidelity"
+    },
+    "character_motion_fidelity": {
+      "passed": false,
+      "reason": "player_walk_sheet_deterministic_T0431.png: motion_class='locomotion' pose-fidelity IoU floor 0.6022 < 0.7, identity-stability distance 0.1719 > 0.15 [recomputed live from the sheet's own pixels + versioned rig keypoints, not the sidecar's recorded range]"
+    },
+    "character_part_identity": {
+      "passed": true,
+      "reason": "player_walk_sheet_deterministic_T0431.png: worst per-region palette-histogram distance vs frame 0's own per-part pixels 0.2944 <= cap 0.4 [recomputed live from the sheet's own pixels + versioned rig keypoints, per named region (head/torso/near_limb/far_limb), each frame compared against frame 0's own real per-part pixels -- never a rig silhouette]"
+    },
+    "character_motion_score_binding": {
+      "passed": true,
+      "reason": "player_walk_sheet_deterministic_T0431.png: motion_score_binding matches the sheet's current content, rig/config version, palette and evaluator, and the recorded score agrees with a fresh pixel recompute"
+    }
+  }
+}
