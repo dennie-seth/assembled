@@ -48,20 +48,22 @@ def load_parts(parts_dir: Path = PARTS_DIR) -> dict[str, Image.Image]:
     return {name: Image.open(parts_dir / f"{name}.png").convert("RGBA") for name in PART_NAMES}
 
 
-def calf_l_scale(rig: dict) -> float:
-    return float(rig["bone_length_fix"]["scaled"]["calf_L"])
-
-
 def scaled_parts(parts: dict[str, Image.Image], rig: dict) -> dict[str, Image.Image]:
-    """calf_L carries the rig's own length-scale correction -- its upper portion is
-    occluded by the near leg in a side view, so the cut is short even though the bone is
-    not. Scaling the part restores the bone; the normalized pivot keeps the chain intact."""
-    scale = calf_l_scale(rig)
+    """Every part named in `bone_length_fix.scaled` carries the rig's own length-scale
+    correction -- generic over however many entries that dict has (T-0436 added
+    `shoulder_L` alongside `calf_L`; a future round can add more without a new code
+    path here). The two existing corrections are for opposite reasons: `calf_L`'s
+    upper portion is occluded by the near leg in a side view, so its cut is SHORT even
+    though the bone is not; `shoulder_L` is cut further down the arm than `shoulder_R`,
+    so its cut is LONG. Either way, scaling the part restores the bone, and the
+    normalized pivot keeps the chain intact."""
+    scales = rig["bone_length_fix"]["scaled"]
     out = dict(parts)
-    w, h = parts["calf_L"].size
-    out["calf_L"] = parts["calf_L"].resize(
-        (round(w * scale), round(h * scale)), Image.Resampling.LANCZOS
-    )
+    for name, scale in scales.items():
+        w, h = parts[name].size
+        out[name] = parts[name].resize(
+            (round(w * scale), round(h * scale)), Image.Resampling.LANCZOS
+        )
     return out
 
 
@@ -176,11 +178,36 @@ def build_placements(
     *,
     z_override: dict[str, float] | None = None,
     foot_flatten: dict[str, float] | None = None,
+    shoulder_points: dict[str, tuple[float, float]] | None = None,
+    hip_points: dict[str, tuple[float, float]] | None = None,
+    lateral_offset_frac: dict[str, float] | None = None,
 ) -> list[Placement]:
     """Place all ten parts for one phase. Generic over pose: the hip, both leg angles
     and the far-leg offset all come from `leg`; the only thing that may differ frame to
-    frame is `upper.upper_dy`."""
+    frame is `upper.upper_dy`.
+
+    Three keyword-only parameters, added for T-0436, all default to `None` and are a
+    complete no-op when omitted -- every pre-existing pose module (`idle_cycle`,
+    `walk_cycle`, `sitting_idle_cycle`) omits all three, so none of them changes
+    behaviour because these exist:
+
+    * `shoulder_points` -- `{"R": (x, y), "L": (x, y)}` world points, replacing the
+      single shared `attach["shoulder"]` point every pose used before this card.
+    * `hip_points` -- same shape, replacing `leg_hip_points`'s computed result.
+    * `lateral_offset_frac` -- `{part_name: frac}`, an ADDITIONAL sideways shift (as a
+      fraction of the torso's own width) applied to that part's own target position,
+      on top of whatever `shoulder_points`/`hip_points`/forward-kinematics already put
+      it at. A part hanging from a shifted root (e.g. `forearm_L` from `shoulder_L`)
+      inherits the shift through the chain automatically; naming it again here adds a
+      further, independent nudge. This is the mechanism a 3/4 pose uses to pull a
+      far-side limb clear of the torso's own rectangular silhouette -- a z/depth value
+      only changes which part wins a contested pixel, never where either one is."""
     torso = scaled["torso"]
+
+    def lateral(point: tuple[float, float], name: str) -> tuple[float, float]:
+        if not lateral_offset_frac or name not in lateral_offset_frac:
+            return point
+        return (point[0] + lateral_offset_frac[name] * torso.width, point[1])
 
     def pivot_of(name: str) -> tuple[float, float]:
         img = scaled[name]
@@ -225,19 +252,27 @@ def build_placements(
     neck_world = attach_world("neck")
     placements.append(place("head", upper.torso_deg + upper.head_deg, neck_world))
 
-    shoulder_world = attach_world("shoulder")
     shoulder_abs_deg = upper.torso_deg + upper.shoulder_deg
     for side in ("R", "L"):
         sh_name, fa_name = f"shoulder_{side}", f"forearm_{side}"
-        placements.append(place(sh_name, shoulder_abs_deg, shoulder_world))
-        elbow = distal_joint(shoulder_world, lengths[sh_name], shoulder_abs_deg)
+        sh_world = (
+            shoulder_points[side] if shoulder_points is not None else attach_world("shoulder")
+        )
+        sh_world = lateral(sh_world, sh_name)
+        placements.append(place(sh_name, shoulder_abs_deg, sh_world))
+        elbow = distal_joint(sh_world, lengths[sh_name], shoulder_abs_deg)
+        elbow = lateral(elbow, fa_name)
         placements.append(place(fa_name, shoulder_abs_deg + upper.elbow_deg, elbow))
 
-    for side, hip_side in leg_hip_points(leg, torso.width).items():
+    resolved_hip_points = hip_points if hip_points is not None else leg_hip_points(leg, torso.width)
+    for side, hip_side in resolved_hip_points.items():
         th_name, cf_name = f"thigh_{side}", f"calf_{side}"
+        hip_side = lateral(hip_side, th_name)
         thigh_deg, knee_flexion_deg = leg_angles(leg, side)
         placements.append(place(th_name, thigh_deg, hip_side))
         knee, ankle = leg_chain(hip_side, lengths[th_name], lengths[cf_name], leg, side)
+        knee = lateral(knee, cf_name)
+        ankle = lateral(ankle, cf_name)
         calf_deg = thigh_deg - knee_flexion_deg
         extra = (foot_flatten or {}).get(cf_name, 0.0)
         if extra:
@@ -327,11 +362,18 @@ def render_frames(
     rig_path: Path = RIG_PATH,
     z_override: dict[str, float] | None = None,
     foot_flatten: dict[str, float] | None = None,
+    shoulder_points: dict[str, tuple[float, float]] | None = None,
+    hip_points: dict[str, tuple[float, float]] | None = None,
+    lateral_offset_frac: dict[str, float] | None = None,
 ) -> RenderResult:
     """Composite `frame_count` frames for one pose. `character_scale` and
     `ground_anchor_cell_y` default to the one shared convention in
     `char_gen.character_scale` -- a caller only overrides them in a test that is
-    specifically checking the shared-scale behaviour itself."""
+    specifically checking the shared-scale behaviour itself.
+
+    `shoulder_points`/`hip_points`/`lateral_offset_frac` (T-0436) pass straight
+    through to `build_placements` -- see its own docstring. All three default to
+    `None`, so every pre-existing caller is unaffected."""
     parts = load_parts(parts_dir)
     rig = load_rig(rig_path)
     scaled = scaled_parts(parts, rig)
@@ -343,7 +385,9 @@ def render_frames(
     phases = [i / frame_count for i in range(frame_count)]
     all_placements = [
         build_placements(upper_pose_at(ph, torso_height), leg, scaled, rig_entries, attach,
-                          lengths, z_override=z_override, foot_flatten=foot_flatten)
+                          lengths, z_override=z_override, foot_flatten=foot_flatten,
+                          shoulder_points=shoulder_points, hip_points=hip_points,
+                          lateral_offset_frac=lateral_offset_frac)
         for ph in phases
     ]
 
@@ -412,14 +456,20 @@ def render_frames(
     # own canvas pixel, and both ankles', a direct pixel proof rather than a band that
     # has to dodge the breathing upper body. Same `leg_chain` two-bone solve
     # `build_placements` used to place each calf -- not a second, re-derived geometry.
-    hip_points = leg_hip_points(leg, scaled["torso"].width)
-    knee_r, ankle_r = leg_chain(hip_points["R"], lengths["thigh_R"], lengths["calf_R"], leg, "R")
-    knee_l, ankle_l = leg_chain(hip_points["L"], lengths["thigh_L"], lengths["calf_L"], leg, "L")
+    resolved_hip_points = hip_points if hip_points is not None else leg_hip_points(
+        leg, scaled["torso"].width
+    )
+    knee_r, ankle_r = leg_chain(
+        resolved_hip_points["R"], lengths["thigh_R"], lengths["calf_R"], leg, "R"
+    )
+    knee_l, ankle_l = leg_chain(
+        resolved_hip_points["L"], lengths["thigh_L"], lengths["calf_L"], leg, "L"
+    )
 
     def to_canvas(pt: tuple[float, float]) -> tuple[int, int]:
         return (round(pt[0] + offset[0]), round(pt[1] + offset[1]))
 
-    hip_px = to_canvas(leg.hip)
+    hip_px = to_canvas(leg.hip if hip_points is None else resolved_hip_points["R"])
     knee_r_px = to_canvas(knee_r)
     knee_l_px = to_canvas(knee_l)
     ankle_r_px = to_canvas(ankle_r)

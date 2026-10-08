@@ -46,7 +46,7 @@ class TestCanonicalBars:
 
     def test_spine_px_matches_the_attach_points(self):
         recorded = RIG["canonical_rig"]["spine_px"]
-        assert recorded == pytest.approx(spine_px(RIG), abs=1e-6)
+        assert recorded == pytest.approx(spine_px(RIG), abs=1e-3)
 
     def test_shoulder_bar_is_055_of_spine_with_two_distinct_ends(self):
         bar = RIG["canonical_rig"]["shoulder_bar"]

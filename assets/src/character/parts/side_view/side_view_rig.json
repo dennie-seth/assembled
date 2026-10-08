@@ -11,9 +11,11 @@
       "far_over_near_pct": 87.0
     },
     "scaled": {
-      "calf_L": 1.2929
+      "calf_L": 1.2929,
+      "shoulder_L": 0.6087
     },
-    "why_not_whole_leg": "scaling thigh_L too would make it longer than thigh_R -- a new asymmetry -- and a uniform +10% would still leave the chain 4.3% short"
+    "why_not_whole_leg": "scaling thigh_L too would make it longer than thigh_R -- a new asymmetry -- and a uniform +10% would still leave the chain 4.3% short",
+    "shoulder_L_note": "T-0436: shoulder_L's raw measured bone length (169.28px) is 64% LONGER than shoulder_R's (103.04px) -- the opposite direction from calf_L. Examined directly, shoulder_L is a clean sleeve crop (alpha fill 0.88, uniform width profile down its length, no torso fragment, no second limb) that is simply cut further down the arm than shoulder_R. An earlier proposal to re-cut it is withdrawn (docs/design/23-canonical-rig.md); 0.6087 = shoulder_R's measured length / shoulder_L's own raw measured length, the same bone_length_fix mechanism calf_L already uses, applied at composite time. The committed shoulder_L.png is untouched."
   },
   "cell_px": 48,
   "figure_px": 40,
@@ -300,6 +302,53 @@
       106.08,
       236.44
     ]
+  },
+  "canonical_rig": {
+    "T0436_source": "@DennieSeth's skeleton reference, zorder_fix_2026-10-08/dennie_canonical_skeleton_ref.png. That file is not present in this worktree or this card's attachments -- every number below is transcribed from the task card's own body/comment (which record it as measured by seeding the image and snapping to the drawn strokes, confirmed by 1px scanline for the two bars), not re-derived from the source pixels by this round. See docs/design/23-canonical-rig.md \"Where these numbers came from.\"",
+    "reference_spine_px": 295.7,
+    "spine_px": 231.3422,
+    "shoulder_bar": {
+      "reference_frac": 0.55,
+      "reference_px": 163,
+      "reference_scanline": "y=249, x 461..624",
+      "px": 127.2382,
+      "R_local_px": [178.5391, 30.84],
+      "L_local_px": [51.3009, 30.84]
+    },
+    "pelvis_bar": {
+      "reference_frac": 0.08,
+      "reference_px": 25,
+      "reference_scanline": "y=543, x 519..544",
+      "px": 18.5074,
+      "R_local_px": [115.3337, 236.44],
+      "L_local_px": [96.8263, 236.44]
+    },
+    "leg_proportions": {
+      "reference_near": {"thigh_frac": 0.68, "shin_frac": 1.21, "ratio": 1.78},
+      "reference_far": {"thigh_frac": 0.72, "shin_frac": 0.80, "ratio": 1.11},
+      "anatomical_expected_ratio": [1.0, 1.1],
+      "adopted": {"thigh_frac": 0.72, "shin_frac": 0.80, "source": "far"},
+      "projection_reasoning": "In this lunge the near thigh points away from the viewer (compressed) while the near shin crosses the view plane (full length), so the near-side ratio (1.78) is a projection artifact rather than anatomy; the far-side ratio (1.11) sits inside the anatomical range (1.0-1.1) and is adopted instead. This REVERSES the general near-side-is-truth rule for THIS pose's legs only -- that rule still holds for the arms (upper_limb_reference_comparison below).",
+      "applied_to_active_rig": false,
+      "why_not_applied": "thigh_R/calf_R (mirrored to thigh_L/calf_L) already drive the leg geometry of every existing animation (walk_cycle, idle_cycle, sitting_idle_cycle); rescaling them to the adopted fractions would shorten every one of those legs by roughly a third, which is exactly the animation re-derivation this card's scope excludes. Recorded here as the target for the follow-on cards that re-derive each animation's own leg geometry."
+    },
+    "upper_limb_reference_comparison": {
+      "upper_arm_near_reference_frac": 0.47,
+      "upper_arm_near_current_frac": 0.4454,
+      "forearm_near_reference_frac": 0.66,
+      "forearm_near_current_frac": 0.8573,
+      "note": "Upper arm is already close to the reference (within 0.03 of spine, 'already right'); forearm is about +30% over. Neither is corrected this round, for the same reason as leg_proportions.why_not_applied -- every existing animation drives its forearm length from this same rig entry, and rescaling it is the follow-on cards' business."
+    },
+    "lateral_offset_axis": {
+      "description": "A per-part, opt-in sideways (local-x) displacement -- rig_compositor.build_placements's lateral_offset_frac parameter, expressed as a fraction of the torso's own width. Distinct from z-order: z decides which part wins a contested pixel, this moves the pixel itself. Every part defaults to 0.0 (no displacement, no behaviour change) unless named in a caller's own dict; no existing pose module (walk_cycle, idle_cycle, sitting_idle_cycle) passes this parameter, so none of them is affected by this axis existing.",
+      "demonstration_values": {
+        "shoulder_L": -0.50,
+        "forearm_L": -0.20,
+        "thigh_L": -0.08,
+        "calf_L": -0.03
+      },
+      "demonstration_values_note": "Used only by char_gen.reference_pose_T0436's static render, chosen empirically so shoulder_L/forearm_L clear the torso's own silhouette -- see docs/design/23-canonical-rig.md for the resulting visible-pixel counts."
+    }
   },
   "root_bob_px": 5.65,
   "far_limb_darken": 0.58,
