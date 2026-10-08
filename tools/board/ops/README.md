@@ -81,6 +81,9 @@ scope for these scripts.
 not participate in the asset/backup/integrity pipeline above. See its own
 section below.
 
+`board-ledger-export.sh` (T-0434) is also separate and independent -- see
+"Scheduled approval-ledger export (T-0434)" below.
+
 ## Scripts
 
 | Script | Purpose |
@@ -93,6 +96,7 @@ section below.
 | `board-db-backup.sh` | Runs the app's `npm run backup:db` (WAL-safe online backup) then prunes old backups under `<dataDir>/backups/` to a retention count; used by the daily timer. Also uploads the newest backup to Drive and prunes the Drive folder to a small retention count. |
 | `check-comfyui-regime.sh` (T-0322) | Wrapper for `npm run check:comfyui-regime` (`../scripts/checkComfyUiRegime.js`, part of the ordinary `tools/board` npm/Vitest project, **not** copied to `~/.local/bin` itself), following the same `flock` + timestamped-log pattern as `board-db-backup.sh`. Read-only against ComfyUI (`GET /system_stats` only). Fails loudly if the live server's `argv` has drifted from the regime declared in `comfyui-regime.json`, in either direction. See `docs/comfyui-setup.md#determinism`. Also invocable directly (ad hoc or from an asset-generation preflight) without this wrapper. |
 | `vetAndReady.sh` (T-0384) | `flock`-guarded wrapper for `npm run vet:ready -- --apply` (`../ops/vetAndReady.js`, part of the ordinary `tools/board` npm/Vitest project, **not** copied to `~/.local/bin` itself). See "Nightly vet-and-ready (T-0384)" below. |
+| `board-ledger-export.sh` (T-0434) | `flock`-guarded wrapper for `npm run export:ledger:scheduled` (`../ops/exportApprovalLedgerScheduled.js`, part of the ordinary `tools/board` npm/Vitest project, **not** copied to `~/.local/bin` itself). See "Scheduled approval-ledger export (T-0434)" below. |
 
 ## Install locations on the box
 
@@ -125,6 +129,11 @@ section below.
 | `BOARD_DB_BACKUP_RCLONE_REMOTE` | db-backup | `gdrive:` |
 | `BOARD_DB_BACKUP_DRIVE_DIR` | db-backup | `Assembled — DB Backups` (Drive folder, created if missing) |
 | `BOARD_DB_BACKUP_DRIVE_RETENTION` | db-backup | `2` (Drive copies kept before pruning) |
+| `BOARD_REPO_ROOT` | ledger-export | `~/dev/assembled-board` (repo checkout; the job commits+pushes directly on this checkout's current branch) |
+| `BOARD_LEDGER_EXPORT_BRANCH` | ledger-export | `develop` (the only branch this job will ever commit to -- see "Scheduled approval-ledger export (T-0434)" below) |
+| `BOARD_LEDGER_EXPORT_REMOTE` | ledger-export | `origin` |
+| `BOARD_LEDGER_REFRESH_THRESHOLD_HOURS` | ledger-export | `12` (well under the CI gate's `BOARD_APPROVAL_LEDGER_STALE_HOURS`, 24h) |
+| `BOARD_LEDGER_EXPORT_LOG_DIR` | ledger-export | `~/.local/state/board-ledger-export` |
 
 `board-assets-drivemap.py` and `board-assets-copy.py` also depend on an
 `rclone` remote named `gdrive:` (configured separately via `rclone config`,
@@ -145,6 +154,7 @@ folder-ID lookup, since it only ever needs the one destination.
 | `board-integrity-check.timer` | daily at 03:20 (±300s random delay) | `board-integrity-check.py` |
 | `check-comfyui-regime.timer` (T-0322) | hourly (±120s random delay) | `check-comfyui-regime.sh` |
 | `board-vet-and-ready.timer` (T-0384) | daily at ~01:00 (±300s random delay) | `board-vet-and-ready.sh` |
+| `board-ledger-export.timer` (T-0434) | every 4 hours (`OnCalendar=*-*-* 0/4:00:00`, ±120s random delay) | `board-ledger-export.sh` |
 
 All timers are `Persistent=true` (catch up on a missed run after the box was
 off) and installed under `~/.config/systemd/user/`, enabled with
@@ -529,6 +539,219 @@ systemctl --user enable --now board-vet-and-ready.timer
 Check the last run with `systemctl --user status board-vet-and-ready.service`,
 `journalctl --user -u board-vet-and-ready.service`, or by reading
 `~/.local/state/board-vet-and-ready/latest.md` directly.
+
+## Scheduled approval-ledger export (T-0434)
+
+### The incident
+
+`tools/board/approval-ledger.json` is the committed snapshot
+`checkApprovalProvenanceDrift.js` falls back to in CI, where `tasks/*.md`
+stops at T-0365 and the live DB is unreachable. It was regenerated only by
+hand, or incidentally by `approvalLedgerRegen.js` inside `_handlePass` --
+and that regeneration runs only on a PASS, writes into THAT card's own
+worktree, and (correctly, for its own purpose) skips the write whenever the
+regenerated `cards` are byte-identical to what's committed, so an unrelated
+PR never carries a `generated_at`-only diff. A quiet stretch on `develop`
+with no approval-bearing PASS means nothing ever refreshes the ledger
+`develop` itself carries, and `checkApprovalProvenanceDrift.js` fails any PR
+sitting more than `BOARD_APPROVAL_LEDGER_STALE_HOURS` (24h) past the last
+refresh -- which is exactly what blocked PR #440 (46h old) and PR #439
+(62.9h old) on 2026-10-07/08, neither PR touching approvals at all.
+
+### The decision
+
+Two naive fixes both fail (see the card and
+`src/lib/approvalLedgerScheduleDecision.js`'s own docstring):
+
+- **Commit every scheduled run.** `generated_at` changes on every export, so
+  this commits a no-op diff every single run -- daily churn in the repo
+  history for nothing.
+- **Commit only when the cards changed.** A quiet week never refreshes
+  `generated_at`, so the ledger ages past 24h anyway -- the exact #440/#439
+  incident, just moved from "nobody ran the exporter" to "the exporter ran
+  but had nothing new to say."
+
+**Chosen: "refresh-before-it-bites."** `decideLedgerExport` (same module)
+commits when the exported cards changed, **or** when the currently
+committed ledger is already older than `BOARD_LEDGER_REFRESH_THRESHOLD_HOURS`
+(default 12h -- well under the gate's 24h). `exportApprovalLedgerScheduled.js`
+runs this every 4 hours against the real `develop` checkout (see "Why this,
+not the integrity checker" below for why that cadence, not something
+coarser).
+
+**The cost, stated and measured, not asserted:** during a totally quiet
+period (no card's approval fields ever change), this commits roughly once
+per threshold window, not once per run.
+`test/lib/approvalLedgerScheduleDecision.test.js`'s
+`simulateWorstCaseAgeHours` spec ("does not commit on every run during a
+quiet period") proves this directly: over a simulated 240h (10-day) quiet
+stretch at a 4h cadence, that's 60 scheduled runs but fewer than 30 commits
+-- bounded churn, not the every-run failure mode, and nowhere near zero
+either. That's the price of the guarantee below.
+
+### Proof it refreshes before the gate bites
+
+The same module's `simulateWorstCaseAgeHours` is the worked timeline the
+card's acceptance criteria ask for, not a comment asserting it:
+
+- **Normal operation** (interval 4h, threshold 12h, no run ever missed):
+  worst-case ledger age never exceeds `threshold + interval` = 16h,
+  comfortably under the gate's 24h. Spec: "never lets the ledger's age
+  exceed threshold + interval over a long quiet period, on schedule."
+- **One scheduled run silently missed** (the box was off for one tick):
+  worst case rises to 20h -- still under 24h. Spec: "stays under the 24h
+  gate even when a single scheduled run is missed entirely."
+- **Two consecutive missed runs**: worst case is 20h -- `Persistent=true`
+  only needs to catch the schedule up by the NEXT tick, not instantly, so
+  two misses in a row still land inside the bound. Spec: "two consecutive
+  missed runs still stay under the 24h gate."
+- **The actual limit, named rather than hidden**: four consecutive missed
+  runs (a 16h+ outage) pushes the worst case to 28h, past the gate. Spec:
+  "names the actual limit of this design." An outage that long already
+  means every OTHER timer in this ops suite (`board-db-backup`,
+  `board-integrity-check`, `board-assets-sync`) has been silent for the
+  same stretch -- this job's own skip/run log is one more place that shows
+  it, not the only place an operator would notice.
+
+### No partial writes
+
+`exportApprovalLedgerScheduled.js` always exports to a temp file first
+(`<ledger path>.tmp-<timestamp>`) via the existing, unmodified
+`scripts/exportApprovalLedger.js`. The real committed `approval-ledger.json`
+is only ever touched by an atomic `fs.rename` over it, and only after the
+subprocess exits 0 AND the temp file parses as JSON with a non-empty
+`cards` array. A failed export (commonly: the task store/DB was
+unreachable -- the underlying exporter already refuses to write an empty
+ledger and exits 1) or an empty/invalid result both return
+`EXIT_CODE_EXPORT_FAILED` with the renamed real file never touched --
+pinned by `test/ops/exportApprovalLedgerScheduled.test.js`'s "reports
+export failure and never commits..." and "refuses an empty/invalid exported
+ledger..." specs, both asserting `renameFn` was never called.
+
+### Safe against a live board / a run in progress
+
+Before doing anything else, the job requires:
+
+1. **The checkout is on `develop`** (`BOARD_LEDGER_EXPORT_BRANCH`). Any
+   other branch is a deliberate no-op skip (`reason: "wrong-branch"`) --
+   this job commits to exactly one branch and never to whatever a human or
+   another process happens to have checked out.
+2. **Nothing is dirty except possibly the ledger file itself.** Any other
+   uncommitted change in the working tree is read as "a run or other work
+   may be in progress here" and the whole run skips without writing
+   anything (`reason: "working-tree-dirty"`). Since every card's actual
+   implementation work happens in its own worktree under `worktrees/`, not
+   in this shared checkout, a dirty tree here is already unusual -- this
+   job treats "unusual" as "don't touch it" rather than guessing.
+3. **Local `develop` matches `origin/develop` exactly**, re-checked via a
+   fresh `git fetch` immediately before the comparison. A mismatch skips
+   (`reason: "not-in-sync-with-remote"`) rather than running `git pull` or
+   any other automatic merge -- this job never resolves a divergence by
+   itself, only by a human fixing the checkout (the next run re-checks).
+
+### Branch target and pushing
+
+**It pushes.** A local-only commit never reaches CI -- GitHub Actions
+clones from the remote, not from this box's disk -- so a commit that stays
+local defeats the entire point of this card. After the commit, the job runs
+`git push origin develop` (never `--force`). If the push fails (e.g. a race
+against a human push landing in the small gap between the sync check above
+and this push), that's reported as its own distinct exit code
+(`EXIT_CODE_GIT_FAILED`, `reason: "push-failed"`) -- the commit stays local,
+and the NEXT run's sync check (step 3 above) will keep skipping until a
+human resolves the divergence by hand. This is deliberately not retried or
+auto-merged.
+
+### A feature branch cut before the refresh
+
+Accepted, not addressed. A fresh ledger landing on `develop` does not
+retroactively reach a branch that was cut earlier -- that branch keeps
+whatever copy of the ledger it had at cut time until `develop` is merged
+into it (exactly how PR #439 was actually unstuck). This job only ever
+touches `develop`'s own copy; it has no mechanism to reach into every open
+feature branch, and inventing one (force-pushing into other people's
+branches) would be a far more dangerous fix for a narrower problem. A
+feature branch open long enough to go stale on its OWN copy still needs a
+`develop` merge or rebase, same as before this card.
+
+### DB / exporter unreachable
+
+Surfaced loudly, not silently: the exporter subprocess failing returns
+`EXIT_CODE_EXPORT_FAILED`, which makes the systemd oneshot unit report as
+failed. An operator sees this via `systemctl --user status
+board-ledger-export.service`, `journalctl --user -u
+board-ledger-export.service`, or `~/.local/state/board-ledger-export/latest.log`
+(every run writes a summary there, success or not) -- the same three places
+`board-vet-and-ready.sh` is already checked.
+
+### Two writers at once
+
+`board-ledger-export.sh` takes an exclusive, non-blocking `flock` on
+`/tmp/board-ledger-export.lock` before doing anything, the same pattern
+every other `.sh` wrapper in this directory uses -- a second run that starts
+while one is still in flight exits `0` immediately with a "already
+running, skipping" log line rather than racing it. Beyond self-collision,
+this is the FIRST job in this ops suite to commit+push to the git repo at
+all (every other job here either only reads, or writes to Drive/SQLite, or
+-- `vetAndReady.sh` -- only ever PATCHes the board's own HTTP API, never
+git); its own step-3 sync-with-remote check (above) is what protects it
+against a concurrent HUMAN push to `develop`, which `flock` alone wouldn't
+catch.
+
+### Why this, not the integrity checker
+
+The card's acceptance asks for early warning as the ledger approaches the
+threshold, OR a stated reason that's unnecessary given the chosen fix.
+Chosen: **unnecessary, for two reasons.**
+
+First, structurally: under normal operation (fewer than four consecutive
+missed 4-hourly runs -- see "Proof it refreshes before the gate bites"
+above), the committed ledger cannot reach anywhere near the 24h gate at
+all, so a once-a-day 03:20 check (`board-integrity-check.py`'s own cadence)
+reporting "age approaching threshold" would almost never fire, and on the
+rare day a 16h+ outage made it fire, every other timer in this same suite
+would already be silent for the same stretch -- that silence is the
+earlier, broader signal.
+
+Second, practically: this job's own per-run log (`latest.log`/`history.log`,
+written every 4 hours regardless of outcome) already reports the ledger's
+age at 4h granularity -- finer than `board-integrity-check.py`'s once-daily
+check could ever provide. Adding a second, coarser copy of the same
+observation to a Python script this agent cannot execute or test
+(`board-integrity-check.py` has no pytest coverage, and the `infra` persona
+has no Python grant at all -- editing it without being able to run it would
+itself violate this repo's non-negotiable TDD rule) would trade a real
+test for an untested one, for strictly less information than the log this
+job already writes.
+
+### No gate weakened
+
+`checkApprovalProvenanceDrift.js` and `BOARD_APPROVAL_LEDGER_STALE_HOURS`
+are untouched by this card -- nothing here edits the gate itself, only what
+feeds it. The gate's own existing suite
+(`test/checkApprovalProvenanceDrift.e2e.test.js`,
+`test/approvalProvenanceDrift.test.js`) still exercises the
+stale-and-load-bearing failure path unchanged and green; a genuinely stale,
+genuinely load-bearing ledger still fails the gate exactly as before.
+
+### Installing (not done by this card, on purpose)
+
+Same posture as `board-vet-and-ready.timer`: this card's acceptance is the
+script, its tests, and these committed unit files -- not a live, enabled
+timer on the actual box. Installing is a separate, later, human step:
+
+```sh
+cp tools/board/ops/board-ledger-export.sh ~/.local/bin/board-ledger-export.sh
+chmod +x ~/.local/bin/board-ledger-export.sh
+cp tools/board/ops/systemd/board-ledger-export.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now board-ledger-export.timer
+```
+
+Check the last run with `systemctl --user status
+board-ledger-export.service`, `journalctl --user -u
+board-ledger-export.service`, or by reading
+`~/.local/state/board-ledger-export/latest.log` directly.
 
 ## Deploying changes
 
