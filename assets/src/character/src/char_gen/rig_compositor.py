@@ -194,14 +194,21 @@ def build_placements(
     * `shoulder_points` -- `{"R": (x, y), "L": (x, y)}` world points, replacing the
       single shared `attach["shoulder"]` point every pose used before this card.
     * `hip_points` -- same shape, replacing `leg_hip_points`'s computed result.
-    * `lateral_offset_frac` -- `{part_name: frac}`, an ADDITIONAL sideways shift (as a
-      fraction of the torso's own width) applied to that part's own target position,
-      on top of whatever `shoulder_points`/`hip_points`/forward-kinematics already put
-      it at. A part hanging from a shifted root (e.g. `forearm_L` from `shoulder_L`)
-      inherits the shift through the chain automatically; naming it again here adds a
-      further, independent nudge. This is the mechanism a 3/4 pose uses to pull a
-      far-side limb clear of the torso's own rectangular silhouette -- a z/depth value
-      only changes which part wins a contested pixel, never where either one is."""
+    * `lateral_offset_frac` -- `{part_name: frac}`, a sideways shift (as a fraction of
+      the torso's own width) applied ONCE per limb chain, at that chain's ROOT part
+      (`shoulder_*` for the arm chain, `thigh_*` for the leg chain). The distal part
+      (`forearm_*`/`calf_*`) is never shifted a second time -- it inherits the root's
+      shift automatically through the forward-kinematics chain, since its own target
+      is computed from the root's already-shifted position. A caller may still name
+      the distal part in this dict at the SAME fraction as its root, to document "one
+      offset for this whole chain" (the committed rig's own
+      `canonical_rig.lateral_offset_axis.demonstration_values` does exactly this) --
+      but that entry is not separately consulted, precisely so two equal values can
+      never compound into a doubled shift that tears the chain's two sprites apart
+      (T-0436 FAIL verdict 2026-10-08T21:54:30Z). This is the mechanism a 3/4 pose
+      uses to pull a far-side limb clear of the torso's own rectangular silhouette --
+      a z/depth value only changes which part wins a contested pixel, never where
+      either one is."""
     torso = scaled["torso"]
 
     def lateral(point: tuple[float, float], name: str) -> tuple[float, float]:
@@ -260,8 +267,10 @@ def build_placements(
         )
         sh_world = lateral(sh_world, sh_name)
         placements.append(place(sh_name, shoulder_abs_deg, sh_world))
+        # elbow inherits sh_world's own shift through this FK step -- the chain's
+        # ONE lateral offset lives at the root; fa_name is never applied a second
+        # time (see lateral_offset_frac's own docstring above).
         elbow = distal_joint(sh_world, lengths[sh_name], shoulder_abs_deg)
-        elbow = lateral(elbow, fa_name)
         placements.append(place(fa_name, shoulder_abs_deg + upper.elbow_deg, elbow))
 
     resolved_hip_points = hip_points if hip_points is not None else leg_hip_points(leg, torso.width)
@@ -270,9 +279,10 @@ def build_placements(
         hip_side = lateral(hip_side, th_name)
         thigh_deg, knee_flexion_deg = leg_angles(leg, side)
         placements.append(place(th_name, thigh_deg, hip_side))
+        # knee/ankle inherit hip_side's own shift through this FK step -- same
+        # one-offset-per-chain rule as the arm chain above; cf_name is never
+        # applied a second time.
         knee, ankle = leg_chain(hip_side, lengths[th_name], lengths[cf_name], leg, side)
-        knee = lateral(knee, cf_name)
-        ankle = lateral(ankle, cf_name)
         calf_deg = thigh_deg - knee_flexion_deg
         extra = (foot_flatten or {}).get(cf_name, 0.0)
         if extra:
