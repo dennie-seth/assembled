@@ -94,6 +94,53 @@ class TestTwoPointAttachInTheReferencePose:
         assert dx == pytest.approx(expected, abs=1.0)
 
 
+class TestHipPxMatchesWorldOrigin:
+    """Regression for the reviewer's FAIL verdict (2026-10-08T22:18:16Z): passing
+    `hip_points` into `render_frames` must not change what `RenderResult.hip_px`
+    means. `gen_reference_pose_evidence_T0436.py` relies on `hip_px` being the
+    canvas pixel for world `(0, 0)` to place every other overlay point via its own
+    `to_canvas`; `rig_compositor.render_frames` silently redefined it to the canvas
+    pixel of `hip_R` whenever `hip_points` was supplied, a +9.06px error measured
+    directly on the committed overlay."""
+
+    def test_hip_px_is_the_canvas_pixel_for_world_origin(self):
+        placements = refpose.build_reference_placements()
+        origin, _size = _canvas_geometry(placements)
+        expected = (round(-origin[0]), round(-origin[1]))
+        result = refpose.render()
+        assert result.hip_px == expected
+
+
+class TestLegDebugPixelsTrackTheLateralOffset:
+    """Regression for the same FAIL verdict's secondary defect: `render_frames`'s
+    debug `knee_l_px`/`ankle_l_px` were computed from `resolved_hip_points["L"]`
+    WITHOUT the chain's own lateral offset, while the actually-placed `calf_L`
+    (via `build_placements`) DOES carry it -- the two disagreed by exactly the
+    offset whenever `lateral_offset_frac` is active."""
+
+    def test_ankle_l_px_matches_the_leg_chain_solved_from_the_actually_placed_thigh_l(self):
+        placements = {p.name: p for p in refpose.build_reference_placements()}
+        rig = rig_compositor.load_rig()
+        lengths = rig_compositor.measured_bone_lengths(rig_compositor.load_parts(), rig)
+        # ground_plane_y only feeds leg_stance's dataclass, not leg_chain's own
+        # math (hip_side/thigh_len/calf_len/leg.thigh_deg_l/knee_flexion_deg_l do) --
+        # any finite value reproduces the same thigh_deg_l/knee_flexion_deg_l this
+        # module's leg_stance always uses.
+        stance = refpose.leg_stance((0.0, 0.0), ground_plane_y=0.0)
+        # thigh_L.target_xy is the ground truth -- build_placements already applied
+        # this chain's lateral offset to it before using it as the leg_chain root.
+        _knee_l_expected, ankle_l_expected = rig_compositor.leg_chain(
+            placements["thigh_L"].target_xy, lengths["thigh_L"], lengths["calf_L"], stance, "L",
+        )
+        origin, _size = _canvas_geometry(list(placements.values()))
+        expected_ankle_l_px = (
+            round(ankle_l_expected[0] - origin[0]), round(ankle_l_expected[1] - origin[1]),
+        )
+
+        result = refpose.render()
+        assert result.ankle_l_px == expected_ankle_l_px
+
+
 class TestDeterminism:
     def test_render_is_deterministic(self):
         r1 = refpose.render()
