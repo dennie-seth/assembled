@@ -208,6 +208,17 @@ describe("draftRemediationCard", () => {
     expect(fields.body).toContain(`Verified: ${HOST_ACTION.verify}`);
   });
 
+  it("assigns agent: dispatch regardless of the blocker category -- classification changes report text only, never routing (T-0412 round 2: retracts round 1's claim that permission-grant routes differently from other categories)", () => {
+    const codeTestBugReport = { ...REPORT, lacks: { ...REPORT.lacks, category: "code-test-bug" } };
+    const hostActionFields = draftRemediationCard({ task: ORIGINAL_TASK, report: HOST_ACTION_REPORT, attemptCount: 5 });
+    const permissionGrantFields = draftRemediationCard({ task: ORIGINAL_TASK, report: REPORT, attemptCount: 5 });
+    const codeTestBugFields = draftRemediationCard({ task: ORIGINAL_TASK, report: codeTestBugReport, attemptCount: 5 });
+
+    expect(hostActionFields.agent).toBe("dispatch");
+    expect(permissionGrantFields.agent).toBe("dispatch");
+    expect(codeTestBugFields.agent).toBe("dispatch");
+  });
+
   it("names a distinct preflight context line, with no attempt count, when report.preflight is set", () => {
     const preflightReport = { ...HOST_ACTION_REPORT, preflight: true };
     const fields = draftRemediationCard({

@@ -197,6 +197,26 @@ describe("commandTargetsClaudeDirWrite", () => {
     );
   });
 
+  it("allows git commit/log/show/diff even when their own message/pathspec text mentions a .claude/ path (T-0412)", () => {
+    // Live-reproduced this session (T-0412): a `git commit -m "..."` whose message text itself
+    // *discusses* a .claude/ path (exactly what any card working on this guard's own history
+    // naturally wants to write) was denied, even though a commit message is never a write target
+    // -- `git commit` snapshots the already-staged index; it cannot create or modify a working-tree
+    // file under .claude/ no matter what its -m argument says. `git log -- .claude/...`/`git diff
+    // .claude/...`/`git show HEAD:.claude/...` were already correctly allowed above because those
+    // subcommands are read-only regardless of the path they're pointed at -- `commit` belongs in
+    // the same read-only-for-this-purpose set for the same reason: its argument text can mention
+    // .claude/ without that ever becoming a write to the working tree.
+    expect(
+      commandTargetsClaudeDirWrite("git commit -m 'docs: discusses .claude/rules/planner.md here'")
+    ).toBe(false);
+    expect(
+      commandTargetsClaudeDirWrite(
+        "git commit -m 'fix: closes the .claude/agents/planner.md gap from last review'"
+      )
+    ).toBe(false);
+  });
+
   it("denies a compound command where only one &&/;-joined segment targets .claude/", () => {
     expect(
       commandTargetsClaudeDirWrite("npm test && node -e \"require('fs').writeFileSync('.claude/rules/x.md','y')\"")

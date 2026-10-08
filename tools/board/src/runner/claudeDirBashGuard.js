@@ -174,10 +174,17 @@ const READ_ONLY_VERBS = new Set([
 /** `find`'s own write-capable flags -- `-delete`/`-exec` etc. can mutate despite the bare verb being read-only. */
 const FIND_WRITE_FLAG_RE = /(^|\s)-(delete|exec|execdir|fprint|fprintf|ok|okdir)(\s|$)/;
 
-/** `git` subcommands that never touch the working tree, regardless of what path they're pointed at. */
+/**
+ * `git` subcommands that never touch the working tree, regardless of what path or message text
+ * they're pointed at. `commit` belongs here for the same reason `log`/`diff`/`show` do (T-0412):
+ * it snapshots the already-staged index into a new commit object -- its `-m` message text is
+ * never a write target, so a message that merely *discusses* a path under the protected dotfile
+ * directory (exactly what a card working on this guard's own history naturally writes) must not
+ * be denied the same way reading or diffing that path isn't.
+ */
 const GIT_READ_ONLY_SUBCOMMANDS = new Set([
   "log", "diff", "show", "blame", "status", "ls-files", "ls-tree", "cat-file",
-  "rev-parse", "branch", "describe", "shortlog", "reflog"
+  "rev-parse", "branch", "describe", "shortlog", "reflog", "commit"
 ]);
 
 function segmentIsClaudeDirWrite(segment) {

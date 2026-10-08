@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { categorizeFailure, buildBlockerReport, formatBlockerReportComment, BLOCKER_CATEGORIES } from "../../src/runner/blockerReport.js";
 import { formatHostActionRequest } from "../../src/lib/hostActionRequest.js";
+import { CLAUDE_DIR_DENIAL_REASON, CLAUDE_DIR_BASH_DENIAL_REASON } from "../../src/runner/toolAllowlist.js";
 
 const TASK = {
   id: "T-0042",
@@ -69,6 +70,31 @@ describe("categorizeFailure", () => {
     expect(categorizeFailure("The fix requires host-side access to the Windows host's launcher script.")).toBe(
       "host-action"
     );
+  });
+
+  it("categorizes the CLI's .claude/ Edit/Write sensitive-file denial as permission-grant, not code-test-bug (T-0412)", () => {
+    // T-0408 attempt 3 hit exactly this denial (docs/design/claude-dir-bash-write-guard.md) when
+    // its correct implementation needed to edit .claude/rules/planner.md -- an Edit/Write refusal
+    // that no keyword pattern below recognized, so it defaulted to "code-test-bug". T-0412 round 2:
+    // categorizeFailure runs only after the retry loop has already stopped (see
+    // runOrchestrator.escalation.test.js), so this only changes what the escalation report says,
+    // never whether or how many times the card retried.
+    expect(categorizeFailure(CLAUDE_DIR_DENIAL_REASON)).toBe("permission-grant");
+  });
+
+  it("categorizes the .claude/ Bash-write hook's denial as permission-grant, not code-test-bug (T-0412)", () => {
+    // Same gap for the T-0411 Bash-side guard's own denial text (claudeDirBashHook.js) -- this
+    // relabels an already-stopped card's escalation report and remediation card text so it names
+    // the actual blocker, it does not change whether, when, or how many times the card retried, and
+    // it does not change which agent the remediation card is routed to (T-0412 round 2).
+    expect(categorizeFailure(CLAUDE_DIR_BASH_DENIAL_REASON)).toBe("permission-grant");
+  });
+
+  it("categorizes a realistic FAIL note embedding the .claude/ denial inside surrounding prose (T-0412)", () => {
+    const text =
+      `Attempted to update .claude/rules/planner.md via Edit, but the tool call was refused.\n\n${CLAUDE_DIR_DENIAL_REASON}\n\n` +
+      "No further progress possible without a grant change.";
+    expect(categorizeFailure(text)).toBe("permission-grant");
   });
 
   it("exposes the full set of categories in a stable order, host-action first", () => {
