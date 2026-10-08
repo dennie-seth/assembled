@@ -134,6 +134,7 @@ section below.
 | `BOARD_LEDGER_EXPORT_REMOTE` | ledger-export | `origin` |
 | `BOARD_LEDGER_REFRESH_THRESHOLD_HOURS` | ledger-export | `12` (well under the CI gate's `BOARD_APPROVAL_LEDGER_STALE_HOURS`, 24h) |
 | `BOARD_LEDGER_EXPORT_LOG_DIR` | ledger-export | `~/.local/state/board-ledger-export` |
+| `BOARD_TASK_STORE` | ledger-export | `db` (forwarded to the exporter subprocess -- the live board's own mode; `exportApprovalLedger.js` itself defaults to `fs`, so this job overrides that default rather than inheriting it) |
 
 `board-assets-drivemap.py` and `board-assets-copy.py` also depend on an
 `rclone` remote named `gdrive:` (configured separately via `rclone config`,
@@ -617,16 +618,27 @@ card's acceptance criteria ask for, not a comment asserting it:
 
 `exportApprovalLedgerScheduled.js` always exports to a temp file first
 (`<ledger path>.tmp-<timestamp>`) via the existing, unmodified
-`scripts/exportApprovalLedger.js`. The real committed `approval-ledger.json`
-is only ever touched by an atomic `fs.rename` over it, and only after the
-subprocess exits 0 AND the temp file parses as JSON with a non-empty
-`cards` array. A failed export (commonly: the task store/DB was
-unreachable -- the underlying exporter already refuses to write an empty
-ledger and exits 1) or an empty/invalid result both return
+`tools/board/scripts/exportApprovalLedger.js`, invoked with
+`BOARD_TASK_STORE=db` (the live board's own mode, overridable via the
+job's own `BOARD_TASK_STORE` env var) so the export reads the real backlog
+rather than `tasks/*.md`, which stops at T-0365. The real committed
+`approval-ledger.json` is only ever touched by an atomic `fs.rename` over
+it, and only after the subprocess exits 0 AND the temp file parses as JSON
+with a non-empty `cards` array. A failed export (commonly: the task
+store/DB was unreachable -- the underlying exporter already refuses to
+write an empty ledger and exits 1) or an empty/invalid result both return
 `EXIT_CODE_EXPORT_FAILED` with the renamed real file never touched --
 pinned by `test/ops/exportApprovalLedgerScheduled.test.js`'s "reports
 export failure and never commits..." and "refuses an empty/invalid exported
-ledger..." specs, both asserting `renameFn` was never called.
+ledger..." specs, both asserting `renameFn` was never called. The exact
+subprocess invocation (script path, `BOARD_TASK_STORE`) is itself pinned by
+that suite's "spawns the exporter at its real tools/board path..." and
+"runs the exporter subprocess with BOARD_TASK_STORE=db by default..."
+specs -- a prior round shipped with `cwd=repoRoot` but a
+repo-root-relative `scripts/exportApprovalLedger.js` path (there is no
+`scripts/` directory at the repo root), which made every real scheduled
+run ENOENT silently behind a mocked subprocess boundary the test suite
+never caught.
 
 ### Safe against a live board / a run in progress
 

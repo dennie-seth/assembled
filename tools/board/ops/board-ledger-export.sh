@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Scheduled wrapper for `npm run export:ledger:scheduled` (tools/board/ops/exportApprovalLedgerScheduled.js,
-# T-0434): re-runs the existing, unchanged scripts/exportApprovalLedger.js against the live board's
+# T-0434): re-runs the existing, unchanged tools/board/scripts/exportApprovalLedger.js (with
+# BOARD_TASK_STORE=db, the live board's own mode) against the live board's
 # task store and, following the "refresh-before-it-bites" policy
 # (src/lib/approvalLedgerScheduleDecision.js), commits + pushes a refreshed
 # tools/board/approval-ledger.json to `develop` whenever the exported cards changed OR the

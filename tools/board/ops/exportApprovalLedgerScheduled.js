@@ -11,8 +11,9 @@
  *
  * This is a scheduled, host-side job (see `ops/board-ledger-export.sh` and
  * `ops/systemd/board-ledger-export.{service,timer}`) that runs directly against the `develop`
- * checkout: it re-runs the existing, unchanged `scripts/exportApprovalLedger.js`, and commits +
- * pushes the result using the "refresh-before-it-bites" policy in
+ * checkout: it re-runs the existing, unchanged `tools/board/scripts/exportApprovalLedger.js`
+ * with `BOARD_TASK_STORE=db` (the live board's own mode -- committed `tasks/*.md` stops at
+ * T-0365), and commits + pushes the result using the "refresh-before-it-bites" policy in
  * `src/lib/approvalLedgerScheduleDecision.js` -- commit when the cards changed, OR when the
  * committed ledger is already older than a threshold well under the gate's 24h, so the ledger can
  * never reach that threshold while this job is actually running (see that module's own specs for
@@ -58,15 +59,22 @@ export function resolveConfig(env = process.env) {
     ? parsedThreshold
     : DEFAULT_REFRESH_THRESHOLD_HOURS;
   const logDir = env.BOARD_LEDGER_EXPORT_LOG_DIR || path.join(os.homedir(), ".local", "state", "board-ledger-export");
+  // The live board runs BOARD_TASK_STORE=db; committed tasks/*.md stops at T-0365. Default to
+  // "db" here -- the opposite of exportApprovalLedger.js's own "fs" default -- so a scheduled
+  // run reads the board's real state unless an operator explicitly overrides it.
+  const taskStoreKind = env.BOARD_TASK_STORE || "db";
   return {
     repoRoot,
     branch,
     remote,
     refreshThresholdHours,
     logDir,
+    taskStoreKind,
     ledgerRelativePath: APPROVAL_LEDGER_RELATIVE_PATH
   };
 }
+
+const EXPORTER_RELATIVE_PATH = path.join("tools", "board", "scripts", "exportApprovalLedger.js");
 
 async function git(execFileFn, repoRoot, args) {
   return execFileFn("git", ["-C", repoRoot, ...args]);
@@ -177,7 +185,10 @@ export async function runLedgerExport({
 
   const tmpPath = `${ledgerAbsPath}.tmp-${now().getTime()}`;
   try {
-    await execFileFn("node", ["scripts/exportApprovalLedger.js", tmpPath], { cwd: config.repoRoot });
+    await execFileFn("node", [EXPORTER_RELATIVE_PATH, tmpPath], {
+      cwd: config.repoRoot,
+      env: { ...env, BOARD_TASK_STORE: config.taskStoreKind }
+    });
   } catch (err) {
     return finish(EXIT_CODE_EXPORT_FAILED, "export-failed", [
       "the exporter subprocess failed -- this often means the task store (DB) was unreachable.",
