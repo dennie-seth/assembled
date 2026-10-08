@@ -64,3 +64,8 @@ result and nothing is blocked on it.
 is occluded by the near leg in a side view, so the cut is short even though the bone is not;
 the thighs measured exactly equal, and only this one bone needed correcting. A re-cut that
 recovers the occluded top would make the scale unnecessary.
+
+`shoulder_L` carries the same mechanism (T-0436), in the opposite direction: its raw cut is
+cut further down the sleeve than `shoulder_R`'s, so its measured bone length is *longer*, not
+shorter. `bone_length_fix.scaled.shoulder_L = 0.6087` brings it back to `shoulder_R`'s own
+length. No re-cut here either — see `docs/design/23-canonical-rig.md` §6.

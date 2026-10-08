@@ -1,7 +1,16 @@
 # 21 — Character rig: the canonical bone list
 
-**Status:** authoritative. This is the reference every character's cut parts must match,
-for every character, not just the player.
+> **Superseded, T-0436 (2026-10-08).** `docs/design/23-canonical-rig.md` is now the
+> rig authority. This document's single-hip/single-shoulder attach and flat-side-view
+> framing are contradicted by @DennieSeth's canonical skeleton reference on
+> structure, proportion and projection — see 23- §0–§3. §1 (COCO-18), §2 (the bone
+> tree), §4 (pivot convention), §6 (layer order) and §9 (cutting checklist) are
+> carried forward **unchanged** into 23-'s own §1; this document is kept, not
+> deleted, as the record of the bone tree's own derivation. Do not treat anything
+> below as the current word on shoulder/hip attach geometry.
+
+**Status:** superseded (see above) — formerly authoritative. This is the reference every
+character's cut parts must match, for every character, not just the player.
 
 Parts are cut by hand from hi-res source art and composited onto a pose rig by script
 (`docs/design/13-asset-pipeline.md`: *master sheets at 1024, motion composited by script*).
