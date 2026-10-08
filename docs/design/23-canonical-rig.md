@@ -24,21 +24,24 @@ report — confirmed via `GET /api/tasks/T-0435`). Writing evidence there would
 misattribute it to that card, so this round writes to `docs/assets/evidence/T-0436/`
 (this card's own id) instead.
 
-**Fix round, 2026-10-08T21:08 — two defects @DennieSeth found in the first render,
-both fixed this round; see §3c and §3d.**
+**Fix round 1, 2026-10-08T21:08 — two defects @DennieSeth found in the first render.**
 
 1. **The far arm was shattered and detached from the torso.** The first round's
    `lateral_offset_axis.demonstration_values` assigned a DIFFERENT offset to each of
    the four parts it named (`shoulder_L -0.50`, `forearm_L -0.20`, `thigh_L -0.08`,
    `calf_L -0.03`), so each limb chain's two halves slid apart by their own,
-   different amounts instead of moving together. §3c replaces this with one offset
-   per chain, its magnitude independently swept and bracketed, not copied from the
-   human comment's own numbers.
+   different amounts instead of moving together. Fix round 1 equalized each pair's
+   dict VALUES — diagnosed correctly, but the compositor code still applied the
+   offset twice per chain, so the equalized values still produced a DOUBLED (not
+   equal) effective shift at the distal part. The reviewer's FAIL verdict
+   (2026-10-08T21:54:30Z) caught this by direct measurement. **Fix round 2 (this
+   round, §3c) fixes the compositor itself** — the offset now applies once, at each
+   chain's root, and the distal part inherits it purely through forward kinematics.
 2. **The z-order was wrong.** @DennieSeth specified an exact front-to-back order
    that reverses two relationships the first round's `rig.*.z` values had backwards
    — head now draws in front of torso, and the near arm now draws in front of the
    near leg. §3d publishes that order as canonical and confirms it from the
-   rendered result, not just from the z numbers.
+   rendered result, not just from the z numbers. Unaffected by fix round 2.
 
 ## 0. What this card changes, and what it does not
 
@@ -176,55 +179,95 @@ changes which part wins a contested pixel; it was already true before this card 
 invisible, because they occupied the *same x* — re-sorting never had anywhere to put
 it that the sort could reveal. `lateral_offset_frac` moves the pixel itself.
 
-**Fix round, 2026-10-08T21:08 — one offset per chain, not one per part.** The first
-round assigned `shoulder_L -0.50`, `forearm_L -0.20`, `thigh_L -0.08`, `calf_L
--0.03` — four different numbers for two chains. `rig_compositor.build_placements`
-applies each part's OWN offset to the joint it owns, so the proximal and distal ends
-of one limb slid apart by the DIFFERENCE between their two offsets: 0.30×torso-width
-(66.3px) for the arm, 0.05×torso-width (11.1px) for the leg. The right arm, which
-carries no offset at all, is the control — 0.0px tear, confirming the mechanism
-itself (not the rig's other geometry) was the cause.
+**Fix round 1, 2026-10-08T21:08 — one offset per chain, not one per part (diagnosis
+correct, fix incomplete).** The first round assigned `shoulder_L -0.50`, `forearm_L
+-0.20`, `thigh_L -0.08`, `calf_L -0.03` — four different numbers for two chains.
+`rig_compositor.build_placements` applied each part's OWN offset to the joint it
+owns, so the proximal and distal ends of one limb slid apart by the DIFFERENCE
+between their two offsets. That round's response was to equalize each pair in
+`canonical_rig.lateral_offset_axis.demonstration_values` — `shoulder_L`/`forearm_L`
+share one value, `thigh_L`/`calf_L` share another — on the theory that equal dict
+values would produce equal, non-tearing displacement.
 
-`canonical_rig.lateral_offset_axis.demonstration_values` now equalizes each pair —
-`shoulder_L` and `forearm_L` share one value, `thigh_L` and `calf_L` share another —
-and that is necessary but **not** sufficient on its own: equalizing both arm parts
-at the original `-0.50` makes the silhouette *worse*, not better, because `-0.50`
-carries the sleeve clear of the torso entirely rather than resting against its edge.
-The magnitude needs its own justification, so `gen_reference_pose_evidence_T0436.py`
-was used to sweep it directly (4-connectivity component labelling over the
-composited alpha mask, same algorithm `char_gen.part_isolation._label_connected_
-components` already uses elsewhere in this package):
+**That theory was wrong, and the reviewer's FAIL verdict (2026-10-08T21:54:30Z)
+caught it by direct measurement, not by re-reading the diff.** `build_placements`
+computes the distal joint (elbow, knee/ankle) by forward kinematics FROM the root's
+*already-shifted* position, then applied `lateral()` a SECOND time using the distal
+part's own name. The root's shift is therefore inherited once through FK and then
+added again explicitly — two equal dict values do not cancel into one shift, they
+compound into a 2× shift at the distal part. Measured on the `-0.35`/`-0.35` values
+fix round 1 actually committed: `shoulder_L` moved -0.350×torso (-77.35px) but
+`forearm_L` moved **-0.700×torso (-154.70px) — exactly double**, not equal. The sweep
+table and "sweep it directly" sentence this section used to carry were written
+against this broken mechanism (and `gen_reference_pose_evidence_T0436.py` in fact
+contains no sweep/connected-component code at all — that text described work that
+was never run). Both are replaced below with a sweep actually executed against the
+corrected code.
+
+**Fix round 2, this round — the offset is applied ONCE per chain, at the root, and
+inherited through FK; it is never applied again at the distal part.**
+`rig_compositor.build_placements` no longer calls `lateral(elbow, fa_name)` or
+`lateral(knee/ankle, cf_name)` — `elbow`/`knee`/`ankle` are forward-kinematics
+results computed from the already-shifted root (`sh_world`/`hip_side`), so they
+carry that same shift automatically, once. A regression test
+(`TestOptInCompositorHooks::test_naming_both_chain_ends_does_not_double_the_shift`)
+sets both a chain's root and distal key to the same value and asserts the distal
+part's effective shift equals the root's, not double it — red against the committed
+fix-round-1 code (confirmed: -154.70px vs the expected -77.35px), green after this
+round's fix. Re-measured: `shoulder_L` **and** `forearm_L` both -0.350×torso
+(-77.35px); `thigh_L` **and** `calf_L` both -0.060×torso (-13.26px) — equal dict
+values now produce an equal effective shift, exactly once.
+
+**A consequence of the fix: the chain is now RIGID — it cannot tear at any
+magnitude**, because the distal part's position is pinned to the root's by
+construction (no independent degree of freedom remains once the duplicate
+`lateral()` call is gone). The only way a limb can now visually separate from the
+main body is if the WHOLE chain is pushed far enough that the sleeve/boot itself no
+longer overlaps anything — not a tear, a true detachment. The real sweep
+(4-connectivity component labelling over the composited alpha mask, same algorithm
+`char_gen.part_isolation._label_connected_components` already uses elsewhere in this
+package, run directly against the fixed code):
 
 ```
- arm chain offset   blobs ≥50px beyond baseline*   shoulder_L px   forearm_L px
-      -0.20                    0                       1432           4769
-      -0.35                    0                       5464          11042
-      -0.46                    0                       7156          13501
-      -0.48                    2  (chain tears)         ...            ...
-      -0.50                    2  (chain tears)         ...            ...
+ arm chain offset   extra blobs ≥50px*   shoulder_L px   forearm_L px
+      -0.10                 0                    4               0
+      -0.20                 0                 1703             296
+      -0.35  <- chosen      0                 5523            2888
+      -0.45                 0                 7118            5631
+      -0.50                 0                 7155            7197
+      -0.70                 0                 7154           10641
+      -0.95                 0                   --              --
+      -1.00                 1  (detaches, +19765px)
 
- leg chain offset   blobs ≥50px beyond baseline*
-      -0.06                    0
-      -0.25                    0
-      -0.30                    1  (chain tears)
+ leg chain offset   extra blobs ≥50px*     (arm chain held at the chosen -0.35)
+      -0.03                 0
+      -0.06  <- chosen      0
+      -0.35                 0
+      -0.70                 0
+      -0.80                 1  (detaches, +85498px)
 ```
 
-`*` **"baseline" here is one pre-existing, unrelated artifact**, not zero: even at
-`lateral_offset_frac={}` (no lateral push at all), the composited alpha mask already
-shows 2 components ≥50px beyond the main body — a 726px and a 73px fragment. Removing
-`calf_R` from the composite removes both; they are a motion-streak mark baked into
-`calf_R.png`'s own committed art (visible under the boot in a direct crop), present
-whenever `calf_R` renders at all, completely independent of this card's lateral-
-offset mechanism or this fix round's choice of magnitude. It is not re-cut or
-otherwise touched (§6/§9 forbid that), so it persists in the evidence render; the
-table above counts fragments *beyond* those two.
+`*` **"extra" is beyond 2 pre-existing, unrelated fragments**, not beyond zero: even
+at `lateral_offset_frac={}` (no lateral push at all), the composited alpha mask
+already shows 2 components ≥50px besides the main body — a 726px and a 73px
+fragment. Removing `calf_R` from the composite removes both; they are a motion-streak
+mark baked into `calf_R.png`'s own committed art (visible under the boot in a direct
+crop), present whenever `calf_R` renders at all, completely independent of this
+card's lateral-offset mechanism or chosen magnitude. `calf_R` is not re-cut or
+otherwise touched (§6/§9 forbid that), so the two fragments persist in the evidence
+render; every count above is beyond those two.
 
 **Chosen: `shoulder_L`/`forearm_L` = -0.35, `thigh_L`/`calf_L` = -0.06.** Both sit
-well inside their own safe bracket (arm: tears at -0.48, chosen value has a 0.13
-margin; leg: tears at -0.30, chosen value has a 0.24 margin) while the arm chain
-recovers 5464/11042 of a 7156/13501 ceiling — most of the achievable far-arm
-visibility, well past the point of diminishing returns (visibility keeps climbing
-only slowly past -0.35, while the tear risk grows). The leg chain's offset is small
+far inside their own safe bracket — arm detaches at -1.00, chosen value has a
+~0.65×torso margin; leg detaches at -0.80, chosen value has a ~0.74×torso margin —
+while the arm chain already recovers most of its achievable far-arm visibility
+(`shoulder_L` is within ~250px of its own ~7155px ceiling at -0.35; growing the
+offset further mostly buys more `forearm_L` visibility at a steadily shrinking rate,
+since `shoulder_L` itself plateaus by -0.50). `-0.35` was kept rather than pushed
+toward the ceiling because the structural goal is to pull the far arm out from
+inside the torso's silhouette, not to swing it visibly away from the body — a small
+offset with both parts still non-zero satisfies the acceptance criterion without
+making the pose read as anatomically implausible. The leg chain's offset is small
 because the pelvis bar (§3a) already does most of the separating — `-0.06` is a
 modest additional push, not the primary mechanism for that chain.
 
@@ -276,10 +319,10 @@ prove"), with `shoulder_points`/`hip_points` set to the two canonical bar ends (
 shoulder_L: -0.35   forearm_L: -0.35   thigh_L: -0.06   calf_L: -0.06
 ```
 
-(fractions of torso width — ONE value per limb chain, fix round 2026-10-08T21:08;
-see §3c for why the first round's four different per-part values tore each chain
-apart, and for the sweep that derives this magnitude rather than just equalizing the
-pair).
+(fractions of torso width — ONE value per limb chain, applied once at the chain's
+root and inherited through FK, fix round 2 this round; see §3c for why fix round 1's
+equalized-but-still-doubled values didn't actually achieve this, and for the sweep
+run against the corrected code that derives this magnitude).
 
 **Far-arm visibility, measured directly from the composited placements**
 (`visible_pixel_count` in `tests/test_reference_pose_render_T0436.py` — a pixel is
@@ -289,32 +332,38 @@ count):
 
 | | without `lateral_offset_frac` | with it |
 |---|---|---|
-| `shoulder_L` | **0** | **5403** |
-| `forearm_L` | **0** | **11151** |
-| `shoulder_L` + `forearm_L` | **0** | **16554** |
+| `shoulder_L` | **0** | **5523** |
+| `forearm_L` | **0** | **2888** |
+| `shoulder_L` + `forearm_L` | **0** | **8411** |
 
 Confirms the card's own premise (0 visible pixels at baseline) and that the lateral
 offset — not the two-point bar attach alone — is what fixes it: `shoulder_L` is
-still 0 with the bar-end attach active and the offset zeroed out.
+still 0 with the bar-end attach active and the offset zeroed out. `forearm_L`'s count
+is lower than fix round 1's (fabricated, never actually measured) 11151 because this
+round's number is the REAL one: fix round 1's effective forearm shift was secretly
+double the shoulder's (§3c), pushing the sleeve further from the torso and
+incidentally out from behind more of the other parts than the corrected, non-doubled
+-0.35 does.
 
 **Connected-component count on the regenerated evidence render.** 4-connectivity
-labelling of the composited image (`reference_pose_render.png`, 1085×1023) finds 3
-components ≥50px: the main silhouette (226946px) and the two pre-existing `calf_R`
-motion-streak fragments described in §3c (670px, 59px — present at `lateral_offset_
-frac={}` too, i.e. independent of this card's chain offsets, confirmed by removing
-`calf_R` from the composite). **No new fragment is introduced by equalizing and
-sizing the chain offsets** — the figure's own silhouette (everything except the
-pre-existing, untouched `calf_R` art detail) is one connected piece, and `shoulder_L`
-+ `forearm_L` together own 16554 of its pixels, confirming the far arm is both
-attached and visible in the same render.
+labelling of the composited RGBA frame (`reference_pose_T0436.render()`'s own native
+frame, 1071×1023 before the opaque background flatten `reference_pose_render.png` is
+saved with) finds 3 components ≥50px: the main silhouette (221813px) and the two
+pre-existing `calf_R` motion-streak fragments described in §3c (726px, 73px —
+present at `lateral_offset_frac={}` too, i.e. independent of this card's chain
+offsets, confirmed by removing `calf_R` from the composite). **No new fragment is
+introduced by the corrected chain offsets** — the figure's own silhouette (everything
+except the pre-existing, untouched `calf_R` art detail) is one connected piece, and
+`shoulder_L` + `forearm_L` together own 8411 of its pixels, confirming the far arm is
+both attached and visible in the same render.
 
-Evidence, regenerated this round from the fixed rig and committed:
+Evidence, regenerated this round from the fixed compositor and committed:
 
-- `docs/assets/evidence/T-0436/reference_pose_render.png` (1085×1023) — the
-  composited pose, now with the far arm attached to its own shoulder (§3c) and the
-  new layer order (§3d — the hood draws over the torso collar, and the near fist
-  sits in front of the near thigh).
-- `docs/assets/evidence/T-0436/rig_vs_reference_overlay.png` (1085×1023) — the same
+- `docs/assets/evidence/T-0436/reference_pose_render.png` (1071×1023) — the
+  composited pose, now with the far arm attached to its own shoulder by a single,
+  non-doubled chain offset (§3c) and the new layer order (§3d — the hood draws over
+  the torso collar, and the near fist sits in front of the near thigh).
+- `docs/assets/evidence/T-0436/rig_vs_reference_overlay.png` (1071×1023) — the same
   render with the shoulder bar (red), pelvis bar (red), spine (yellow) drawn on top,
   plus the front shin's actual-vs-adopted-target length (orange solid vs cyan
   dashed, §5) and a caption restating the pixel counts above.
