@@ -259,6 +259,45 @@ class TestOptInCompositorHooks:
             "the calf hangs from the thigh's own pivot -- it must inherit the shift"
         )
 
+    def test_naming_both_chain_ends_does_not_double_the_shift(self):
+        """FAIL-round regression (T-0436 reviewer verdict 2026-10-08T21:54:30Z): the
+        rig's own `canonical_rig.lateral_offset_axis.demonstration_values` names BOTH
+        a chain's root (`shoulder_L`/`thigh_L`) and its distal end (`forearm_L`/
+        `calf_L`) at the SAME fraction, to document "one offset for this whole
+        chain". But `forearm_L`/`calf_L` already inherit the root's shift through
+        forward kinematics -- naming the distal part again and adding its own
+        `lateral()` call on top compounds the two into a 2x shift at the distal end,
+        tearing the chain's two sprites apart exactly as far as the root alone moved.
+        Equal dict VALUES must produce an equal EFFECTIVE shift, not a doubled one."""
+        common = self._common()
+        baseline = {p.name: p for p in rig_compositor.build_placements(*common)}
+        torso_width = common[2]["torso"].width
+
+        arm = {
+            p.name: p
+            for p in rig_compositor.build_placements(
+                *common, lateral_offset_frac={"shoulder_L": -0.35, "forearm_L": -0.35}
+            )
+        }
+        shoulder_dx = arm["shoulder_L"].target_xy[0] - baseline["shoulder_L"].target_xy[0]
+        forearm_dx = arm["forearm_L"].target_xy[0] - baseline["forearm_L"].target_xy[0]
+        assert shoulder_dx == pytest.approx(-0.35 * torso_width)
+        assert forearm_dx == pytest.approx(shoulder_dx), (
+            f"forearm_L shifted {forearm_dx:.2f}px vs shoulder_L's {shoulder_dx:.2f}px -- "
+            "the chain's two sprites tear apart by the difference"
+        )
+
+        leg = {
+            p.name: p
+            for p in rig_compositor.build_placements(
+                *common, lateral_offset_frac={"thigh_L": -0.06, "calf_L": -0.06}
+            )
+        }
+        thigh_dx = leg["thigh_L"].target_xy[0] - baseline["thigh_L"].target_xy[0]
+        calf_dx = leg["calf_L"].target_xy[0] - baseline["calf_L"].target_xy[0]
+        assert thigh_dx == pytest.approx(-0.06 * torso_width)
+        assert calf_dx == pytest.approx(thigh_dx)
+
 
 class TestJsonIsValid:
     def test_side_view_rig_json_round_trips(self):
