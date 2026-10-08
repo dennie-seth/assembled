@@ -127,7 +127,7 @@ describe("runLedgerExport", () => {
 
     expect(result.exitCode).toBe(EXIT_CODE_OK);
     expect(result.reason).toBe("wrong-branch");
-    expect(deps.execFileFn.mock.calls.some(([cmd, args]) => args?.[0] === "fetch")).toBe(false);
+    expect(deps.execFileFn.mock.calls.some(([, args]) => args?.[0] === "fetch")).toBe(false);
     expect(deps.renameFn).not.toHaveBeenCalled();
   });
 
@@ -182,7 +182,7 @@ describe("runLedgerExport", () => {
 
     expect(result.exitCode).toBe(EXIT_CODE_OK);
     expect(result.reason).toBe("not-in-sync-with-remote");
-    expect(deps.execFileFn.mock.calls.some(([cmd, args]) => args?.includes("push"))).toBe(false);
+    expect(deps.execFileFn.mock.calls.some(([, args]) => args?.includes("push"))).toBe(false);
   });
 
   it("reports export failure and never commits when the exporter subprocess fails (e.g. the DB is unreachable)", async () => {
@@ -193,7 +193,7 @@ describe("runLedgerExport", () => {
     expect(result.exitCode).toBe(EXIT_CODE_EXPORT_FAILED);
     expect(result.reason).toBe("export-failed");
     expect(deps.renameFn).not.toHaveBeenCalled();
-    const commitCalls = deps.execFileFn.mock.calls.filter(([cmd, args]) => args?.includes("commit"));
+    const commitCalls = deps.execFileFn.mock.calls.filter(([, args]) => args?.includes("commit"));
     expect(commitCalls).toHaveLength(0);
   });
 
