@@ -43,6 +43,36 @@ misattribute it to that card, so this round writes to `docs/assets/evidence/T-04
    near leg. §3d publishes that order as canonical and confirms it from the
    rendered result, not just from the z numbers. Unaffected by fix round 2.
 
+**Fix round 3, this round — the evidence overlay was itself miscalibrated, and one
+debug field silently ignored this card's own lateral offset.** The reviewer's FAIL
+verdict (2026-10-08T22:18:16Z) found two further defects, both in
+`rig_compositor.render_frames`, not in the pose geometry fix round 2 already landed:
+
+1. **`hip_px` changed meaning.** This card's first commit made `hip_px` equal
+   `to_canvas(resolved_hip_points["R"])` whenever `hip_points` was supplied, instead
+   of always `to_canvas(leg.hip)`. `gen_reference_pose_evidence_T0436.py`'s own
+   `to_canvas` is built on `hip_px` meaning the canvas pixel for world `(0, 0)` —
+   true for every pre-existing caller (none of which pass `hip_points`) but false
+   for this card's own `reference_pose_T0436.render()`, which does. Measured on the
+   committed (pre-fix) overlay: every drawn point was off by the same +9.0627px in
+   x (the distance from world `(0, 0)` to `hip_R`). `hip_px` now reverts to always
+   meaning `to_canvas(leg.hip)` — a no-op for every other caller, and correct again
+   for this one.
+2. **The debug leg-chain pixels ignored the lateral offset.** `knee_l_px`/
+   `ankle_l_px` (and the `R`-side siblings) were solved from
+   `resolved_hip_points["L"]` directly, never passing it through the same
+   `lateral()` shift `build_placements` applies to the actually-rendered `calf_L`.
+   The two agreed for the right leg (no offset there) but disagreed for the left by
+   exactly the chain's own offset. A `lateral_debug()` closure mirroring
+   `build_placements`'s own now applies it in both places.
+
+Two regression tests (`TestHipPxMatchesWorldOrigin`,
+`TestLegDebugPixelsTrackTheLateralOffset` in
+`tests/test_reference_pose_render_T0436.py`) are red against the fix-round-2 code
+and green after this round's fix. §4 below restates the per-joint deviation numbers
+as independently re-measured against the regenerated, now-correctly-calibrated
+overlay, rather than asserting the fix round 2 claim still holds.
+
 ## 0. What this card changes, and what it does not
 
 **In scope:** this document, `side_view_rig.json` v2, and a static render proving
@@ -372,7 +402,13 @@ Evidence, regenerated this round from the fixed compositor and committed:
 
 Both bar lines are **drawn directly from the values that posed the render**, so
 their own deviation from the target is sub-pixel rounding only (±0.5px, the `round()`
-in `rig_compositor.place()`) — not independently meaningful. The deviation that
+in `rig_compositor.place()`) — not independently meaningful. **This is now confirmed
+by direct pixel measurement, not asserted from the code alone**: fix round 3 (above)
+found the committed overlay's bar lines were actually off by +9.0627px due to the
+`hip_px` defect, and the regenerated overlay's red shoulder/pelvis bar pixels were
+re-measured against `canonical_world_points`' own canvas coordinates after the fix —
+within the ellipse-marker radius (3px) of the computed endpoints, i.e. the claim
+holds only now that fix round 3 has landed. The deviation that
 matters is the one §3c's z-only framing would have hidden: how far the rig's
 **current, active** limb lengths sit from the reference-derived **adopted target**,
 per §5's leg reconciliation (not applied this round):
