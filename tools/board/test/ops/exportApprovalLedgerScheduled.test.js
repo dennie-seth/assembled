@@ -116,6 +116,16 @@ describe("resolveConfig", () => {
     expect(config.remote).toBe("upstream");
     expect(config.refreshThresholdHours).toBe(6);
   });
+
+  it("defaults the exporter subprocess's task store to db -- the live board's own mode", () => {
+    const config = resolveConfig({ BOARD_REPO_ROOT: "/repo" });
+    expect(config.taskStoreKind).toBe("db");
+  });
+
+  it("honors an explicit BOARD_TASK_STORE override", () => {
+    const config = resolveConfig({ BOARD_REPO_ROOT: "/repo", BOARD_TASK_STORE: "fs" });
+    expect(config.taskStoreKind).toBe("fs");
+  });
 });
 
 describe("runLedgerExport", () => {
@@ -265,6 +275,49 @@ describe("runLedgerExport", () => {
     expect(result.exitCode).toBe(EXIT_CODE_GIT_FAILED);
     expect(result.reason).toBe("push-failed");
     expect(deps.execFileFn.mock.calls.some(([, args]) => args?.includes("commit"))).toBe(true);
+  });
+
+  it("spawns the exporter at its real tools/board path, not a repo-root-relative guess", async () => {
+    const deps = makeDeps({ existingLedger: null });
+
+    await runLedgerExport({ env: { BOARD_REPO_ROOT: "/repo" }, now: () => new Date(), ...deps });
+
+    const nodeCall = deps.execFileFn.mock.calls.find(([cmd]) => cmd === "node");
+    expect(nodeCall).toBeTruthy();
+    const [, args] = nodeCall;
+    // There is no `scripts/` directory at the repo root -- the real exporter lives at
+    // tools/board/scripts/exportApprovalLedger.js. A repo-root-relative "scripts/..." guess
+    // resolves against config.repoRoot (the repository root, not tools/board) and is ENOENT on
+    // every real run, which this mock -- unlike a real subprocess -- would never catch.
+    expect(args[0]).toBe("tools/board/scripts/exportApprovalLedger.js");
+  });
+
+  it("runs the exporter subprocess with BOARD_TASK_STORE=db by default, matching the live board", async () => {
+    const deps = makeDeps({ existingLedger: null });
+
+    await runLedgerExport({ env: { BOARD_REPO_ROOT: "/repo" }, now: () => new Date(), ...deps });
+
+    const nodeCall = deps.execFileFn.mock.calls.find(([cmd]) => cmd === "node");
+    expect(nodeCall).toBeTruthy();
+    const [, , opts] = nodeCall;
+    // The live board runs BOARD_TASK_STORE=db; committed tasks/*.md stops at T-0365. Leaving the
+    // subprocess to its own fs-mode default would silently export a ledger missing every card
+    // created since the cards-to-database cutover -- wrong, not just incomplete.
+    expect(opts?.env?.BOARD_TASK_STORE).toBe("db");
+  });
+
+  it("honors an explicit BOARD_TASK_STORE override instead of forcing db", async () => {
+    const deps = makeDeps({ existingLedger: null });
+
+    await runLedgerExport({
+      env: { BOARD_REPO_ROOT: "/repo", BOARD_TASK_STORE: "fs" },
+      now: () => new Date(),
+      ...deps
+    });
+
+    const nodeCall = deps.execFileFn.mock.calls.find(([cmd]) => cmd === "node");
+    const [, , opts] = nodeCall;
+    expect(opts?.env?.BOARD_TASK_STORE).toBe("fs");
   });
 
   it("writes a summary log on both the skip path and the commit path", async () => {
