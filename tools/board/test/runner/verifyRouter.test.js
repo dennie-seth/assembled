@@ -27,11 +27,21 @@ describe("resolveVerifyRoutes", () => {
     expect(routes.map((r) => r.id)).toEqual(["board-suite"]);
   });
 
+  it("board-suite runs vitest directly -- the reviewer persona has no npm grant (T-0432)", () => {
+    const routes = resolveVerifyRoutes(["tools/board/src/runner/thing.js"]);
+    const board = routes.find((r) => r.id === "board-suite");
+    expect(board).toBeDefined();
+    expect(board.command).not.toMatch(/\bnpm\b/);
+    expect(board.command).toMatch(/\bnpx\s+vitest\s+run\b/);
+    expect(board.command).toMatch(/\bnpx\s+eslint\b/);
+    expect(board.command).toMatch(/^cd\s+tools\/board\b/);
+  });
+
   it("board-suite command is self-contained (includes cd tools/board) so the harness can run it from the repo root without a manual directory change", () => {
     const routes = resolveVerifyRoutes(["tools/board/src/lib/fsTaskStore.js"]);
     const route = routes.find((r) => r.id === "board-suite");
     expect(route.command).toContain("cd tools/board");
-    expect(route.command).toContain("npm test");
+    expect(route.command).toContain("npx vitest run");
     expect(route.command).toContain("npx eslint .");
   });
 

@@ -278,7 +278,14 @@ export function resolveVerifyRoutes(changedPaths = [], { baseBranch = "develop" 
     routes.push({
       id: "board-suite",
       label: "Board test/lint suite",
-      command: "cd tools/board && npm test && npx eslint ."
+      // T-0432: `npx vitest run`, NOT `npm test`. The reviewer persona is granted
+      // `Bash(npx vitest:*)` and `Bash(npx eslint:*)` and has no `npm` grant at all, so the
+      // old command was refused ("This command requires approval") and the reviewer's own
+      // fail-closed rule turned that refusal into a FAIL -- on every card whose diff touches
+      // tools/board/. `package.json`'s `test` script is `vitest run`, so this runs the
+      // identical suite. The `cd` stays RELATIVE: an absolute path is refused as a
+      // multiple-operation command, while `cd tools/board && npx vitest run` is allowed.
+      command: "cd tools/board && npx vitest run && npx eslint ."
     });
   }
   const referenceBatchSummaries = detectReferenceBatchSummaryPaths(changedPaths);
