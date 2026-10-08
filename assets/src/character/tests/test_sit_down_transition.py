@@ -401,6 +401,83 @@ class TestNoLegSolveIsClamped:
         assert not clamped, f"frames clamped (did not solve exactly): {clamped}"
 
 
+class TestAnglesAreNotInterpolatedDirectly:
+    """The edge case the card calls out by name: blending thigh/knee angles straight
+    from the standing numbers to the crouch numbers would drag both feet through the
+    ground and through each other. This module drives the ANKLE TARGET and solves
+    fresh every frame (`leg_stance_at` -> `idle_cycle.solve_leg`) -- proven here by
+    showing an interior frame's actual thigh angle diverges substantially from what a
+    naive linear blend of the two endpoint angles would have produced."""
+
+    def test_r_thigh_diverges_from_a_naive_linear_angle_blend(self):
+        anchors = compute_anchors()
+        result = render_frames()
+        # R only starts moving in the back half (R_WINDOW) -- pick the frame where a
+        # naive blend and the real, contact-driven solve diverge most visibly: R's own
+        # first moving frame.
+        moving = [s for s in result.specs if R_WINDOW[0] < s.t < R_WINDOW[1]]
+        assert moving, "need at least one interior frame inside R's own step window"
+        spec = moving[0]
+        naive = (
+            anchors.start_leg.thigh_deg_r
+            + (anchors.end_leg.thigh_deg_r - anchors.start_leg.thigh_deg_r) * spec.t
+        )
+        assert spec.leg.thigh_deg_r != pytest.approx(naive, abs=5.0), (
+            f"R's thigh angle at t={spec.t} ({spec.leg.thigh_deg_r:.2f} deg) matches a "
+            f"naive linear blend of the endpoint angles ({naive:.2f} deg) -- the solve "
+            "is interpolating angles directly rather than driving the ankle target"
+        )
+
+    def test_l_thigh_diverges_from_a_naive_linear_angle_blend(self):
+        anchors = compute_anchors()
+        result = render_frames()
+        moving = [s for s in result.specs if L_WINDOW[0] < s.t < L_WINDOW[1]]
+        assert moving, "need at least one interior frame inside L's own step window"
+        spec = moving[len(moving) // 2]
+        naive = (
+            anchors.start_leg.thigh_deg_l
+            + (anchors.end_leg.thigh_deg_l - anchors.start_leg.thigh_deg_l) * spec.t
+        )
+        assert spec.leg.thigh_deg_l != pytest.approx(naive, abs=5.0), (
+            f"L's thigh angle at t={spec.t} ({spec.leg.thigh_deg_l:.2f} deg) matches a "
+            f"naive linear blend of the endpoint angles ({naive:.2f} deg) -- the solve "
+            "is interpolating angles directly rather than driving the ankle target"
+        )
+
+
+class TestZOrderAndFootFlattenRampIn:
+    """The crouch's own z-order fix (thigh_R/thigh_L's near-rectangular crops crossing
+    the torso at a deep angle) and front-foot flatten are pose corrections tuned for
+    the CROUCH, not the standing idle -- applying them for the whole transition would
+    render frame 0 differently from idle_cycle's own output. Both gate on R's own step
+    window (the point the pose actually starts looking crouch-like), and the flatten
+    specifically ramps across that window rather than snapping in at the end."""
+
+    def test_no_override_before_r_starts_moving(self):
+        result = render_frames()
+        for s in result.specs:
+            if s.t < R_WINDOW[0]:
+                assert s.z_override is None
+                assert s.foot_flatten is None
+
+    def test_override_engages_once_r_starts_moving(self):
+        result = render_frames()
+        engaged = [s for s in result.specs if s.t >= R_WINDOW[0]]
+        assert engaged
+        for s in engaged:
+            assert s.z_override == sitting_idle_cycle.CROUCH_Z_OVERRIDE
+
+    def test_flatten_ramps_from_zero_to_the_crouchs_own_value(self):
+        result = render_frames()
+        engaged = [s for s in result.specs if s.t >= R_WINDOW[0]]
+        flattens = [s.foot_flatten["calf_R"] for s in engaged]
+        assert flattens[0] == pytest.approx(0.0)
+        assert flattens[-1] == pytest.approx(sitting_idle_cycle.FRONT_FOOT_FLATTEN_DEG)
+        assert all(a <= b for a, b in zip(flattens, flattens[1:])), (
+            "the flatten does not ramp monotonically across R's own step window"
+        )
+
+
 class TestUpperBodyIsCarriedAcrossNotSnapped:
     @classmethod
     @pytest.fixture(scope="class")
