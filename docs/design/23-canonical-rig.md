@@ -24,6 +24,22 @@ report — confirmed via `GET /api/tasks/T-0435`). Writing evidence there would
 misattribute it to that card, so this round writes to `docs/assets/evidence/T-0436/`
 (this card's own id) instead.
 
+**Fix round, 2026-10-08T21:08 — two defects @DennieSeth found in the first render,
+both fixed this round; see §3c and §3d.**
+
+1. **The far arm was shattered and detached from the torso.** The first round's
+   `lateral_offset_axis.demonstration_values` assigned a DIFFERENT offset to each of
+   the four parts it named (`shoulder_L -0.50`, `forearm_L -0.20`, `thigh_L -0.08`,
+   `calf_L -0.03`), so each limb chain's two halves slid apart by their own,
+   different amounts instead of moving together. §3c replaces this with one offset
+   per chain, its magnitude independently swept and bracketed, not copied from the
+   human comment's own numbers.
+2. **The z-order was wrong.** @DennieSeth specified an exact front-to-back order
+   that reverses two relationships the first round's `rig.*.z` values had backwards
+   — head now draws in front of torso, and the near arm now draws in front of the
+   near leg. §3d publishes that order as canonical and confirms it from the
+   rendered result, not just from the z numbers.
+
 ## 0. What this card changes, and what it does not
 
 **In scope:** this document, `side_view_rig.json` v2, and a static render proving
@@ -50,12 +66,14 @@ Carried **verbatim, meaning unchanged**, from 21's own sections:
   where its pivot sits, which bones it covers. The CORE/EXTENDED split (6 parts vs 9
   — this rig's committed ten parts are the EXTENDED set, per `parts/side_view/
   README.md`) is unchanged.
-- **§6 Layer order** — back to front, right-facing: `leg.L → arm.L → torso → head →
-  leg.R → arm.R` (far limbs, then body, then near limbs). Still correct: z-order
-  decides which part wins a contested pixel, and nothing in this card changes that
-  decision for the existing ten parts' default z values (`side_view_rig.json`'s
-  `rig.*.z` is untouched). What this card adds (§4 below) is a SECOND, independent
-  axis — position, not draw order — for when z-order alone cannot reveal a limb.
+- **§6 Layer order** — NOT carried forward; REPLACED. 21-'s back-to-front order
+  (`leg.L → arm.L → torso → head → leg.R → arm.R`) was correct for the round this
+  document originally shipped in (its own `rig.*.z` values were untouched then). The
+  fix round (2026-10-08T21:08) changes this: @DennieSeth specified an exact
+  front-to-back order (§3d) that reverses two of 21-'s relationships — head now
+  draws in front of torso, and the near arm now draws in front of the near leg.
+  `side_view_rig.json`'s `rig.*.z` values are updated to match. §3d is the current
+  word on layer order; 21- §6 is marked replaced in place, not deleted.
 - **§9 Cutting/handoff checklist** — unchanged; still the checklist a newly cut part
   set is handed back against. This card cuts nothing (§6).
 - **§1 COCO-18 joint source of truth** and **§2 the bone tree** — unchanged. The
@@ -154,9 +172,95 @@ existing suite staying green (§7).
 
 **This is the fix for the far arm's 0-visible-pixel baseline.** A z/depth value only
 changes which part wins a contested pixel; it was already true before this card that
-`shoulder_L`'s z (5) beats the torso's (3), and the far arm was STILL invisible,
-because they occupied the *same x* — re-sorting never had anywhere to put it that
-the sort could reveal. `lateral_offset_frac` moves the pixel itself.
+`shoulder_L`'s z (then 5) beats the torso's (then 3), and the far arm was STILL
+invisible, because they occupied the *same x* — re-sorting never had anywhere to put
+it that the sort could reveal. `lateral_offset_frac` moves the pixel itself.
+
+**Fix round, 2026-10-08T21:08 — one offset per chain, not one per part.** The first
+round assigned `shoulder_L -0.50`, `forearm_L -0.20`, `thigh_L -0.08`, `calf_L
+-0.03` — four different numbers for two chains. `rig_compositor.build_placements`
+applies each part's OWN offset to the joint it owns, so the proximal and distal ends
+of one limb slid apart by the DIFFERENCE between their two offsets: 0.30×torso-width
+(66.3px) for the arm, 0.05×torso-width (11.1px) for the leg. The right arm, which
+carries no offset at all, is the control — 0.0px tear, confirming the mechanism
+itself (not the rig's other geometry) was the cause.
+
+`canonical_rig.lateral_offset_axis.demonstration_values` now equalizes each pair —
+`shoulder_L` and `forearm_L` share one value, `thigh_L` and `calf_L` share another —
+and that is necessary but **not** sufficient on its own: equalizing both arm parts
+at the original `-0.50` makes the silhouette *worse*, not better, because `-0.50`
+carries the sleeve clear of the torso entirely rather than resting against its edge.
+The magnitude needs its own justification, so `gen_reference_pose_evidence_T0436.py`
+was used to sweep it directly (4-connectivity component labelling over the
+composited alpha mask, same algorithm `char_gen.part_isolation._label_connected_
+components` already uses elsewhere in this package):
+
+```
+ arm chain offset   blobs ≥50px beyond baseline*   shoulder_L px   forearm_L px
+      -0.20                    0                       1432           4769
+      -0.35                    0                       5464          11042
+      -0.46                    0                       7156          13501
+      -0.48                    2  (chain tears)         ...            ...
+      -0.50                    2  (chain tears)         ...            ...
+
+ leg chain offset   blobs ≥50px beyond baseline*
+      -0.06                    0
+      -0.25                    0
+      -0.30                    1  (chain tears)
+```
+
+`*` **"baseline" here is one pre-existing, unrelated artifact**, not zero: even at
+`lateral_offset_frac={}` (no lateral push at all), the composited alpha mask already
+shows 2 components ≥50px beyond the main body — a 726px and a 73px fragment. Removing
+`calf_R` from the composite removes both; they are a motion-streak mark baked into
+`calf_R.png`'s own committed art (visible under the boot in a direct crop), present
+whenever `calf_R` renders at all, completely independent of this card's lateral-
+offset mechanism or this fix round's choice of magnitude. It is not re-cut or
+otherwise touched (§6/§9 forbid that), so it persists in the evidence render; the
+table above counts fragments *beyond* those two.
+
+**Chosen: `shoulder_L`/`forearm_L` = -0.35, `thigh_L`/`calf_L` = -0.06.** Both sit
+well inside their own safe bracket (arm: tears at -0.48, chosen value has a 0.13
+margin; leg: tears at -0.30, chosen value has a 0.24 margin) while the arm chain
+recovers 5464/11042 of a 7156/13501 ceiling — most of the achievable far-arm
+visibility, well past the point of diminishing returns (visibility keeps climbing
+only slowly past -0.35, while the tear risk grows). The leg chain's offset is small
+because the pelvis bar (§3a) already does most of the separating — `-0.06` is a
+modest additional push, not the primary mechanism for that chain.
+
+## 3d. Layer order — @DennieSeth's exact front-to-back order
+
+Front (closest to viewer) first, back last. `rig_compositor.render_frames` sorts
+`key=lambda p: -p.z` then composites in that order, so a LOWER z draws LAST and
+therefore wins every contested pixel — z 0 is frontmost, z 9 is backmost:
+
+| z | part | | z | part | |
+|---|---|---|---|---|---|
+| 0 | `forearm_R` | frontmost | 5 | `torso` | |
+| 1 | `shoulder_R` | | 6 | `calf_L` | |
+| 2 | `thigh_R` | | 7 | `thigh_L` | |
+| 3 | `calf_R` | | 8 | `shoulder_L` | |
+| 4 | `head` | | 9 | `forearm_L` | backmost |
+
+This is `side_view_rig.json`'s own `rig.*.z` for all ten parts — the SAME default
+every pose module reads unless it supplies its own `z_override` (§7 states exactly
+who does and the resulting pixel impact). Two reversals from 21-'s retired order,
+both exactly as @DennieSeth specified:
+
+1. **`head` now draws in front of `torso`** (z 4 vs 5) — the committed rig had
+   torso (3) in front of head (4) before this round.
+2. **The near arm now draws in front of the near leg** — `shoulder_R`/`forearm_R`
+   (z 0/1) in front of `thigh_R`/`calf_R` (z 2/3). The committed rig had the near leg
+   (z 0) in front of the near arm (z 1) before this round.
+
+**Confirmed from the rendered result, not asserted from the z numbers alone.**
+Compositing `forearm_R` alone and `thigh_R` alone (same canvas, same placements)
+finds 950 pixels where both are independently opaque — the contested region. In the
+real, full composite, 674 of those 950 pixels match `forearm_R`'s own rendered
+color exactly (the remainder are anti-aliased edge-blend pixels that do not match
+either part's color exactly — not a parity-sort conflict) and only 4 match
+`thigh_R`'s — `forearm_R` visibly wins essentially all of the contested region, as
+z 0 vs z 2 says it should.
 
 ## 4. The static render
 
@@ -169,12 +273,13 @@ prove"), with `shoulder_points`/`hip_points` set to the two canonical bar ends (
 (`canonical_rig.lateral_offset_axis.demonstration_values`):
 
 ```
-shoulder_L: -0.50   forearm_L: -0.20   thigh_L: -0.08   calf_L: -0.03
+shoulder_L: -0.35   forearm_L: -0.35   thigh_L: -0.06   calf_L: -0.06
 ```
 
-(fractions of torso width; chosen empirically so the far arm clears the torso's own
-silhouette — not re-derived from the reference image, which is not available this
-round).
+(fractions of torso width — ONE value per limb chain, fix round 2026-10-08T21:08;
+see §3c for why the first round's four different per-part values tore each chain
+apart, and for the sweep that derives this magnitude rather than just equalizing the
+pair).
 
 **Far-arm visibility, measured directly from the composited placements**
 (`visible_pixel_count` in `tests/test_reference_pose_render_T0436.py` — a pixel is
@@ -184,20 +289,35 @@ count):
 
 | | without `lateral_offset_frac` | with it |
 |---|---|---|
-| `shoulder_L` | **0** | **6272** |
-| `forearm_L` | **0** | **11042** |
+| `shoulder_L` | **0** | **5403** |
+| `forearm_L` | **0** | **11151** |
+| `shoulder_L` + `forearm_L` | **0** | **16554** |
 
 Confirms the card's own premise (0 visible pixels at baseline) and that the lateral
 offset — not the two-point bar attach alone — is what fixes it: `shoulder_L` is
 still 0 with the bar-end attach active and the offset zeroed out.
 
-Evidence, committed:
+**Connected-component count on the regenerated evidence render.** 4-connectivity
+labelling of the composited image (`reference_pose_render.png`, 1085×1023) finds 3
+components ≥50px: the main silhouette (226946px) and the two pre-existing `calf_R`
+motion-streak fragments described in §3c (670px, 59px — present at `lateral_offset_
+frac={}` too, i.e. independent of this card's chain offsets, confirmed by removing
+`calf_R` from the composite). **No new fragment is introduced by equalizing and
+sizing the chain offsets** — the figure's own silhouette (everything except the
+pre-existing, untouched `calf_R` art detail) is one connected piece, and `shoulder_L`
++ `forearm_L` together own 16554 of its pixels, confirming the far arm is both
+attached and visible in the same render.
 
-- `docs/assets/evidence/T-0436/reference_pose_render.png` — the composited pose.
-- `docs/assets/evidence/T-0436/rig_vs_reference_overlay.png` — the same render with
-  the shoulder bar (red), pelvis bar (red), spine (yellow) drawn on top, plus the
-  front shin's actual-vs-adopted-target length (orange solid vs cyan dashed, §5) and
-  a caption restating the pixel counts above.
+Evidence, regenerated this round from the fixed rig and committed:
+
+- `docs/assets/evidence/T-0436/reference_pose_render.png` (1085×1023) — the
+  composited pose, now with the far arm attached to its own shoulder (§3c) and the
+  new layer order (§3d — the hood draws over the torso collar, and the near fist
+  sits in front of the near thigh).
+- `docs/assets/evidence/T-0436/rig_vs_reference_overlay.png` (1085×1023) — the same
+  render with the shoulder bar (red), pelvis bar (red), spine (yellow) drawn on top,
+  plus the front shin's actual-vs-adopted-target length (orange solid vs cyan
+  dashed, §5) and a caption restating the pixel counts above.
 
 ### Per-joint deviation
 
@@ -295,14 +415,41 @@ is picked up by the same code path, not a second one.
 
 ## 7. Animation impact — what changes, and by how much
 
-**Mechanism-level change (§3c): none.** `shoulder_points`, `hip_points`,
-`lateral_offset_frac` all default to `None`; no pre-existing pose module passes
-them. Confirmed both by direct test (`TestOptInCompositorHooks`) and by the full
-existing suite: every test in `test_walk_cycle.py`, `test_idle_cycle.py`,
-`test_sitting_idle_cycle.py`, `test_pose_rig_master_sheet_T0351.py`,
-`test_pose_rig_T0249.py`, `test_pose_rig_walk_T0259.py` and
-`test_pose_rig_profile_T0272.py` — 192 tests, unchanged — stays green after this
-round's changes, with no edits to any of those test files.
+**`shoulder_points`/`hip_points`/`lateral_offset_frac` (§3c): none.** All three
+default to `None`; no pre-existing pose module passes them. Confirmed both by direct
+test (`TestOptInCompositorHooks`) and by the full existing suite: every test in
+`test_walk_cycle.py`, `test_idle_cycle.py`, `test_sitting_idle_cycle.py`,
+`test_pose_rig_master_sheet_T0351.py`, `test_pose_rig_T0249.py`,
+`test_pose_rig_walk_T0259.py` and `test_pose_rig_profile_T0272.py` — 192 tests,
+unchanged — stays green after this round's changes, with no edits to any of those
+test files.
+
+**The z-order (§3d): yes for `idle_cycle` and `sitting_idle_cycle`, not for
+`walk_cycle`, and here is the exact size of it.** Unlike the lateral-offset axis,
+`rig.*.z` is not opt-in — it is the one shared default every part's `Placement`
+carries unless a caller supplies its own `z_override`. `walk_cycle.py` does not call
+`rig_compositor.render_frames` at all (it only supplies the `bone_length`/
+`distal_joint` primitives `rig_compositor` imports), so it is untouched by this
+change — confirmed by grep, no `render_frames` call anywhere in that module or its
+own test file. `idle_cycle.py` supplies no `z_override`, so it is fully exposed to
+the new z values; `sitting_idle_cycle.py` overrides only `thigh_R`/`thigh_L`
+(`CROUCH_Z_OVERRIDE = {"thigh_R": 3.5, "thigh_L": 3.6}`), so its other eight parts
+pick up the new default too. Measured directly (render each at frame 0 with the new
+rig, then again forcing the old z values via `z_override`, and count changed
+pixels):
+
+| pose | changed px | frame size | fraction |
+|---|---|---|---|
+| `idle_cycle` | 9,379 | 486×986 (479,196px) | ≈2.0% |
+| `sitting_idle_cycle` | 17,842 | 938×999 (937,062px) | ≈1.9% |
+
+Both existing suites (`test_idle_cycle.py`, `test_sitting_idle_cycle.py`) stay green
+— neither asserts exact per-pixel output tied to the old draw order, only geometry
+(contact points, bounding bands, determinism) that this change does not touch. This
+is expected, not a regression, per the same framing §0 and the shoulder_L paragraph
+below already establish for the bone-length fix: the follow-on cards that re-derive
+each animation's own pose will see this new, corrected draw order when they do, and
+re-tuning either animation for it is explicitly their business, not this round's.
 
 **`shoulder_L`'s bone-length fix (§6): yes, and here is the exact size of it.**
 Every pose that composites `shoulder_L`/`forearm_L` (all three: `walk_cycle`,

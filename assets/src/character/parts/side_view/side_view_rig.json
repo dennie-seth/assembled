@@ -214,7 +214,7 @@
         0.0
       ],
       "bone": "spine",
-      "z": 3
+      "z": 5
     },
     "head": {
       "pivot": [
@@ -238,7 +238,7 @@
         0.06
       ],
       "bone": "forearm.R",
-      "z": 1
+      "z": 0
     },
     "shoulder_L": {
       "pivot": [
@@ -246,7 +246,7 @@
         0.08
       ],
       "bone": "upperarm.L",
-      "z": 5
+      "z": 8
     },
     "forearm_L": {
       "pivot": [
@@ -254,7 +254,7 @@
         0.06
       ],
       "bone": "forearm.L",
-      "z": 5
+      "z": 9
     },
     "thigh_R": {
       "pivot": [
@@ -262,7 +262,7 @@
         0.04
       ],
       "bone": "thigh.R",
-      "z": 0
+      "z": 2
     },
     "calf_R": {
       "pivot": [
@@ -270,7 +270,7 @@
         0.04
       ],
       "bone": "shin.R",
-      "z": 0
+      "z": 3
     },
     "thigh_L": {
       "pivot": [
@@ -278,7 +278,7 @@
         0.04
       ],
       "bone": "thigh.L",
-      "z": 2
+      "z": 7
     },
     "calf_L": {
       "pivot": [
@@ -286,7 +286,7 @@
         0.04
       ],
       "bone": "shin.L",
-      "z": 2
+      "z": 6
     }
   },
   "attach_torso_local_px": {
@@ -342,12 +342,12 @@
     "lateral_offset_axis": {
       "description": "A per-part, opt-in sideways (local-x) displacement -- rig_compositor.build_placements's lateral_offset_frac parameter, expressed as a fraction of the torso's own width. Distinct from z-order: z decides which part wins a contested pixel, this moves the pixel itself. Every part defaults to 0.0 (no displacement, no behaviour change) unless named in a caller's own dict; no existing pose module (walk_cycle, idle_cycle, sitting_idle_cycle) passes this parameter, so none of them is affected by this axis existing.",
       "demonstration_values": {
-        "shoulder_L": -0.50,
-        "forearm_L": -0.20,
-        "thigh_L": -0.08,
-        "calf_L": -0.03
+        "shoulder_L": -0.35,
+        "forearm_L": -0.35,
+        "thigh_L": -0.06,
+        "calf_L": -0.06
       },
-      "demonstration_values_note": "Used only by char_gen.reference_pose_T0436's static render, chosen empirically so shoulder_L/forearm_L clear the torso's own silhouette -- see docs/design/23-canonical-rig.md for the resulting visible-pixel counts."
+      "demonstration_values_note": "FIX ROUND (@DennieSeth, 2026-10-08T21:08): the prior round assigned a DIFFERENT offset to each of the four parts (-0.50/-0.20/-0.08/-0.03), which tears each limb chain apart at its own joint -- a proximal part sliding one distance while its distal child slides a different one. Replaced with ONE offset per chain: shoulder_L and forearm_L (the far arm) now share -0.35; thigh_L and calf_L (the far leg) now share -0.06. The magnitude is independently swept, not copied: gen_reference_pose_evidence_T0436.py's sweep (recorded in docs/design/23-canonical-rig.md Sec 3c) holds the figure a single connected silhouette (besides one pre-existing, unrelated fragment baked into calf_R's own art -- a motion-streak mark under the boot, present even at lateral_offset_frac={}, confirmed by removing calf_R from the composite) up to -0.46 for the arm chain and -0.25 for the leg chain; beyond those the chain visibly tears into new fragments. -0.35/-0.06 sit well inside both margins while shoulder_L/forearm_L reach 5349/11189 visible px (vs. a 7163/13532 ceiling at -0.46, where pushing further buys no extra visibility, only risk)."
     }
   },
   "root_bob_px": 5.65,
