@@ -102,9 +102,15 @@ R_WINDOW: tuple[float, float] = (3.0 / 7.0, 1.0)
 #: the final figure, clearly a lift rather than a slide.
 LIFT_PX = 50.0
 
-#: Cubic ease-out for the hip descent: velocity strictly decreases over the transition,
-#: so it settles rather than dropping at a constant rate.
-EASE_POWER = 3
+#: Quadratic ease-out for the hip descent: velocity strictly decreases over the
+#: transition, so it settles rather than dropping at a constant rate. A cubic power
+#: (3) was tried first and rejected by inspection -- it front-loads ~80% of the whole
+#: descent into the first three of eight frames, leaving the back half looking almost
+#: frozen vertically (even though changed_px_per_frame_pair stays well above zero
+#: throughout, driven by the stepping legs and the torso lean rather than the hip).
+#: Quadratic keeps the deceleration (first delta is still the biggest, last is still
+#: the smallest) without that front-loaded cliff.
+EASE_POWER = 2
 
 
 def ease_out(t: float) -> float:
@@ -114,13 +120,22 @@ def ease_out(t: float) -> float:
 
 
 def window_frac(t: float, window: tuple[float, float]) -> float:
-    """0 before `window` starts, 1 after it ends, eased (via `ease_out`) in between."""
+    """0 before `window` starts, 1 after it ends, LINEAR in between.
+
+    Deliberately not `ease_out`-composed on top of the hip's own ease: each foot's
+    step gets only 3-4 of this transition's 8 frames, and stacking a second ease-out
+    on top of an already-eased global time (as an earlier pass did) front-loaded over
+    half of a step's horizontal travel into its very first frame, reading as a pop
+    rather than a step. The hip descent is still eased (see `ease_out` / `EASE_POWER`
+    below); the step's own lift (`lift_at`, a sine hump) is already smooth at both
+    ends without a second ease layered under it.
+    """
     t0, t1 = window
     if t <= t0:
         return 0.0
     if t >= t1:
         return 1.0
-    return ease_out((t - t0) / (t1 - t0))
+    return (t - t0) / (t1 - t0)
 
 
 def lift_at(frac: float) -> float:
