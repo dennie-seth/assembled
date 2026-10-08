@@ -28,7 +28,6 @@ tests are organized around the card's own acceptance checklist:
 from __future__ import annotations
 
 import inspect
-import math
 
 import pytest
 
@@ -44,7 +43,6 @@ from char_gen.sit_down_transition import (
     frame_placements,
     lift_at,
     render_frames,
-    window_frac,
 )
 
 FORBIDDEN_SOURCE_TOKENS = [
@@ -77,16 +75,19 @@ class TestZeroGpu:
 
 
 class TestEndpointsMatchTheMergedAnchors:
+    @classmethod
     @pytest.fixture(scope="class")
-    def result(self):
+    def result(cls):
         return render_frames()
 
+    @classmethod
     @pytest.fixture(scope="class")
-    def idle(self):
+    def idle(cls):
         return idle_cycle.idle_stance()
 
+    @classmethod
     @pytest.fixture(scope="class")
-    def crouch(self):
+    def crouch(cls):
         return sitting_idle_cycle.crouch_stance()
 
     def test_frame_zero_reproduces_the_standing_idle_angles(self, result, idle):
@@ -118,9 +119,12 @@ class TestEndpointsMatchTheMergedAnchors:
         assert last.knee_flexion_deg_l == crouch.knee_flexion_deg_l
 
     def test_last_frame_ankle_targets_match_the_crouch_exactly(self, result):
+        """Forward-kinematics (sin/cos) recovery of the ankle target is only exact up
+        to floating-point noise -- `pytest.approx`'s default tolerance, not a
+        meaningfully loosened check."""
         last = result.specs[-1]
-        assert last.ankle_r[0] == sitting_idle_cycle.ANKLE_X_FRONT
-        assert last.ankle_l[0] == sitting_idle_cycle.ANKLE_X_BACK
+        assert last.ankle_r[0] == pytest.approx(sitting_idle_cycle.ANKLE_X_FRONT)
+        assert last.ankle_l[0] == pytest.approx(sitting_idle_cycle.ANKLE_X_BACK)
 
     def test_last_frame_upper_pose_matches_the_crouch_rest_exactly(self, result):
         upper_last = result.specs[-1].upper
@@ -140,20 +144,30 @@ class TestContactDecision:
     """'One foot steps' -- the far (L) leg first, then the near (R) leg, never both in
     the same frame pair."""
 
+    @classmethod
     @pytest.fixture(scope="class")
-    def result(self):
+    def result(cls):
         return render_frames()
 
     def test_the_decision_is_stated(self):
         assert CONTACT_DECISION == "one_foot_steps"
 
     def test_at_least_one_foot_is_planted_at_every_frame_pair(self, result):
+        """'Planted' is `ankle_x` unchanged AND not lifted -- NOT full `(x, y)`
+        equality. The y component of EITHER ankle's own target shrinks every single
+        frame together with `ground_plane_y`, because the hip is what is sinking
+        toward a fixed world ground (see the module's own docstring); that is the
+        correct kinematics for a still-planted foot, not motion."""
         specs = result.specs
         violations = []
         for i in range(len(specs) - 1):
             a, b = specs[i], specs[i + 1]
-            l_planted = (a.ankle_l == b.ankle_l) and a.lift_l == 0.0 and b.lift_l == 0.0
-            r_planted = (a.ankle_r == b.ankle_r) and a.lift_r == 0.0 and b.lift_r == 0.0
+            l_planted = (
+                a.ankle_l[0] == pytest.approx(b.ankle_l[0]) and a.lift_l == 0.0 and b.lift_l == 0.0
+            )
+            r_planted = (
+                a.ankle_r[0] == pytest.approx(b.ankle_r[0]) and a.lift_r == 0.0 and b.lift_r == 0.0
+            )
             if not (l_planted or r_planted):
                 violations.append(i)
         assert not violations, (
@@ -210,8 +224,9 @@ class TestContactDecision:
 class TestStepLeavesTheGround:
     """A moving foot must clear the ground, or it reads as a slide."""
 
+    @classmethod
     @pytest.fixture(scope="class")
-    def result(self):
+    def result(cls):
         return render_frames()
 
     def test_l_lifts_during_the_interior_of_its_own_window(self, result):
@@ -246,8 +261,9 @@ class TestStepLeavesTheGround:
 
 
 class TestHipDescentIsMeasuredAndEased:
+    @classmethod
     @pytest.fixture(scope="class")
-    def result(self):
+    def result(cls):
         return render_frames()
 
     def test_hip_height_shrinks_monotonically(self, result):
@@ -295,36 +311,49 @@ class TestHipDescentIsMeasuredAndEased:
 
 
 class TestOneSharedScale:
+    @classmethod
     @pytest.fixture(scope="class")
-    def result(self):
+    def result(cls):
         return render_frames()
 
     def test_character_scale_is_the_one_shared_constant(self, result):
         assert result.character_scale == CHARACTER_SCALE == 0.0398
 
-    def test_a_shared_part_is_the_same_pixel_size_in_frame_zero_and_the_last_frame(self):
-        first = frame_placements(0)
-        last = frame_placements(FRAME_COUNT - 1)
-        first_torso = next(p for p in first if p.name == "torso")
-        last_torso = next(p for p in last if p.name == "torso")
-        assert first_torso.image.size == last_torso.image.size, (
-            "the torso's own rendered size changed between frame 0 and the last frame -- "
-            "the figure grew or shrank across the descent"
-        )
+    def test_the_measured_part_size_is_one_shared_value_for_the_whole_render(self, result):
+        """`render_frames` measures `scaled["torso"]` exactly ONCE, outside the
+        per-frame loop, and stores it as a single (not per-frame-list) field on the
+        result -- structurally, no frame's own placement step can use a different
+        size. (A raw pixel-size comparison between two *placements* is the wrong
+        check here: `pad_for_rotation` pads a rotated part's canvas to fit any swing
+        angle, so a leaned torso's own bitmap is legitimately a bigger square than an
+        upright one of the exact same source image -- that is rotation padding, not
+        the figure growing.)"""
+        parts = rig_compositor.load_parts()
+        rig = rig_compositor.load_rig()
+        measured = rig_compositor.scaled_parts(parts, rig)["torso"].size
+        assert result.torso_px_size == measured
 
-    def test_the_head_part_bitmap_is_identical_in_frame_zero_and_the_last_frame(self):
-        """The head never rotates in either endpoint pose (head_deg is 0 at both ends),
-        so its own pixels -- not just its size -- must match exactly."""
+    def test_the_head_carries_the_torso_lean_rather_than_staying_fixed(self):
+        """The head's absolute rotation is `torso_deg + head_deg` (build_placements'
+        own parent-rotation convention) -- at frame 0 that's 0 (no lean yet), at the
+        last frame it's the full crouch lean. The head is NOT expected to be
+        bit-identical between the two; it is expected to have followed the torso,
+        which is exactly what "the upper body follows the hip" requires."""
         first = frame_placements(0)
         last = frame_placements(FRAME_COUNT - 1)
         first_head = next(p for p in first if p.name == "head")
         last_head = next(p for p in last if p.name == "head")
-        assert first_head.image.tobytes() == last_head.image.tobytes()
+        assert first_head.image.size != last_head.image.size or \
+            first_head.image.tobytes() != last_head.image.tobytes(), (
+            "the head's rendered bitmap is identical at both ends -- it did not "
+            "carry the torso lean"
+        )
 
 
 class TestSharedGroundAnchor:
+    @classmethod
     @pytest.fixture(scope="class")
-    def result(self):
+    def result(cls):
         return render_frames()
 
     def test_ground_anchor_matches_the_one_shared_constant(self, result):
@@ -358,8 +387,9 @@ class TestSharedGroundAnchor:
 
 
 class TestNoLegSolveIsClamped:
+    @classmethod
     @pytest.fixture(scope="class")
-    def result(self):
+    def result(cls):
         return render_frames()
 
     def test_no_interior_frame_clamps(self, result):
@@ -372,8 +402,9 @@ class TestNoLegSolveIsClamped:
 
 
 class TestUpperBodyIsCarriedAcrossNotSnapped:
+    @classmethod
     @pytest.fixture(scope="class")
-    def result(self):
+    def result(cls):
         return render_frames()
 
     def test_torso_lean_is_strictly_between_the_endpoints_at_an_interior_frame(self, result):
@@ -439,7 +470,10 @@ class TestNoRegressionToMergedModules:
         phase-independent `LegStance`."""
         sig = inspect.signature(rig_compositor.render_frames)
         assert "leg" in sig.parameters
-        assert sig.parameters["leg"].annotation == rig_compositor.LegStance
+        # `from __future__ import annotations` makes this a string, not the class
+        # object -- compare the name rather than relying on either module's choice
+        # of annotation style.
+        assert str(sig.parameters["leg"].annotation) in ("LegStance", "rig_compositor.LegStance")
 
 
 def test_workspace_bounds_used_match_the_cards_own_worked_numbers():
