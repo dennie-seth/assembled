@@ -176,7 +176,9 @@ class TestQuantization:
         indexed = walk_sheet.quantize_to_indexed(r.cell_frames, palette, background_index=0)
         frame0_rgba = r.cell_frames[0]
         frame0_indexed = indexed[0]
-        for (r_, g_, b_, a), idx in zip(frame0_rgba.getdata(), frame0_indexed.getdata(), strict=True):
+        rgba_data = frame0_rgba.getdata()
+        indexed_data = frame0_indexed.getdata()
+        for (r_, g_, b_, a), idx in zip(rgba_data, indexed_data, strict=True):
             if a < 128:
                 assert idx == 0
 
