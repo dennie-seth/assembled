@@ -108,13 +108,30 @@ describe("simulateWorstCaseAgeHours", () => {
     expect(commitCount).toBeGreaterThan(0);
   });
 
-  it("two consecutive missed runs can push the worst case to the edge of (or past) the 24h gate -- naming the actual limit of this design rather than asserting it away", () => {
+  it("two consecutive missed runs still stay under the 24h gate -- Persistent=true only needs to catch up by the next tick, not instantly", () => {
     const { maxAgeHours } = simulateWorstCaseAgeHours({
       intervalHours: 4,
       refreshThresholdHours: 12,
       totalHours: 240,
       missedRunTicks: new Set([3, 4]) // hours 12 and 16 both silently skipped
     });
-    expect(maxAgeHours).toBeCloseTo(12 + 3 * 4, 5); // 24 -- exactly the gate's own threshold
+    expect(maxAgeHours).toBe(20);
+    expect(maxAgeHours).toBeLessThan(24);
+  });
+
+  it("names the actual limit of this design: enough consecutive missed runs breaks the under-24h bound", () => {
+    // Four consecutive missed runs = a 16h outage with no catch-up in between. This is the
+    // honest edge of "refresh-before-it-bites": the policy bounds staleness against the
+    // SCHEDULE, not against the box being off for most of a day. A box down that long already
+    // shows up as silence across every other timer in this ops suite (board-db-backup,
+    // board-integrity-check, etc.), not just this one -- see the card's own tradeoff note.
+    const { maxAgeHours } = simulateWorstCaseAgeHours({
+      intervalHours: 4,
+      refreshThresholdHours: 12,
+      totalHours: 240,
+      missedRunTicks: new Set([3, 4, 5, 6]) // hours 12, 16, 20, 24 all silently skipped
+    });
+    expect(maxAgeHours).toBe(28);
+    expect(maxAgeHours).toBeGreaterThan(24);
   });
 });
