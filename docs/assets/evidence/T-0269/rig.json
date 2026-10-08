@@ -1,0 +1,96 @@
+{
+  "frames": 6,
+  "cell_px": 48,
+  "character_scale": 0.0398,
+  "ground_anchor_cell_y": 44.0,
+  "crouch_stance": {
+    "ground_plane_y": 300.0,
+    "hip_y": 0.0,
+    "torso_lean_deg": -12.0,
+    "feet_planted": "flat",
+    "leg_r": {
+      "ankle_x": 198.0,
+      "thigh_deg": 96.2457643613975,
+      "knee_flexion_deg": 104.47272228814634,
+      "role": "front (near, leads)"
+    },
+    "leg_l": {
+      "ankle_x": -85.0,
+      "thigh_deg": 55.59554254860967,
+      "knee_flexion_deg": 116.49790381841582,
+      "role": "back (far, trails)"
+    },
+    "front_foot_flatten_deg": 15.0,
+    "crouch_z_override": {
+      "thigh_R": 3.5,
+      "thigh_L": 3.6
+    },
+    "stagger_separation_final_px": 11.2634
+  },
+  "arm_stance": {
+    "shoulder_deg": 10.67,
+    "elbow_deg": 57.0,
+    "reach_native_px": 259.4490798232194,
+    "reach_workspace_native_px": [
+      95.29999999999997,
+      301.38
+    ],
+    "clamped": false,
+    "wrist_to_knee_distance_final_px": 0.3836700699856943
+  },
+  "contacts": {
+    "hip_canvas_px": [
+      345,
+      500
+    ],
+    "knee_r_canvas_px": [
+      590,
+      473
+    ],
+    "knee_l_canvas_px": [
+      549,
+      639
+    ],
+    "ankle_r_canvas_px": [
+      543,
+      800
+    ],
+    "ankle_l_canvas_px": [
+      260,
+      800
+    ]
+  },
+  "native_figure_height_px": {
+    "crouch": 700.58,
+    "standing": 977.5400000000001
+  },
+  "final_figure_height_px_at_common_scale": {
+    "crouch": 27.883084000000004,
+    "standing": 38.90609200000001
+  },
+  "breath_rise_frac": {
+    "crouch": 0.117,
+    "standing_idle_cycle": 0.108
+  },
+  "upper_body_travel_final_px": {
+    "crouch": 1.1967462000000002
+  },
+  "changed_px_per_frame_pair": [
+    75928,
+    81109,
+    78429,
+    78429,
+    81109,
+    75928
+  ],
+  "loop_seam_changed_px": 75928,
+  "lower_body_band": [
+    25,
+    841,
+    934,
+    1025
+  ],
+  "sheet": "sitting_idle_sheet_48.png",
+  "gif": "sitting_idle_loop_x8.gif",
+  "comparison": "scale_match_crouch_vs_standing.png"
+}
