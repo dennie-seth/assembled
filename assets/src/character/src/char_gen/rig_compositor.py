@@ -469,17 +469,40 @@ def render_frames(
     resolved_hip_points = hip_points if hip_points is not None else leg_hip_points(
         leg, scaled["torso"].width
     )
+
+    def lateral_debug(point: tuple[float, float], name: str) -> tuple[float, float]:
+        # Mirrors `build_placements`'s own `lateral()` closure exactly -- the leg
+        # chain placed here is a debug re-derivation of the SAME geometry
+        # `build_placements` already used for `calf_R`/`calf_L` (see the comment
+        # above), so it must apply that chain's one lateral offset too, or this
+        # debug `ankle_l_px`/`knee_l_px` silently disagrees with where `calf_L`
+        # actually rendered whenever `lateral_offset_frac` is active.
+        if not lateral_offset_frac or name not in lateral_offset_frac:
+            return point
+        return (point[0] + lateral_offset_frac[name] * scaled["torso"].width, point[1])
+
     knee_r, ankle_r = leg_chain(
-        resolved_hip_points["R"], lengths["thigh_R"], lengths["calf_R"], leg, "R"
+        lateral_debug(resolved_hip_points["R"], "thigh_R"), lengths["thigh_R"], lengths["calf_R"],
+        leg, "R",
     )
     knee_l, ankle_l = leg_chain(
-        resolved_hip_points["L"], lengths["thigh_L"], lengths["calf_L"], leg, "L"
+        lateral_debug(resolved_hip_points["L"], "thigh_L"), lengths["thigh_L"], lengths["calf_L"],
+        leg, "L",
     )
 
     def to_canvas(pt: tuple[float, float]) -> tuple[int, int]:
         return (round(pt[0] + offset[0]), round(pt[1] + offset[1]))
 
-    hip_px = to_canvas(leg.hip if hip_points is None else resolved_hip_points["R"])
+    # `hip_px` is always the canvas pixel for `leg.hip` -- the same world point
+    # every other caller (sitting_idle_cycle's contact-point checks, etc.) has
+    # relied on since before this card. `hip_points`, when supplied, overrides
+    # the TWO leg hips' own roots; it never redefines what `leg.hip` itself means,
+    # so `hip_px` must not switch to `resolved_hip_points["R"]` just because
+    # `hip_points` was passed (T-0436 FAIL verdict 2026-10-08T22:18:16Z: that
+    # switch silently shifted every overlay point in
+    # `gen_reference_pose_evidence_T0436.py` by +9.06px, since that script's own
+    # `to_canvas` is built on `hip_px` meaning the canvas pixel for world (0, 0)).
+    hip_px = to_canvas(leg.hip)
     knee_r_px = to_canvas(knee_r)
     knee_l_px = to_canvas(knee_l)
     ankle_r_px = to_canvas(ankle_r)
