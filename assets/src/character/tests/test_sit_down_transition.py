@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import inspect
 
+import numpy as np
 import pytest
 
 from char_gen import idle_cycle, rig_compositor, sit_down_transition, sitting_idle_cycle
@@ -350,6 +351,21 @@ class TestOneSharedScale:
         )
 
 
+def _ground_contact_rows(frames):
+    """The lowest non-transparent cell row of each composited frame, read from the
+    REAL alpha channel of `render_frames`'s own `descended_frames` -- not a second
+    copy of the formula that built them. Because at least one foot is planted at
+    every frame (`TestContactDecision`), this row is always that frame's own
+    ground-contact row."""
+    rows = []
+    for frame in frames:
+        alpha = np.asarray(frame)[..., 3]
+        nonzero_rows = np.nonzero(alpha.any(axis=1))[0]
+        assert len(nonzero_rows), "a composited frame is fully transparent"
+        rows.append(int(nonzero_rows.max()))
+    return rows
+
+
 class TestSharedGroundAnchor:
     @classmethod
     @pytest.fixture(scope="class")
@@ -366,24 +382,38 @@ class TestSharedGroundAnchor:
         assert result.ground_anchor_cell_y == crouch.ground_anchor_cell_y
         assert result.cell_px == standing.cell_px == crouch.cell_px
 
-    def test_a_planted_foot_lands_on_the_same_cell_row_every_frame_it_is_planted(self):
-        """The invariant the module's own docstring works out: for any frame where a
-        foot is not lifted, that foot's own native y (ground_plane_y, since lift=0)
-        plus the shared offset, descended and re-anchored, lands on
-        GROUND_ANCHOR_CELL_Y exactly -- regardless of how far the hip has sunk that
-        frame. Proven here from the actual per-frame ground_plane_y values, which is
-        what the cell compositing step in render_frames consumes."""
-        result = render_frames()
-        for spec in result.specs:
-            # Any frame where NEITHER foot is lifted: reconstruct what render_frames
-            # computed internally and confirm it is the constant anchor row.
-            if spec.lift_r == 0.0:
-                # The formula render_frames uses, replicated here as a proof rather
-                # than trusting the implementation: ground_canvas_y cancels exactly.
-                assert GROUND_ANCHOR_CELL_Y - (spec.leg.ground_plane_y) * CHARACTER_SCALE \
-                    == pytest.approx(
-                        GROUND_ANCHOR_CELL_Y - spec.leg.ground_plane_y * CHARACTER_SCALE
-                    )
+    def test_ground_contact_row_stays_within_a_tight_band_of_the_anchor(self, result):
+        """Measured from the actual pixels of `result.descended_frames` (not a second
+        copy of the formula that produced them). A planted leg's own knee still bends
+        a little more each frame as the hip sinks toward it, which nudges this row by
+        a couple of pixels -- real geometry, not drift in the anchor (the module's own
+        docstring works this out). What the per-frame ground-anchor loop
+        (sit_down_transition.py's `dest_y = round(GROUND_ANCHOR_CELL_Y -
+        ground_descended_y)`) must never do is let this row wander anywhere near the
+        hip's own ~11px final-px descent: swapping in a single shared `ground_plane_y`
+        for every frame (e.g. frame 0's) measurably widens this exact band to 7px on
+        this transition, confirmed by rendering that mutation directly -- 5px of
+        headroom above the real ~3px of knee-flexion noise still catches it."""
+        rows = _ground_contact_rows(result.descended_frames)
+        assert max(rows) - min(rows) <= 5, (
+            f"ground-contact row range {rows} spans more than 5px -- the per-frame "
+            "ground anchor is not holding the ground plane still while the hip "
+            "descends behind it"
+        )
+
+    def test_ground_contact_row_never_retreats_toward_the_top_of_the_cell(self, result):
+        """During this one-way descent a planted leg's knee flexion only ever
+        increases frame to frame, so a correct per-frame ground anchor lets this row
+        hold or advance toward the bottom of the cell -- it never moves back up.
+        Reusing one frame's `ground_plane_y` for every frame (the mutation named
+        above) makes the measured row retreat upward instead, confirmed by rendering
+        that mutation directly. Checked here against the actual composited pixels."""
+        rows = _ground_contact_rows(result.descended_frames)
+        assert all(rows[i] <= rows[i + 1] for i in range(len(rows) - 1)), (
+            f"ground-contact row sequence {rows} moves upward at some frame -- that "
+            "is the signature of the per-frame ground anchor being replaced by one "
+            "shared value"
+        )
 
 
 class TestNoLegSolveIsClamped:
