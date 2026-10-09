@@ -60,12 +60,18 @@ def visible_pixel_count(all_placements: list[rig_compositor.Placement], part_nam
 
 
 class TestFarArmVisibility:
+    """Fix round 6 (Option B, @DennieSeth 2026-10-09T16:43) swapped the near/far
+    layering wholesale -- `_R` is the far arm now, not `_L` -- so this class tests
+    `shoulder_R`/`forearm_R`, matching where the rig's own
+    `canonical_rig.lateral_offset_axis.demonstration_values` now keys the far-arm
+    lateral offset."""
+
     def test_far_arm_is_visible_in_the_reference_pose_render(self):
         placements = refpose.build_reference_placements()
-        shoulder_l_px = visible_pixel_count(placements, "shoulder_L")
-        forearm_l_px = visible_pixel_count(placements, "forearm_L")
-        assert shoulder_l_px > 0, "shoulder_L must render a non-zero number of visible pixels"
-        assert forearm_l_px > 0, "forearm_L must render a non-zero number of visible pixels"
+        shoulder_r_px = visible_pixel_count(placements, "shoulder_R")
+        forearm_r_px = visible_pixel_count(placements, "forearm_R")
+        assert shoulder_r_px > 0, "shoulder_R must render a non-zero number of visible pixels"
+        assert forearm_r_px > 0, "forearm_R must render a non-zero number of visible pixels"
 
     def test_far_arm_is_more_visible_with_the_lateral_offset_than_without(self):
         """The contrast the card requires: the two-point shoulder attach alone
@@ -73,8 +79,8 @@ class TestFarArmVisibility:
         offset is. Re-sorting (z) never did this; this proves POSITION changed."""
         with_offset = refpose.build_reference_placements()
         without_offset = refpose.build_reference_placements(lateral_offset_frac={})
-        with_px = visible_pixel_count(with_offset, "shoulder_L")
-        without_px = visible_pixel_count(without_offset, "shoulder_L")
+        with_px = visible_pixel_count(with_offset, "shoulder_R")
+        without_px = visible_pixel_count(without_offset, "shoulder_R")
         assert with_px > without_px
 
 

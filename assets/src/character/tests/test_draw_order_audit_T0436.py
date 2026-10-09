@@ -122,10 +122,13 @@ class TestAgainstTheRig:
         assert violations == [], f"{len(violations)} of {len(pairs)} pairs disagree: {violations}"
 
     def test_near_arm_contests_and_wins_against_the_torso(self):
-        """With this round's forward-reaching near-arm angle (shoulder_R
-        +44.3deg), `shoulder_R` genuinely crosses in front of the torso rather
-        than merely being declared to -- confirms the published order on a pair
-        that actually overlaps in this pose, not just by reading z numbers."""
+        """Fix round 6's Option B layering (`_L` drawn in front -- the near
+        side now) puts `shoulder_L` ahead of `torso` in the paint order; this
+        confirms that order holds on a pair that actually overlaps in this pose
+        (the posed arms genuinely cross the torso silhouette), not just by
+        reading z numbers. Per-side arm ANGLES did not swap with the layering --
+        `shoulder_L` still poses at `SHOULDER_DEG_L` (-56.4deg, trailing back)
+        -- only which side draws in front changed."""
         placements = self._placements()
         offset, canvas_size = canvas_geometry(placements)
         masks = part_alpha_masks(placements, canvas_size, offset)
@@ -133,7 +136,7 @@ class TestAgainstTheRig:
             frozenset((p["lower_z_part"], p["higher_z_part"])): p
             for p in contested_pairs(placements, masks)
         }
-        pair = pairs[frozenset(("shoulder_R", "torso"))]
+        pair = pairs[frozenset(("shoulder_L", "torso"))]
         assert pair["contested_px"] > 0
-        assert pair["lower_z_part"] == "shoulder_R"
+        assert pair["lower_z_part"] == "shoulder_L"
         assert pair["higher_z_wins"] == 0

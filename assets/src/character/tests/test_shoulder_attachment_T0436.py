@@ -1,15 +1,26 @@
-"""T-0436 fix round 5: the far shoulder's attachment to the torso.
+"""T-0436 fix round 5 (+ fix round 6's side swap): the far shoulder's attachment
+to the torso.
 
 @DennieSeth's fix-round-5 comment found the reference-pose render reads as a
-detached sleeve -- an "armhole" wedge of background between `shoulder_L` and
+detached sleeve -- an "armhole" wedge of background between the far shoulder and
 `torso` near the shoulder joint -- and that a uniform part up-scale cannot close
 it, because the part is pinned at its own (proximal) pivot and scaling only moves
 the distal end. The real cause is the arm-chain `lateral_offset_frac` (fix round
-2's -0.35, `canonical_rig.lateral_offset_axis.demonstration_values`) over-pushing
-the sleeve clear of the torso; the fix drops it to -0.10 and separately restores
-`shoulder_L`'s own CUT WIDTH (shrunk to 61% of the artist's cut as a side effect of
-the existing bone-length correction) via a new anisotropic `bone_length_fix.scaled`
-form, both measured directly here rather than asserted from the rig's own numbers.
+2's magnitude 0.35, `canonical_rig.lateral_offset_axis.demonstration_values`)
+over-pushing the sleeve clear of the torso; the fix drops the magnitude to 0.10 and
+separately restores `shoulder_L`'s own CUT WIDTH (shrunk to 61% of the artist's cut
+as a side effect of the existing bone-length correction) via a new anisotropic
+`bone_length_fix.scaled` form, both measured directly here rather than asserted
+from the rig's own numbers.
+
+Fix round 6 (@DennieSeth's Option B, 2026-10-09T16:43) swapped the near/far
+layering wholesale: `_L` draws in front now, `_R` is far, so the lateral offset
+(and therefore the armhole measurement) moved from `shoulder_L`/`forearm_L` to
+`shoulder_R`/`forearm_R` -- `armhole_wedge_px`/`sleeve_torso_overlap_px` below
+gained a `shoulder_name` parameter for this (default `shoulder_R`), and
+`TestReferencePoseShoulderAttachment` re-measures on the new far side rather than
+assuming the fix-round-5 numbers transfer unchanged (they don't: `shoulder_L` and
+`shoulder_R` are different art with different geometry).
 
 `TestArmholeGeometry` -- synthetic placements, proving `armhole_wedge_px`/
 `sleeve_torso_overlap_px` measure what their own names say, independent of the
@@ -52,14 +63,17 @@ def _placement(
 
 class TestArmholeGeometry:
     """Synthetic two-rectangle scenes -- isolates the geometry from the real rig's
-    own part shapes."""
+    own part shapes. Uses `shoulder_L` as the synthetic placement's own name and
+    passes it explicitly, since fix round 6 changed the functions' default
+    `shoulder_name` to `shoulder_R` (the far side under the committed Option B
+    layering) -- these tests are about the geometry, not about which side."""
 
     def test_no_gap_when_shoulder_overlaps_torso(self):
         torso = _placement("torso", (100, 200), (0.0, 0.0), z=5)
         shoulder = _placement("shoulder_L", (40, 40), (10.0, 0.0), z=8)
         placements = [torso, shoulder]
-        assert armhole_wedge_px(placements) == 0
-        assert sleeve_torso_overlap_px(placements) > 0
+        assert armhole_wedge_px(placements, shoulder_name="shoulder_L") == 0
+        assert sleeve_torso_overlap_px(placements, shoulder_name="shoulder_L") > 0
 
     def test_wedge_grows_as_the_sleeve_pulls_away_from_the_torso(self):
         near = [
@@ -70,8 +84,8 @@ class TestArmholeGeometry:
             _placement("torso", (100, 200), (0.0, 0.0), z=5),
             _placement("shoulder_L", (40, 40), (140.0, 0.0), z=8),
         ]
-        wedge_near = armhole_wedge_px(near)
-        wedge_far = armhole_wedge_px(far)
+        wedge_near = armhole_wedge_px(near, shoulder_name="shoulder_L")
+        wedge_far = armhole_wedge_px(far, shoulder_name="shoulder_L")
         assert wedge_near == 0, "the sleeve still overlaps the torso here"
         assert wedge_far > 0, "the sleeve is pulled clear -- a gap must appear"
 
@@ -82,8 +96,8 @@ class TestArmholeGeometry:
         torso = _placement("torso", (100, 200), (0.0, 0.0), z=5)
         shoulder = _placement("shoulder_L", (40, 40), (300.0, 0.0), z=8)
         placements = [torso, shoulder]
-        small_radius = armhole_wedge_px(placements, radius=5.0)
-        large_radius = armhole_wedge_px(placements, radius=400.0)
+        small_radius = armhole_wedge_px(placements, radius=5.0, shoulder_name="shoulder_L")
+        large_radius = armhole_wedge_px(placements, radius=400.0, shoulder_name="shoulder_L")
         assert small_radius < large_radius, "a bigger radius must admit more of the same gap"
         assert small_radius <= 40, "a 5px radius must not pull in the whole 150px gap"
 
@@ -91,8 +105,12 @@ class TestArmholeGeometry:
         torso = _placement("torso", (100, 200), (0.0, 0.0), z=5)
         shoulder_touching = _placement("shoulder_L", (40, 40), (69.0, 0.0), z=8)
         shoulder_clear = _placement("shoulder_L", (40, 40), (200.0, 0.0), z=8)
-        assert sleeve_torso_overlap_px([torso, shoulder_touching]) > 0
-        assert sleeve_torso_overlap_px([torso, shoulder_clear]) == 0
+        assert sleeve_torso_overlap_px(
+            [torso, shoulder_touching], shoulder_name="shoulder_L"
+        ) > 0
+        assert sleeve_torso_overlap_px(
+            [torso, shoulder_clear], shoulder_name="shoulder_L"
+        ) == 0
 
 
 class TestVisiblePixelCountMatchesTheExistingDefinition:
@@ -107,7 +125,7 @@ class TestVisiblePixelCountMatchesTheExistingDefinition:
         )
 
         placements = refpose.build_reference_placements()
-        for part_name in ("shoulder_L", "forearm_L", "torso"):
+        for part_name in ("shoulder_R", "forearm_R", "torso"):
             assert visible_pixel_count(placements, part_name) == test_module_visible_pixel_count(
                 placements, part_name
             )
@@ -115,7 +133,12 @@ class TestVisiblePixelCountMatchesTheExistingDefinition:
 
 class TestReferencePoseShoulderAttachment:
     """The real acceptance numbers, measured against the committed rig -- not
-    copied from the task card's own prose."""
+    copied from the task card's own prose. Fix round 6 moved the lateral offset
+    (and therefore the armhole measurement) from `shoulder_L`/`forearm_L` to
+    `shoulder_R`/`forearm_R`, the new far side under Option B -- the two parts
+    don't have identical geometry (only `shoulder_L` carries the anisotropic
+    bone-length-fix width restore), so these numbers were re-measured on the new
+    side rather than copied from the fix-round-5 values."""
 
     def test_armhole_wedge_is_at_most_400px(self):
         placements = refpose.build_reference_placements()
@@ -123,24 +146,24 @@ class TestReferencePoseShoulderAttachment:
         assert 0 < wedge <= 400, f"armhole wedge is {wedge}px"
 
     def test_armhole_wedge_shrank_from_the_fix_round_4_baseline(self):
-        """The fix-round-4 committed offset (-0.35) left the armhole wide open --
-        confirm the NEW rig is a real improvement, not just under the ceiling by
-        accident."""
+        """The fix-round-4 committed offset magnitude (0.35) left the armhole
+        wide open -- confirm the NEW rig is a real improvement, not just under
+        the ceiling by accident."""
         placements = refpose.build_reference_placements()
         baseline_offsets = {
-            "shoulder_L": -0.35, "forearm_L": -0.35, "thigh_L": -0.06, "calf_L": -0.06,
+            "shoulder_R": 0.35, "forearm_R": 0.35, "thigh_R": 0.06, "calf_R": 0.06,
         }
         baseline = refpose.build_reference_placements(lateral_offset_frac=baseline_offsets)
         assert armhole_wedge_px(placements) < armhole_wedge_px(baseline)
 
-    def test_shoulder_l_genuinely_overlaps_the_torso(self):
+    def test_shoulder_r_genuinely_overlaps_the_torso(self):
         placements = refpose.build_reference_placements()
         assert sleeve_torso_overlap_px(placements) > 0
 
     def test_far_arm_stays_visible_above_the_18000px_floor(self):
         placements = refpose.build_reference_placements()
-        shoulder_px = visible_pixel_count(placements, "shoulder_L")
-        forearm_px = visible_pixel_count(placements, "forearm_L")
+        shoulder_px = visible_pixel_count(placements, "shoulder_R")
+        forearm_px = visible_pixel_count(placements, "forearm_R")
         assert shoulder_px > 0
         assert forearm_px > 0
         assert shoulder_px + forearm_px >= 18000
@@ -148,9 +171,9 @@ class TestReferencePoseShoulderAttachment:
     def test_silhouette_gains_no_new_fragment(self):
         """4-connectivity labelling of the rendered alpha -- the same algorithm
         `docs/design/23-canonical-rig.md` Sec 4 already used for the fix-round-4
-        evidence (238351/726/73px, 3 components >=50px: the main silhouette plus
-        two pre-existing, unrelated `calf_R` motion-streak fragments). This
-        round's offset/width change must not add a 4th."""
+        evidence (3 components >=50px: the main silhouette plus two pre-existing,
+        unrelated `calf_R` motion-streak fragments). This round's offset-side
+        swap must not add a 4th."""
         result = refpose.render()
         alpha_mask = np.asarray(result.native_frames[0])[:, :, 3] > 0
         labels, component_count = _label_connected_components(alpha_mask)
@@ -188,19 +211,28 @@ class TestReferencePoseShoulderAttachment:
 
 
 class TestLateralOffsetValue:
-    def test_arm_chain_offset_is_minus_point_one_zero(self):
+    """Fix round 6: the offsets moved to the side that is now FAR under Option B
+    (`_R`), magnitude unchanged from fix round 5 (0.10 arm / 0.06 leg), sign
+    flipped since the far side now sits screen-right of the hip. `_L` carries no
+    entry -- it is the near side now and defaults to 0.0."""
+
+    def test_arm_chain_offset_is_point_one_zero_on_the_far_r_side(self):
         rig = rig_compositor.load_rig()
         values = rig["canonical_rig"]["lateral_offset_axis"]["demonstration_values"]
-        assert values["shoulder_L"] == pytest.approx(-0.10)
-        assert values["forearm_L"] == pytest.approx(-0.10)
-        assert values["shoulder_L"] == values["forearm_L"], (
+        assert values["shoulder_R"] == pytest.approx(0.10)
+        assert values["forearm_R"] == pytest.approx(0.10)
+        assert values["shoulder_R"] == values["forearm_R"], (
             "one offset per chain -- the two must still match each other"
         )
+        assert "shoulder_L" not in values
+        assert "forearm_L" not in values
 
-    def test_leg_chain_offset_is_unchanged_from_fix_round_2(self):
-        """This round only touches the arm chain; the leg chain's own offset
-        (and the reasoning for its smaller magnitude) is carried forward as-is."""
+    def test_leg_chain_offset_is_unchanged_in_magnitude_from_fix_round_2(self):
+        """This round only moves WHICH side carries the leg-chain offset; its
+        magnitude (0.06) and the reasoning for it are carried forward as-is."""
         rig = rig_compositor.load_rig()
         values = rig["canonical_rig"]["lateral_offset_axis"]["demonstration_values"]
-        assert values["thigh_L"] == pytest.approx(-0.06)
-        assert values["calf_L"] == pytest.approx(-0.06)
+        assert values["thigh_R"] == pytest.approx(0.06)
+        assert values["calf_R"] == pytest.approx(0.06)
+        assert "thigh_L" not in values
+        assert "calf_L" not in values
