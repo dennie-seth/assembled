@@ -1,4 +1,9 @@
 [extend]
 useDefault = true
 [allowlist]
-paths = ['''\.env$''', '''\.env\..*''']
+# T-0431: `generic-api-key` false-positives on `assert r1.keypoints == r2.keypoints`
+# in this determinism test -- "key" inside "keypoints" plus the `==` operator is
+# enough to match the rule's generic pattern. No secret-shaped content lives in
+# this file; scoped to it alone rather than a path glob, so the allowlist can't
+# accidentally cover an unrelated file later.
+paths = ['''\.env$''', '''\.env\..*''', '''^assets/src/character/tests/test_walk_sheet_T0431\.py$''']

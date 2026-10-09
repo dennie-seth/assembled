@@ -47,3 +47,12 @@ c37e19d286225b43d18b803502fcc1b858b24d8e:assets/src/concept/pose_rig_forward_lim
 bab2db5413fee7c233b1b55a55c6a50d465bcc08:docs/assets/evidence/T-0337/README.md:generic-api-key:240
 08b4123b15f6077642d27356a14ee940dbecf1f5:ASSET_PROVENANCE.md:generic-api-key:503
 08b4123b15f6077642d27356a14ee940dbecf1f5:ASSET_PROVENANCE.md:generic-api-key:504
+
+# [T-0431 FIX ROUND] `generic-api-key` fires on `assert r1.keypoints == r2.keypoints` --
+# the rule's keyword match is "key" inside "keypoints", not a secret. Confirmed from the
+# real scan's own SARIF output on PR #442 (push run 37790901674 / PR run 37790912793),
+# not derived by inspection like some older entries above. The durable path-scoped
+# allowlist entry in .gitleaks.toml covers this line (and any future line of the same
+# shape) in this one test file going forward; this fingerprint covers the already-pushed
+# commit in case a scan mode reads .gitleaksignore only.
+8aa3ae67cbc5c853054ede0b1b67fe4b41d3d142:assets/src/character/tests/test_walk_sheet_T0431.py:generic-api-key:59
