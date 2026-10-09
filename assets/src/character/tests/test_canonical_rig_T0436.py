@@ -114,9 +114,27 @@ class TestBoneLengthFix:
         assert "why_not_whole_leg" in RIG["bone_length_fix"]
 
     def test_shoulder_l_scale_is_recorded(self):
+        """T-0436 fix round 5: shoulder_L's entry is now ANISOTROPIC -- a
+        {height, width} object, not a plain number -- because the uniform scalar
+        used through fix round 4 also shrank the sleeve's own width as a side
+        effect of correcting its bone length (see `shoulder_l_anisotropic_note`
+        below). Only the height scale carries the length correction."""
         assert "shoulder_L" in RIG["bone_length_fix"]["scaled"]
         scale = RIG["bone_length_fix"]["scaled"]["shoulder_L"]
-        assert 0.0 < scale < 1.0, "shoulder_L's raw cut is LONGER than shoulder_R's, not shorter"
+        assert isinstance(scale, dict)
+        assert 0.0 < scale["height"] < 1.0, (
+            "shoulder_L's raw cut is LONGER than shoulder_R's, not shorter"
+        )
+
+    def test_shoulder_l_width_is_not_shrunk_by_the_length_correction(self):
+        """Fix round 5: the old isotropic scale (0.6087) also shrank the sleeve's
+        WIDTH to 61% of the artist's own cut, a side effect of the bone-length fix,
+        not an intent. The width scale is now 1.0 -- the sleeve's own width is
+        preserved."""
+        scale = RIG["bone_length_fix"]["scaled"]["shoulder_L"]
+        assert scale["width"] == pytest.approx(1.0)
+        scaled = rig_compositor.scaled_parts(PARTS, RIG)
+        assert scaled["shoulder_L"].width == PARTS["shoulder_L"].width
 
     def test_shoulder_l_scaled_length_matches_shoulder_r(self):
         """The whole point of the fix: after scaling, shoulder_L's own measured bone
@@ -139,12 +157,18 @@ class TestBoneLengthFix:
 
     def test_scaled_parts_is_generic_over_every_entry_in_bone_length_fix(self):
         """Round 4 hardcoded `calf_L`. This card generalizes it so `shoulder_L`'s new
-        entry is picked up the same way, with no second code path."""
+        (now anisotropic, fix round 5) entry is picked up the same way, with no
+        second code path: an isotropic number scales both axes (`calf_L`), a
+        {height, width} object scales each axis independently (`shoulder_L`)."""
         scaled = rig_compositor.scaled_parts(PARTS, RIG)
         raw_h = PARTS["shoulder_L"].height
-        scale = RIG["bone_length_fix"]["scaled"]["shoulder_L"]
-        assert scaled["shoulder_L"].height == round(raw_h * scale)
+        height_scale = RIG["bone_length_fix"]["scaled"]["shoulder_L"]["height"]
+        assert scaled["shoulder_L"].height == round(raw_h * height_scale)
         assert scaled["shoulder_L"].height != raw_h
+
+        raw_calf_h = PARTS["calf_L"].height
+        calf_scale = RIG["bone_length_fix"]["scaled"]["calf_L"]
+        assert scaled["calf_L"].height == round(raw_calf_h * calf_scale)
 
     def test_only_scaled_entries_are_resized(self):
         scaled = rig_compositor.scaled_parts(PARTS, RIG)
