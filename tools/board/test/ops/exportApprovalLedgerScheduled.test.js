@@ -162,6 +162,33 @@ describe("runLedgerExport", () => {
     expect(result.exitCode).toBe(EXIT_CODE_OK);
   });
 
+  it("does not treat the always-untracked worktrees/ directory as foreign dirt", async () => {
+    // Every card's own implementation work happens in a sibling checkout under worktrees/, and
+    // nothing in .gitignore/info-exclude hides that directory from the shared checkout this job
+    // runs against -- `git status --porcelain` reports it as `?? worktrees/` on every run,
+    // regardless of whether a card run is active. Treating that line as foreign dirt would make
+    // this job skip forever, which is exactly the bug a prior review round caught.
+    const git = makeGit({ status: () => ({ stdout: "?? worktrees/\n", stderr: "" }) });
+    const deps = makeDeps({ git, existingLedger: null });
+
+    const result = await runLedgerExport({ env: { BOARD_REPO_ROOT: "/repo" }, now: () => new Date(), ...deps });
+
+    expect(result.reason).not.toBe("working-tree-dirty");
+    expect(result.exitCode).toBe(EXIT_CODE_OK);
+    expect(deps.renameFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("still skips on a genuinely untracked path outside worktrees/", async () => {
+    const git = makeGit({ status: () => ({ stdout: "?? scratch-notes.txt\n", stderr: "" }) });
+    const deps = makeDeps({ git });
+
+    const result = await runLedgerExport({ env: { BOARD_REPO_ROOT: "/repo" }, now: () => new Date(), ...deps });
+
+    expect(result.exitCode).toBe(EXIT_CODE_OK);
+    expect(result.reason).toBe("working-tree-dirty");
+    expect(deps.renameFn).not.toHaveBeenCalled();
+  });
+
   it("fails loudly when the remote fetch itself fails", async () => {
     const git = makeGit({
       fetch: () => {
