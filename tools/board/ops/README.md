@@ -606,13 +606,28 @@ card's acceptance criteria ask for, not a comment asserting it:
   only needs to catch the schedule up by the NEXT tick, not instantly, so
   two misses in a row still land inside the bound. Spec: "two consecutive
   missed runs still stay under the 24h gate."
-- **The actual limit, named rather than hidden**: four consecutive missed
-  runs (a 16h+ outage) pushes the worst case to 28h, past the gate. Spec:
-  "names the actual limit of this design." An outage that long already
-  means every OTHER timer in this ops suite (`board-db-backup`,
+- **The real edge, pinned rather than rounded up**: **three** consecutive
+  missed runs (a 12h+ outage), positioned where the run that would have
+  forced a refresh is itself one of the misses, already drives the worst
+  case to exactly 24h -- the gate's own `BOARD_APPROVAL_LEDGER_STALE_HOURS`
+  threshold, with zero hours of margin left, not "comfortably under" it.
+  Spec: "pins the real edge: three consecutive missed runs already exhausts
+  the margin to the 24h gate, not four." (An earlier round of this doc
+  named four as the breaking point; that undercounted by one tick -- see
+  below for why position, not just count, is what moves this number.)
+  **Four** consecutive missed runs clearly exceeds it, at 28h. Spec: "names
+  the actual limit of this design." An outage that long already means
+  every OTHER timer in this ops suite (`board-db-backup`,
   `board-integrity-check`, `board-assets-sync`) has been silent for the
   same stretch -- this job's own skip/run log is one more place that shows
   it, not the only place an operator would notice.
+- **Position matters as much as count**: the same three-consecutive-miss
+  gap positioned right after a publish instead -- e.g. starting the tick
+  after the schedule's natural first refresh -- never rises above the
+  steady-state 16h high-water mark, because the cadence's own slack
+  absorbs it. Spec: "a gap positioned right after a publish is the SAFE
+  case." The 24h figure above is the worst alignment across the schedule,
+  not every outage of that length.
 
 ### No partial writes
 
@@ -639,6 +654,38 @@ repo-root-relative `scripts/exportApprovalLedger.js` path (there is no
 `scripts/` directory at the repo root), which made every real scheduled
 run ENOENT silently behind a mocked subprocess boundary the test suite
 never caught.
+
+**The temp file's lifetime is scoped to a single `try/finally`** around
+export-through-rename, so it is removed on every exit path -- a non-zero
+exporter exit, an unparseable or empty result, a decided skip, or a later
+git failure -- not only the success path. A prior fix-round deleted it on
+two of those branches and missed the exporter-subprocess-failure branch;
+that left the tmp file on disk, and the NEXT run's own preflight (item 2
+below) read it as untracked working-tree dirt and returned
+`working-tree-dirty` -- forever, since nothing ever cleaned it up. A single
+transient exporter failure disabled the whole schedule until a human
+noticed and deleted the file by hand. Pinned by
+`test/ops/exportApprovalLedgerScheduled.test.js`'s "does not leave the temp
+file behind after a failed export..." spec, which runs the failure and the
+next tick's healthy run back to back and asserts the second run does not
+see `working-tree-dirty`.
+
+**Freshness is decided against the committed ledger (`git show
+HEAD:<path>`), never the working-tree file.** The preflight below
+deliberately allows the ledger file itself to be the one dirty path in the
+working tree (a half-applied prior export, or a human mid-edit) -- so if
+the freshness decision read that file instead of HEAD, an uncommitted but
+freshly-timestamped copy sitting on a genuinely stale HEAD would decide
+`fresh-no-change` and never publish, recreating the exact staleness this
+card exists to end inside the one check meant to catch it. Reading from
+HEAD instead means an uncommitted ledger is never mistaken for an
+already-fresh one; the alternative floated during review -- treating any
+dirty ledger as "pending publication" instead -- was not taken, since
+reading the committed blob directly needed no new state at all. Pinned by
+"decides freshness from the committed ledger (HEAD), never an uncommitted
+working-tree copy", which seeds a fresh, uncommitted copy on disk
+alongside a genuinely stale committed one and asserts the stale committed
+age wins.
 
 ### Safe against a live board / a run in progress
 
@@ -728,14 +775,15 @@ The card's acceptance asks for early warning as the ledger approaches the
 threshold, OR a stated reason that's unnecessary given the chosen fix.
 Chosen: **unnecessary, for two reasons.**
 
-First, structurally: under normal operation (fewer than four consecutive
-missed 4-hourly runs -- see "Proof it refreshes before the gate bites"
-above), the committed ledger cannot reach anywhere near the 24h gate at
-all, so a once-a-day 03:20 check (`board-integrity-check.py`'s own cadence)
-reporting "age approaching threshold" would almost never fire, and on the
-rare day a 16h+ outage made it fire, every other timer in this same suite
-would already be silent for the same stretch -- that silence is the
-earlier, broader signal.
+First, structurally: under normal operation (fewer than three consecutive
+missed 4-hourly runs, or a longer run of misses that doesn't land on the
+schedule's worst alignment -- see "Proof it refreshes before the gate
+bites" above), the committed ledger cannot reach anywhere near the 24h gate
+at all, so a once-a-day 03:20 check (`board-integrity-check.py`'s own
+cadence) reporting "age approaching threshold" would almost never fire,
+and on the rare day a 12h+ outage made it fire, every other timer in this
+same suite would already be silent for the same stretch -- that silence is
+the earlier, broader signal.
 
 Second, practically: this job's own per-run log (`latest.log`/`history.log`,
 written every 4 hours regardless of outcome) already reports the ledger's
