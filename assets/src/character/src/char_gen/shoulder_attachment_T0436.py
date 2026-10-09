@@ -1,38 +1,46 @@
 """T-0436 fix round 5: the far shoulder's attachment to the torso.
 
 @DennieSeth's fix-round-4 verification found a new defect in the reference-pose
-render: `shoulder_L` reads as detached from the body -- a wedge of visible
+render: the far shoulder reads as detached from the body -- a wedge of visible
 background in the "armhole" between the sleeve and the torso, right where the arm
-should plug in. The initial read (scale the part up 5-10%) does not work, for a
-mechanical reason: a part is pinned at its own PIVOT, which for `shoulder_L` is its
-PROXIMAL (shoulder) joint (`side_view_rig.json`'s `rig.shoulder_L.pivot`). Scaling
-moves only the DISTAL end further out -- the proximal end, and therefore the gap at
-the body, is untouched at every scale factor.
+should plug in. (Fix round 5 itself measured this on `shoulder_L`, the far side
+through that round; fix round 6 swapped the near/far layering to Option B, which
+made `shoulder_R` the far side -- see `shoulder_name` below.) The initial read
+(scale the part up 5-10%) does not work, for a mechanical reason: a part is pinned
+at its own PIVOT, which for either shoulder part is its PROXIMAL (shoulder) joint
+(`side_view_rig.json`'s `rig.<part>.pivot`). Scaling moves only the DISTAL end
+further out -- the proximal end, and therefore the gap at the body, is untouched at
+every scale factor.
 
 What actually causes the wedge is fix round 2's arm-chain `lateral_offset_frac`
-(`canonical_rig.lateral_offset_axis.demonstration_values`, -0.35 through fix round
-4): it pushes the whole far-arm chain sideways to clear the torso silhouette, and at
--0.35 it over-pushes, carrying the sleeve's proximal end away from the torso instead
-of just clear of it. This module gives the two measurements that quantify that,
-reused by `tests/test_shoulder_attachment_T0436.py` and by
-`gen_reference_pose_evidence_T0436.py` when it regenerates the evidence renders:
+(`canonical_rig.lateral_offset_axis.demonstration_values`, magnitude 0.35 through
+fix round 4): it pushes the whole far-arm chain sideways to clear the torso
+silhouette, and at that magnitude it over-pushes, carrying the sleeve's proximal
+end away from the torso instead of just clear of it. This module gives the two
+measurements that quantify that, reused by `tests/test_shoulder_attachment_T0436.py`
+and by `gen_reference_pose_evidence_T0436.py` when it regenerates the evidence
+renders:
 
-* `armhole_wedge_px` -- background pixels enclosed between `shoulder_L` and
-  `torso`, within `radius` of the shoulder joint.
-* `sleeve_torso_overlap_px` -- pixels where `shoulder_L`'s own mask and `torso`'s
-  own mask are BOTH opaque -- a genuine overlap, not an abutment.
+* `armhole_wedge_px` -- background pixels enclosed between the far shoulder part
+  and `torso`, within `radius` of that shoulder's own joint.
+* `sleeve_torso_overlap_px` -- pixels where the far shoulder's own mask and
+  `torso`'s own mask are BOTH opaque -- a genuine overlap, not an abutment.
 
 The fix itself is two independent changes, neither touching the committed part art
 (`shoulder_L.png` stays byte-identical, per this card's own no-re-cut rule):
 
-1. The arm-chain lateral offset drops from -0.35 to -0.10
+1. The arm-chain lateral offset's magnitude drops from 0.35 to 0.10
    (`canonical_rig.lateral_offset_axis.demonstration_values`) -- see
-   `fix_round_5_note` in `side_view_rig.json` for the swept bracket.
+   `fix_round_5_note` in `side_view_rig.json` for the swept bracket. Fix round 6
+   moved WHICH side carries it (`shoulder_R`/`forearm_R`, not `shoulder_L`/
+   `forearm_L`) without changing the magnitude.
 2. `bone_length_fix.scaled.shoulder_L` becomes ANISOTROPIC
    (`rig_compositor.scaled_parts`'s new `{height, width}` form) -- the height scale
    that corrects the bone length is unchanged, but the width scale returns to 1.0,
    restoring the sleeve's own cut width (113px, not the 69px the old isotropic
-   0.6087 scale shrank it to) without moving the bone.
+   0.6087 scale shrank it to) without moving the bone. This correction stays keyed
+   to `shoulder_L` specifically (it corrects THAT PNG's own longer cut, not
+   whichever side is far), regardless of which side the lateral offset lives on.
 """
 from __future__ import annotations
 
@@ -45,27 +53,31 @@ from char_gen.draw_order_audit_T0436 import OPAQUE_THRESHOLD, canvas_geometry, p
 from char_gen.rig_compositor import Placement
 
 
-def _shoulder_l_joint_canvas_xy(
-    placements: list[Placement], offset: tuple[float, float]
+def _shoulder_joint_canvas_xy(
+    placements: list[Placement], offset: tuple[float, float], shoulder_name: str
 ) -> tuple[float, float]:
-    joint = next(p for p in placements if p.name == "shoulder_L")
+    joint = next(p for p in placements if p.name == shoulder_name)
     return (joint.target_xy[0] + offset[0], joint.target_xy[1] + offset[1])
 
 
-def armhole_wedge_px(placements: list[Placement], radius: float = 130.0) -> int:
-    """Background pixels enclosed between `shoulder_L` and `torso`, within
-    `radius` canvas px of `shoulder_L`'s own joint. "Enclosed" is a per-row
+def armhole_wedge_px(
+    placements: list[Placement], radius: float = 130.0, shoulder_name: str = "shoulder_R",
+) -> int:
+    """Background pixels enclosed between `shoulder_name` and `torso`, within
+    `radius` canvas px of `shoulder_name`'s own joint. "Enclosed" is a per-row
     (scanline) test: for each row within the circle, find `torso`'s own opaque
-    x-range and `shoulder_L`'s own opaque x-range on that row; if the two ranges
+    x-range and `shoulder_name`'s own opaque x-range on that row; if the two ranges
     don't overlap, the background pixels strictly BETWEEN them (whichever range
     sits to which side) are the wedge -- the gap a viewer reads as "the sleeve
     doesn't plug into the body here." A row where the two ranges already overlap
-    (or either part isn't present at all) contributes nothing."""
+    (or either part isn't present at all) contributes nothing. `shoulder_name`
+    defaults to `shoulder_R`, the far side under the committed Option B layering
+    (fix round 6) -- pass `shoulder_L` explicitly for the fix-round-5 geometry."""
     offset, canvas_size = canvas_geometry(placements)
     masks = part_alpha_masks(placements, canvas_size, offset)
     torso_mask = masks["torso"] >= OPAQUE_THRESHOLD
-    shoulder_mask = masks["shoulder_L"] >= OPAQUE_THRESHOLD
-    joint_x, joint_y = _shoulder_l_joint_canvas_xy(placements, offset)
+    shoulder_mask = masks[shoulder_name] >= OPAQUE_THRESHOLD
+    joint_x, joint_y = _shoulder_joint_canvas_xy(placements, offset, shoulder_name)
 
     height, width = torso_mask.shape
     y_lo = max(0, int(math.floor(joint_y - radius)))
@@ -97,14 +109,17 @@ def armhole_wedge_px(placements: list[Placement], radius: float = 130.0) -> int:
     return wedge_px
 
 
-def sleeve_torso_overlap_px(placements: list[Placement]) -> int:
-    """How many canvas pixels have BOTH `shoulder_L`'s own mask and `torso`'s own
-    mask opaque -- a genuine overlap (the sleeve's proximal end sits inside the
-    torso's own silhouette), not merely two shapes that happen to touch."""
+def sleeve_torso_overlap_px(
+    placements: list[Placement], shoulder_name: str = "shoulder_R",
+) -> int:
+    """How many canvas pixels have BOTH `shoulder_name`'s own mask and `torso`'s
+    own mask opaque -- a genuine overlap (the sleeve's proximal end sits inside the
+    torso's own silhouette), not merely two shapes that happen to touch.
+    `shoulder_name` defaults to `shoulder_R`, the far side under Option B."""
     offset, canvas_size = canvas_geometry(placements)
     masks = part_alpha_masks(placements, canvas_size, offset)
     torso_mask = masks["torso"] >= OPAQUE_THRESHOLD
-    shoulder_mask = masks["shoulder_L"] >= OPAQUE_THRESHOLD
+    shoulder_mask = masks[shoulder_name] >= OPAQUE_THRESHOLD
     return int(np.count_nonzero(torso_mask & shoulder_mask))
 
 

@@ -65,9 +65,12 @@ def main() -> None:
 
     with_offset = refpose.build_reference_placements()
     without_offset = refpose.build_reference_placements(lateral_offset_frac={})
-    shoulder_l_px = visible_pixel_count(with_offset, "shoulder_L")
-    forearm_l_px = visible_pixel_count(with_offset, "forearm_L")
-    shoulder_l_px_no_offset = visible_pixel_count(without_offset, "shoulder_L")
+    # Fix round 6 (Option B): the far side is now `_R`, so the lateral offset
+    # (and the far-arm visibility it exists to produce) lives on
+    # shoulder_R/forearm_R, not shoulder_L/forearm_L.
+    shoulder_r_px = visible_pixel_count(with_offset, "shoulder_R")
+    forearm_r_px = visible_pixel_count(with_offset, "forearm_R")
+    shoulder_r_px_no_offset = visible_pixel_count(without_offset, "shoulder_R")
 
     rig = rig_compositor.load_rig()
     parts = rig_compositor.load_parts()
@@ -129,9 +132,9 @@ def main() -> None:
     caption_lines = [
         f"shoulder bar: {shoulder_bar['px']:.1f}px ({shoulder_bar['reference_frac']} x spine)",
         f"pelvis bar: {pelvis_bar['px']:.1f}px ({pelvis_bar['reference_frac']} x spine)",
-        f"shoulder_L visible px: {shoulder_l_px_no_offset} (no offset) "
-        f"-> {shoulder_l_px} (with offset)",
-        f"forearm_L visible px: {forearm_l_px}",
+        f"shoulder_R visible px: {shoulder_r_px_no_offset} (no offset) "
+        f"-> {shoulder_r_px} (with offset)  [far side, Option B]",
+        f"forearm_R visible px: {forearm_r_px}",
         f"armhole wedge: {armhole_wedge}px  sleeve/torso overlap: {sleeve_overlap}px",
         f"WORST JOINT: front shin (calf_R), deviation {deviation_shin:+.2f} x spine"
         " (current, unreconciled, vs adopted far-side target -- deliberately not applied)",
@@ -143,9 +146,9 @@ def main() -> None:
 
     overlay.save(OUT_DIR / "rig_vs_reference_overlay.png")
 
-    print("shoulder_L visible px (no offset):", shoulder_l_px_no_offset)
-    print("shoulder_L visible px (with offset):", shoulder_l_px)
-    print("forearm_L visible px (with offset):", forearm_l_px)
+    print("shoulder_R visible px (no offset):", shoulder_r_px_no_offset)
+    print("shoulder_R visible px (with offset):", shoulder_r_px)
+    print("forearm_R visible px (with offset):", forearm_r_px)
     print("armhole wedge px:", armhole_wedge)
     print("sleeve/torso overlap px:", sleeve_overlap)
     print("front shin deviation (x spine):", deviation_shin)
