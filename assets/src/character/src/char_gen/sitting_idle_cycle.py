@@ -39,8 +39,9 @@ unchanged). This round is pose refinement only, three changes:
    genuinely shared, exactly as the card asks ("each leg needs its own IK solve from
    the SHARED hip").
 
-The compositing machinery itself (part loading, pivot math, the calf_L length
-correction, rotation padding, torso-lean propagation, z-ordering, descent to the 48px
+The compositing machinery itself (part loading, pivot math, the calf_R length
+correction (T-0436 fix round 7: renamed from `calf_L`, same physical correction),
+rotation padding, torso-lean propagation, z-ordering, descent to the 48px
 cell) is NOT duplicated here -- it lives once in `char_gen.rig_compositor`, generic over
 any pose. This module supplies only the crouch's own `LegStance`, its own arm rest
 angles, and its own `phase -> UpperPose`.
@@ -68,7 +69,8 @@ EVIDENCE_DIR = _REPO_ROOT / "docs" / "assets" / "evidence" / "T-0269"
 
 #: Measured bone lengths, same parts as the walk/standing idle (side_view_rig.json /
 #: docs/assets/evidence/T-0430/rig.json): thighs measure equal; both calves measure
-#: equal once calf_L's own rig-recorded length-scale correction is applied. Defaults
+#: equal once calf_R's own rig-recorded length-scale correction is applied (T-0436
+#: fix round 7: renamed from `calf_L`, same physical correction). Defaults
 #: only -- `render_frames()` always re-measures from the committed parts.
 THIGH_LEN = 246.72
 CALF_LEN = 330.24

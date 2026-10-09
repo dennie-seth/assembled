@@ -1,9 +1,11 @@
 """Generic part-compositing machinery shared by every side-view pose animation.
 
 Factored out of T-0269 round 1's `sitting_idle_cycle` (round 2) so a new pose does not
-duplicate part-loading, pivot math, the calf_L length correction, or the
-rotation-padding fix -- it supplies its own leg stance (a fixed hip and both leg
-angles) and its own per-phase upper-body pose, and gets a compositor for free.
+duplicate part-loading, pivot math, the calf_R length correction (T-0436 fix round 7:
+renamed from `calf_L` -- same physical correction, the L/R suffix swap moved which key
+names it), or the rotation-padding fix -- it supplies its own leg stance (a fixed hip
+and both leg angles) and its own per-phase upper-body pose, and gets a compositor for
+free.
 
 A pose module (`char_gen.idle_cycle`, `char_gen.sitting_idle_cycle`) is responsible for:
 * its own `LegStance` (hip position, ground plane, thigh/knee angles -- phase-independent)
@@ -51,23 +53,26 @@ def load_parts(parts_dir: Path = PARTS_DIR) -> dict[str, Image.Image]:
 def scaled_parts(parts: dict[str, Image.Image], rig: dict) -> dict[str, Image.Image]:
     """Every part named in `bone_length_fix.scaled` carries the rig's own length-scale
     correction -- generic over however many entries that dict has (T-0436 added
-    `shoulder_L` alongside `calf_L`; a future round can add more without a new code
-    path here). The two existing corrections are for opposite reasons: `calf_L`'s
-    upper portion is occluded by the near leg in a side view, so its cut is SHORT even
-    though the bone is not; `shoulder_L` is cut further down the arm than `shoulder_R`,
-    so its cut is LONG. Either way, scaling the part restores the bone, and the
-    normalized pivot keeps the chain intact.
+    `shoulder_R` alongside `calf_R`; a future round can add more without a new code
+    path here). NOTE (T-0436 fix round 7): both keys moved with the L/R suffix rename
+    -- the correction that was keyed `calf_L`/`shoulder_L` through fix round 6 is the
+    SAME physical PNG and the SAME correction, now keyed `calf_R`/`shoulder_R` so the
+    name tracks draw depth (near/front = `_R`) instead of the mirrored source art's
+    original labelling. The reasoning for each correction (why one cut is short, why
+    the other is long) is recorded once, in `side_view_rig.json`'s own
+    `bone_length_fix.measured_before.near_far_note`, `shoulder_R_note` and
+    `shoulder_R_anisotropic_note` -- read there rather than duplicated here, so a
+    future rename only has to update one place.
 
     An entry is either a plain number -- an ISOTROPIC scale applied to both axes
-    (`calf_L`'s `1.2929`, unchanged since fix round 4) -- or a `{"height": ...,
-    "width": ...}` object -- an ANISOTROPIC scale (T-0436 fix round 5, `shoulder_L`).
-    `measured_bone_lengths` only ever reads a part's HEIGHT (bone length runs along
-    the pivot axis, which is vertical for every part here), so an anisotropic entry's
-    `height` is what carries the length correction and `width` is free to differ
-    without moving the bone -- exactly the case `shoulder_L` needed: its raw cut's
-    WIDTH was being shrunk to 61% of the artist's own cut as a side effect of
-    correcting its bone length, not an intent (see `shoulder_L_anisotropic_note`
-    in `side_view_rig.json`)."""
+    (`calf_R`'s `1.2929`, unchanged since fix round 4 other than the key it is filed
+    under) -- or a `{"height": ..., "width": ...}` object -- an ANISOTROPIC scale
+    (T-0436 fix round 5, `shoulder_R`). `measured_bone_lengths` only ever reads a
+    part's HEIGHT (bone length runs along the pivot axis, which is vertical for every
+    part here), so an anisotropic entry's `height` is what carries the length
+    correction and `width` is free to differ without moving the bone -- exactly the
+    case `shoulder_R` needed: see `shoulder_R_anisotropic_note` in
+    `side_view_rig.json` for the measurement."""
     scales = rig["bone_length_fix"]["scaled"]
     out = dict(parts)
     for name, scale in scales.items():

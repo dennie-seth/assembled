@@ -896,14 +896,29 @@ part of this rename — it is the mechanism, not a name tied to one physical par
   flat `per_frame_angles` list, consumed by `walk_cycle` for its OWN, separate
   per-frame curve solve) — confirmed by direct read: no key or value in either
   block contains `_R`/`_L`. Nothing to rename there.
-- `idle_cycle.py`, `sitting_idle_cycle.py` — reference `thigh_R`/`calf_R`/
-  `shoulder_R`/`forearm_R` (and `sitting_idle_cycle`'s own `CROUCH_Z_OVERRIDE =
-  {"thigh_R": 3.5, "thigh_L": 3.6}`) as PART NAMES, same mechanism this card's
-  rename affects — left untouched (§7 states why: this card does not re-derive any
-  animation, and both modules' own tests stay green against the renamed parts
-  without modification, since the thighs measure exactly equal and both calves
-  measure exactly equal post-correction regardless of which physical PNG a given
-  name currently loads — see §7's walk/idle/sitting-idle re-run).
+- `idle_cycle.py` — one hit, `lengths["thigh_R"], lengths["calf_R"]` in
+  `solve_leg`'s own call — a functional reference to the current (correct) part
+  names, not prose about which side is far/near. Nothing to fix.
+- `rig_compositor.py` — the shared compositor every pose module (including this
+  card's own `reference_pose_T0436.py`) imports. Its module docstring and
+  `scaled_parts`'s own docstring both named `shoulder_L`/`calf_L` as the parts
+  carrying the bone-length correction, with fix-round-6-and-earlier reasoning
+  for which side each cut was short/long on. Both are stale: the correction is
+  keyed `shoulder_R`/`calf_R` as of this round. **This was missed by this
+  section's own first pass** — see the correction note immediately below.
+- `sitting_idle_cycle.py` — reference `thigh_R`/`calf_R`/`shoulder_R`/`forearm_R`
+  (and its own `CROUCH_Z_OVERRIDE = {"thigh_R": 3.5, "thigh_L": 3.6}`) as PART
+  NAMES, same mechanism this card's rename affects. The override's own two
+  absolute z VALUES, and every other functional line, are correctly left
+  untouched — §7 states why (this card does not re-derive any animation, and the
+  module's own tests stay green against the renamed parts without modification).
+  But **two comments were prose, not mechanism, and were wrong**: the module
+  docstring and the `THIGH_LEN`/`CALF_LEN` comment both said "the calf_L length
+  correction" / "calf_L's own rig-recorded length-scale correction" — that
+  correction is keyed `calf_R` as of this round (§3h, §6), so the comment named
+  the wrong key. Fixed in this round's diff to say `calf_R`, with a parenthetical
+  noting the rename; no functional line in the module changed, so its test file
+  needed no update and none was made.
 - `docs/design/23-canonical-rig.md` (this document) — §3a–§3g, §5, §6 describe
   what was true THROUGH the round named in each section's own heading; left as
   written, as a historical record, with a pointer note added at §6 (the one
@@ -913,6 +928,36 @@ part of this rename — it is the mechanism, not a name tied to one physical par
   (not just pointed at) because its claim — "no `.png` file appears in the diff" —
   is a factual statement about THIS round's own diff, not a historical record of a
   prior one.
+- `docs/assets/evidence/T-0269/{README.md,rig.json}`,
+  `docs/assets/evidence/T-0430/{README.md,rig.json}`,
+  `docs/assets/evidence/side-view-walk-reference/README.md` — committed evidence
+  for EARLIER, unrelated cards (T-0269, T-0430, and the original side-view-walk
+  reference cut), predating this card entirely. Each already uses `_R` for the
+  near leg/arm and `_L` for the far one — e.g.
+  `docs/assets/evidence/side-view-walk-reference/README.md`: "the far calf's
+  upper portion is occluded... I corrected only `calf_L`". That is the SAME
+  convention fix round 7 restores (near/front = `_R`, far/behind = `_L`), so
+  these documents' own prose is still correct against the current rig and needs
+  no change — checked directly, not assumed, by reading each hit in context.
+
+**Correction to this section's own prior claim.** A reviewer FAIL
+(2026-10-09T18:06) found this sweep's list above, as it stood at that time, did
+not mention `rig_compositor.py` at all, and that file's own docstrings — both the
+module docstring and `scaled_parts`'s — asserted the bone-length correction was
+still keyed `shoulder_L`/`calf_L` and explained WHY using fix-round-6-and-earlier
+reasoning, which the committed rig had already moved to `shoulder_R`/`calf_R`.
+That was a real gap in the sweep, not a disagreement about the underlying facts:
+`rig_compositor.py` is read by every pose module in this repo, so a stale claim
+there is the single highest-leverage place to leave one. Fixed in this round:
+the module docstring's `calf_L` mention is now `calf_R`, and `scaled_parts`'s
+docstring now names `shoulder_R`/`calf_R`, generalizes the "why" by pointing at
+`side_view_rig.json`'s own `near_far_note`/`shoulder_R_note`/
+`shoulder_R_anisotropic_note` instead of restating a copy of that reasoning
+inline (the inline copy is exactly what went stale last time), and its
+`shoulder_L_anisotropic_note` cross-reference is corrected to
+`shoulder_R_anisotropic_note`, the key that actually exists in the committed
+rig. No behaviour changed — these are docstrings, confirmed by the full existing
+suite staying green with no test file edited.
 
 ## 4. The static render
 
