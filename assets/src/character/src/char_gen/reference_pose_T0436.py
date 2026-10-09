@@ -36,15 +36,22 @@ BACK_KNEE_FLEXION_DEG = 8.0
 #: attached `dennie_canonical_skeleton_ref.png`, then mirrored (the reference faces
 #: -x, this rig faces +x, so `theta -> 180 - theta`) and converted into this rig's
 #: own `sign_convention.positive_angle` (0 = hanging straight down, positive swings
-#: the tip toward +x). R is the near arm, reaching forward; L is the far arm,
-#: trailing back -- one shared scalar cannot express both, which is why
-#: `UpperPose` gained the per-side `*_r`/`*_l` fields this round. Replaces the
-#: previous SHOULDER_REST_DEG/ELBOW_REST_DEG rest pose (10.0/20.0 for both arms),
-#: which rendered as two parallel droops rather than a reach and a trail.
-SHOULDER_DEG_R = 44.3
-ELBOW_DEG_R = 40.7
-SHOULDER_DEG_L = -56.4
-ELBOW_DEG_L = 33.2
+#: the tip toward +x). One arm reaches forward, the other trails back -- one shared
+#: scalar cannot express both, which is why `UpperPose` gained the per-side
+#: `*_r`/`*_l` fields this round. Replaces the previous SHOULDER_REST_DEG/
+#: ELBOW_REST_DEG rest pose (10.0/20.0 for both arms), which rendered as two
+#: parallel droops rather than a reach and a trail.
+#:
+#: Fix round 7 (2026-10-09T17:06): all eight limb parts' L/R suffix was swapped so
+#: the name tracks draw depth (near/front = `_R`, far/behind = `_L`) rather than the
+#: mirrored source art's original labelling. These four constants' VALUES are
+#: unchanged from fix round 4 -- only which constant (R's or L's) each physical arm
+#: now reads from swapped, exactly tracking the part-file rename: the near arm
+#: (trailing back) is now `_R`, the far arm (reaching forward) is now `_L`.
+SHOULDER_DEG_R = -56.4
+ELBOW_DEG_R = 33.2
+SHOULDER_DEG_L = 44.3
+ELBOW_DEG_L = 40.7
 HEAD_REST_DEG = 0.0
 
 #: Pulls the far shoulder/forearm/thigh/calf clear of the torso's own silhouette --
@@ -88,13 +95,19 @@ def canonical_world_points(
 
 
 def leg_stance(hip_world: tuple[float, float], ground_plane_y: float) -> rig_compositor.LegStance:
+    """Fix round 7: the part-file rename swapped which physical leg answers to
+    `thigh_R`/`thigh_L` (near/front = `_R` now, far/behind = `_L`), so
+    `FRONT_THIGH_DEG`/`BACK_THIGH_DEG` (stance-forward/back, an axis independent of
+    near/far depth) now feed the OPPOSITE `thigh_deg_*` field from fix round 4-6 --
+    the physical leg each constant describes, and its degree value, are unchanged;
+    only which side-keyed field carries it moved, tracking the rename exactly."""
     return rig_compositor.LegStance(
         hip=hip_world,
         ground_plane_y=ground_plane_y,
-        thigh_deg_r=FRONT_THIGH_DEG,
-        knee_flexion_deg_r=FRONT_KNEE_FLEXION_DEG,
-        thigh_deg_l=BACK_THIGH_DEG,
-        knee_flexion_deg_l=BACK_KNEE_FLEXION_DEG,
+        thigh_deg_r=BACK_THIGH_DEG,
+        knee_flexion_deg_r=BACK_KNEE_FLEXION_DEG,
+        thigh_deg_l=FRONT_THIGH_DEG,
+        knee_flexion_deg_l=FRONT_KNEE_FLEXION_DEG,
         far_leg_offset_frac=0.0,  # unused: hip_points overrides this leg's own split
     )
 

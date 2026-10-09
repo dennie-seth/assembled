@@ -1,23 +1,23 @@
 {
-  "note": "round 4 -- round 3's articulation unchanged, plus a bone-length correction. The thighs measured exactly equal; the entire left-leg shortfall was calf_L at 77.3% of calf_R -- the cut is short even though the bone is not (fix round 6, 2026-10-09: this was explained as occlusion of 'the far calf's top', which was true when calf_L was the far side through fix round 5; Option B now draws calf_L in FRONT, so the occlusion reasoning no longer applies. The measured 77.3% shortfall is a fact about how the two PNGs were cut, independent of which one is drawn in front, so the correction itself does not change -- only this explanation of why the cut came out short is retracted, not replaced with a new one, since the actual reason the artist cut it that way is not recorded anywhere this round can check). Only calf_L is scaled.",
+  "note": "round 4 -- round 3's articulation unchanged, plus a bone-length correction. The thighs measured exactly equal; the entire shortfall was one calf cut at 77.3% of the other's length -- the cut is short even though the bone is not (fix round 7, 2026-10-09T17:06: the L/R suffix on all eight limb parts was swapped so the names track draw depth -- near/front = `_R`, far/behind = `_L` -- rather than the mirrored source art's original, anatomically-backwards labels. The physical file this correction targets is renamed from `calf_L` to `calf_R` along with the swap; `fix_round_7_note` below is the current authority for every side-keyed value. The measured 77.3% shortfall and the correction itself are facts about how the two PNGs were cut -- unchanged by either the fix-round-6 z-order swap or this round's name swap, only which NAME points at which fact moves). Only one calf (now `calf_R`) is scaled.",
   "bone_length_fix": {
     "measured_before": {
       "thigh_R": 246.7,
-      "calf_R": 330.2,
-      "right_leg_chain": 577.0,
+      "calf_R": 255.4,
+      "right_leg_chain": 502.1,
       "thigh_L": 246.7,
-      "calf_L": 255.4,
-      "left_leg_chain": 502.1,
-      "left_over_right_pct": 87.0,
-      "near_far_note": "fix round 6: these totals were originally labelled near_chain/far_chain on the assumption that _R was the near leg, true through fix round 5. Option B now draws _L in front, so the labels are renamed by SIDE (right_leg_chain/left_leg_chain) rather than by near/far, which is no longer fixed to a side across rounds -- the measured totals themselves (577.0 / 502.1 / 87.0%) are unchanged."
+      "calf_L": 330.2,
+      "left_leg_chain": 577.0,
+      "right_over_left_pct": 87.0,
+      "near_far_note": "fix round 7: these totals are RAW per-file measurements, so they move with the file rename -- the physical file previously named `calf_R` (502.1's partner, unscaled, raw 330.2) is renamed `calf_L` this round, and the physical file previously named `calf_L` (the short one needing the 1.2929 correction) is renamed `calf_R`. right_leg_chain/left_leg_chain are therefore swapped from the fix-round-6 values (577.0/502.1 -> 502.1/577.0) to keep tracking the same physical chains; the measured totals themselves (577.0, 502.1, 87.0%) are unchanged, as is the fact that one calf cut is short by the same amount."
     },
     "scaled": {
-      "calf_L": 1.2929,
-      "shoulder_L": {"height": 0.6087, "width": 1.0}
+      "calf_R": 1.2929,
+      "shoulder_R": {"height": 0.6087, "width": 1.0}
     },
-    "why_not_whole_leg": "scaling thigh_L too would make it longer than thigh_R -- a new asymmetry -- and a uniform +10% would still leave the chain 4.3% short",
-    "shoulder_L_note": "T-0436: shoulder_L's raw measured bone length (169.28px) is 64% LONGER than shoulder_R's (103.04px) -- the opposite direction from calf_L. Examined directly, shoulder_L is a clean sleeve crop (alpha fill 0.88, uniform width profile down its length, no torso fragment, no second limb) that is simply cut further down the arm than shoulder_R. An earlier proposal to re-cut it is withdrawn (docs/design/23-canonical-rig.md); 0.6087 = shoulder_R's measured length / shoulder_L's own raw measured length, the same bone_length_fix mechanism calf_L already uses, applied at composite time. The committed shoulder_L.png is untouched.",
-    "shoulder_L_anisotropic_note": "T-0436 fix round 5: 0.6087 is now a HEIGHT-only scale (the bone-length correction), with a separate width scale of 1.0 -- the uniform scalar used through fix round 4 also shrank the sleeve's WIDTH from its raw 113px cut to 69px (61% of the artist's own cut), a side effect of correcting bone length, not an intent. `rig_compositor.scaled_parts` now accepts either a plain number (isotropic -- calf_L, unchanged) or a {height, width} object (anisotropic) per bone_length_fix.scaled entry; shoulder_L's measured bone length is unaffected (height scale unchanged at 0.6087, still 103.04px, matching shoulder_R), only the width restore changed. See docs/design/23-canonical-rig.md Sec 3f."
+    "why_not_whole_leg": "scaling thigh_R too would make it longer than thigh_L -- a new asymmetry -- and a uniform +10% would still leave the chain 4.3% short",
+    "shoulder_R_note": "T-0436: shoulder_R's raw measured bone length (169.28px) is 64% LONGER than shoulder_L's (103.04px) -- the opposite direction from calf_R. Examined directly, shoulder_R is a clean sleeve crop (alpha fill 0.88, uniform width profile down its length, no torso fragment, no second limb) that is simply cut further down the arm than shoulder_L. An earlier proposal to re-cut it is withdrawn (docs/design/23-canonical-rig.md); 0.6087 = shoulder_L's measured length / shoulder_R's own raw measured length, the same bone_length_fix mechanism calf_R already uses, applied at composite time. The committed PNG (renamed shoulder_R.png this round, fix round 7) is untouched -- content byte-identical to the file it was renamed from.",
+    "shoulder_R_anisotropic_note": "T-0436 fix round 5 (values carried forward unrenamed through fix round 7's name swap): 0.6087 is a HEIGHT-only scale (the bone-length correction), with a separate width scale of 1.0 -- the uniform scalar used through fix round 4 also shrank the sleeve's WIDTH from its raw 113px cut to 69px (61% of the artist's own cut), a side effect of correcting bone length, not an intent. `rig_compositor.scaled_parts` now accepts either a plain number (isotropic -- calf_R, unchanged) or a {height, width} object (anisotropic) per bone_length_fix.scaled entry; shoulder_R's measured bone length is unaffected (height scale unchanged at 0.6087, still 103.04px, matching shoulder_L), only the width restore changed. See docs/design/23-canonical-rig.md Sec 3f and the fix-round-7 section for the name swap."
   },
   "cell_px": 48,
   "figure_px": 40,
@@ -232,7 +232,7 @@
         0.08
       ],
       "bone": "upperarm.R",
-      "z": 8
+      "z": 1
     },
     "forearm_R": {
       "pivot": [
@@ -240,7 +240,7 @@
         0.06
       ],
       "bone": "forearm.R",
-      "z": 9
+      "z": 0
     },
     "shoulder_L": {
       "pivot": [
@@ -248,7 +248,7 @@
         0.08
       ],
       "bone": "upperarm.L",
-      "z": 1
+      "z": 8
     },
     "forearm_L": {
       "pivot": [
@@ -256,7 +256,7 @@
         0.06
       ],
       "bone": "forearm.L",
-      "z": 0
+      "z": 9
     },
     "thigh_R": {
       "pivot": [
@@ -264,7 +264,7 @@
         0.04
       ],
       "bone": "thigh.R",
-      "z": 7
+      "z": 2
     },
     "calf_R": {
       "pivot": [
@@ -272,7 +272,7 @@
         0.04
       ],
       "bone": "shin.R",
-      "z": 6
+      "z": 3
     },
     "thigh_L": {
       "pivot": [
@@ -280,7 +280,7 @@
         0.04
       ],
       "bone": "thigh.L",
-      "z": 2
+      "z": 7
     },
     "calf_L": {
       "pivot": [
@@ -288,7 +288,7 @@
         0.04
       ],
       "bone": "shin.L",
-      "z": 3
+      "z": 6
     }
   },
   "attach_torso_local_px": {
@@ -314,16 +314,16 @@
       "reference_px": 163,
       "reference_scanline": "y=249, x 461..624",
       "px": 127.2382,
-      "R_local_px": [178.5391, 30.84],
-      "L_local_px": [51.3009, 30.84]
+      "R_local_px": [51.3009, 30.84],
+      "L_local_px": [178.5391, 30.84]
     },
     "pelvis_bar": {
       "reference_frac": 0.08,
       "reference_px": 25,
       "reference_scanline": "y=543, x 519..544",
       "px": 18.5074,
-      "R_local_px": [115.3337, 236.44],
-      "L_local_px": [96.8263, 236.44]
+      "R_local_px": [96.8263, 236.44],
+      "L_local_px": [115.3337, 236.44]
     },
     "leg_proportions": {
       "reference_near": {"thigh_frac": 0.68, "shin_frac": 1.21, "ratio": 1.78},
@@ -344,14 +344,15 @@
     "lateral_offset_axis": {
       "description": "A per-part, opt-in sideways (local-x) displacement -- rig_compositor.build_placements's lateral_offset_frac parameter, expressed as a fraction of the torso's own width. Distinct from z-order: z decides which part wins a contested pixel, this moves the pixel itself. Every part defaults to 0.0 (no displacement, no behaviour change) unless named in a caller's own dict; no existing pose module (walk_cycle, idle_cycle, sitting_idle_cycle) passes this parameter, so none of them is affected by this axis existing.",
       "demonstration_values": {
-        "shoulder_R": 0.10,
-        "forearm_R": 0.10,
-        "thigh_R": 0.06,
-        "calf_R": 0.06
+        "shoulder_L": 0.10,
+        "forearm_L": 0.10,
+        "thigh_L": 0.06,
+        "calf_L": 0.06
       },
-      "demonstration_values_note": "FIX ROUND 2 (docs/design/23-canonical-rig.md Sec 3c): fix round 1 (@DennieSeth, 2026-10-08T21:08) equalized the two arm-chain parts and the two leg-chain parts to the same value per chain, correctly diagnosing that four DIFFERENT per-part offsets tear a chain apart -- but rig_compositor.build_placements still applied the offset twice per chain (once inherited through forward kinematics from the root, once again explicitly at the distal part's own name), so the equalized dict values still produced a DOUBLED effective shift at the distal part (measured: the arm chain's distal part moved -0.700 x torso vs its root's -0.350 x torso, exactly 2x). The reviewer's FAIL verdict (2026-10-08T21:54:30Z) caught this by direct measurement. This round removes the second, redundant lateral() application in rig_compositor.build_placements -- the offset is now applied exactly once, at each chain's root, and the distal part inherits it purely through FK, so equal dict values now produce an equal effective shift. A consequence: the chain is now rigid and cannot tear at any magnitude, so the real risk is the whole chain detaching from the main body, not a tear partway along it -- re-swept directly against the fixed code (4-connectivity component labelling): the arm chain first detaches a new >=50px fragment at a magnitude of 1.00 (none through 0.95), the leg chain at 0.80 (none through 0.70). These bounds were swept on the ARM/LEG CHAIN as a whole, independent of which named side (`_L` or `_R`) carries the value -- see fix_round_6_note for why the side changed.",
-      "fix_round_5_note": "@DennieSeth's fix-round-5 comment measured the fix-round-2 arm-chain value (-0.35, then on shoulder_L/forearm_L -- fix round 5 predates the fix-round-6 near/far swap below) against the SHOULDER JOINT ITSELF, not just the silhouette: it opens a wedge of background in the armhole (between the far shoulder and torso, within 130px of the shoulder joint) because the sleeve is pushed clear of the torso entirely -- the earlier sweep (fix round 2, above) only checked for NEW detached blobs, never the armhole gap. A uniform part up-scale does not close it: the part is pinned at its own pivot (the proximal/shoulder end), so scaling only extends the DISTAL end further out -- the sleeve-to-torso gap is unaffected by scale, only by this offset. Re-swept directly against the fixed code (with the width-restore anisotropic scale already applied, so these are the actual committed sleeve geometry, not the pre-fix isotropic one), magnitude (unsigned) vs armhole wedge px / sleeve-torso overlap px / (shoulder + forearm) visible px on the far side: 0.35: 3322 / 166 / 23963, 0.25: 1482 / 1274 / 22824, 0.16: 516 / 2982 / 21096, 0.10: 184 / 4523 / 19580, 0.05: 52 / 5865 / 18231. Chosen magnitude: 0.10, bracketed on both sides -- 0.05 leaves only 231px of margin above the 18000px far-arm-visibility floor (too close to the edge of the far arm being hidden again), while 0.16 and above reopen the armhole past the 400px ceiling. 0.10 keeps a comfortable margin on both bounds (184px of 400 on the wedge side, 1580px of margin above the 18000px floor on the visibility side) while the far shoulder genuinely overlaps the torso (4523px) rather than merely abutting it.",
-      "fix_round_6_note": "@DennieSeth chose Option B (2026-10-09T16:43): the two limb-chain groups swap z-order wholesale (see rig.*.z above), so `_L` is now the NEAR side (drawn in front) and `_R` is now the FAR side -- the reverse of every prior round, where the lateral offset lived on `_L`. The offset's PURPOSE is unchanged -- clear the FAR limb from the torso's own silhouette -- so it moves to the parts that are now far: `shoulder_R`/`forearm_R` (was `shoulder_L`/`forearm_L`, magnitude unchanged at 0.10, sign flipped to +0.10 since the far side now sits screen-right of the hip) and `thigh_R`/`calf_R` (was `thigh_L`/`calf_L`, magnitude unchanged at 0.06, sign flipped to +0.06). `_L` carries no entry now (defaults to 0.0, same as `_R` did before this round). Re-measured on the new far side with the committed rig: armhole wedge 184px (<=400), far-arm (shoulder_R + forearm_R) visible 19580px (>=18000) -- identical to the fix-round-5 numbers above, because swapping which NAME carries a given magnitude does not change the geometry it produces; only the label moved. Per-side arm angles (Sec 3e) do NOT swap -- Option B keeps `R` reaching forward and `L` trailing back, exactly as fix round 4 measured from the reference."
+      "demonstration_values_note": "FIX ROUND 2 (docs/design/23-canonical-rig.md Sec 3c): fix round 1 (@DennieSeth, 2026-10-08T21:08) equalized the two arm-chain parts and the two leg-chain parts to the same value per chain, correctly diagnosing that four DIFFERENT per-part offsets tear a chain apart -- but rig_compositor.build_placements still applied the offset twice per chain (once inherited through forward kinematics from the root, once again explicitly at the distal part's own name), so the equalized dict values still produced a DOUBLED effective shift at the distal part (measured: the arm chain's distal part moved -0.700 x torso vs its root's -0.350 x torso, exactly 2x). The reviewer's FAIL verdict (2026-10-08T21:54:30Z) caught this by direct measurement. This round removes the second, redundant lateral() application in rig_compositor.build_placements -- the offset is now applied exactly once, at each chain's root, and the distal part inherits it purely through FK, so equal dict values now produce an equal effective shift. A consequence: the chain is now rigid and cannot tear at any magnitude, so the real risk is the whole chain detaching from the main body, not a tear partway along it -- re-swept directly against the fixed code (4-connectivity component labelling): the arm chain first detaches a new >=50px fragment at a magnitude of 1.00 (none through 0.95), the leg chain at 0.80 (none through 0.70). These bounds were swept on the ARM/LEG CHAIN as a whole, independent of which named side (`_L` or `_R`) carries the value -- see fix_round_6_note and fix_round_7_note for why the side/name changed.",
+      "fix_round_5_note": "@DennieSeth's fix-round-5 comment measured the fix-round-2 arm-chain value (-0.35, then on shoulder_L/forearm_L -- fix round 5 predates the fix-round-6 near/far swap and the fix-round-7 name swap below) against the SHOULDER JOINT ITSELF, not just the silhouette: it opens a wedge of background in the armhole (between the far shoulder and torso, within 130px of the shoulder joint) because the sleeve is pushed clear of the torso entirely -- the earlier sweep (fix round 2, above) only checked for NEW detached blobs, never the armhole gap. A uniform part up-scale does not close it: the part is pinned at its own pivot (the proximal/shoulder end), so scaling only extends the DISTAL end further out -- the sleeve-to-torso gap is unaffected by scale, only by this offset. Re-swept directly against the fixed code (with the width-restore anisotropic scale already applied, so these are the actual committed sleeve geometry, not the pre-fix isotropic one), magnitude (unsigned) vs armhole wedge px / sleeve-torso overlap px / (shoulder + forearm) visible px on the far side AS NAMED AT THAT TIME: 0.35: 3322 / 166 / 23963, 0.25: 1482 / 1274 / 22824, 0.16: 516 / 2982 / 21096, 0.10: 184 / 4523 / 19580, 0.05: 52 / 5865 / 18231. Chosen magnitude: 0.10, bracketed on both sides -- 0.05 leaves only 231px of margin above the 18000px far-arm-visibility floor (too close to the edge of the far arm being hidden again), while 0.16 and above reopen the armhole past the 400px ceiling. 0.10 keeps a comfortable margin on both bounds (184px of 400 on the wedge side, 1580px of margin above the 18000px floor on the visibility side) while the far shoulder genuinely overlaps the torso (4523px) rather than merely abutting it. NOTE (fix round 7): these specific pixel counts were measured against the PRE-fix-round-6 part identity and are retained verbatim as a historical record of how the magnitude 0.10 was chosen; they are superseded as a CURRENT measurement by fix_round_6_note's and fix_round_7_note's own re-measurements below, which found a different armhole-wedge number (340px, not 184px) against the actual committed geometry -- see fix_round_7_note for the correction.",
+      "fix_round_6_note": "@DennieSeth chose Option B (2026-10-09T16:43): the two limb-chain groups swap z-order wholesale (see rig.*.z above), so `_L` was the NEAR side (drawn in front) and `_R` was the FAR side for the remainder of fix round 6 -- the reverse of every prior round, where the lateral offset lived on `_L`. The offset's PURPOSE is unchanged -- clear the FAR limb from the torso's own silhouette -- so it moved to the parts that were then far: `shoulder_R`/`forearm_R` (magnitude unchanged at 0.10, sign flipped to +0.10 since the far side then sat screen-right of the hip) and `thigh_R`/`calf_R` (magnitude unchanged at 0.06, sign flipped to +0.06). CORRECTION (fix round 7, superseding the claim this note made at the time): re-measured directly against the fix-round-6 committed rig, the armhole wedge was 340px and the far-arm (shoulder_R + forearm_R) visible count was 18692px -- NOT the 184px/19580px this note originally claimed by assuming the fix-round-5 numbers transferred unchanged. They don't transfer unchanged: shoulder_R (fix round 6's far side) carries NO bone_length_fix entry, while shoulder_L (fix round 5's far side) carried the anisotropic height/width correction -- two different PNGs with different raw geometry, so the same offset magnitude produces different armhole/visibility numbers on each. Per-side arm angles (Sec 3e) did NOT swap with this z-order move -- Option B kept `R` reaching forward and `L` trailing back, exactly as fix round 4 measured from the reference.",
+      "fix_round_7_note": "@DennieSeth (2026-10-09T17:06): all eight limb parts' L/R suffix is swapped (files renamed, rig keys renamed, every side-keyed value carried with its physical part) so the name tracks DRAW DEPTH -- near/front = `_R`, far/behind = `_L` -- rather than the mirrored source art's original labelling, which fix round 6 showed was backwards (the paint-order replay always matched whichever z list was published; the defect was which limb GROUP the list was applied to). The physical part that was `shoulder_R`/`forearm_R`/`thigh_R`/`calf_R` under fix round 6 (far, offset +0.10/+0.06) is renamed `shoulder_L`/`forearm_L`/`thigh_L`/`calf_L` this round -- SAME physical parts, SAME offset magnitude and sign (0.10 arm / 0.06 leg, unsigned push away from the body), only the key moved, which is exactly why `demonstration_values` above now reads `_L` instead of `_R`. Re-measured directly against the renamed/committed rig rather than assumed neutral: armhole wedge 340px (<=400, unchanged from the fix-round-6 correction above, since this is a pure rename), far-arm (shoulder_L + forearm_L) visible 18692px (>=18000, likewise unchanged), silhouette component count unchanged, draw order still matches the published list 10 of 10 with 0 contested pairs resolving against it. A full composite pixel-diff of the renamed rig's reference-pose render against the pre-rename (fix round 6) render is 0 differing pixels, confirming the rename changed no geometry -- only names."
     }
   },
   "root_bob_px": 5.65,
