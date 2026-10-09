@@ -99,6 +99,30 @@ items; one was a real defect, one was not.**
 Evidence regenerated this round reflects both findings: the arm angles changed (§3e,
 §4), the published z-order did not (§3d).
 
+**Fix round 5, 2026-10-09T15:29 — the far shoulder reads as detached from the
+torso, and the cause is not what the first read suggested.** @DennieSeth's
+fix-round-4 verification found a wedge of background in the "armhole" between
+`shoulder_L` and `torso`, right where the arm should plug into the body, and
+initially read it as the part being undersized. Measured directly, a uniform
+part up-scale does not close it — a part is pinned at its own pivot (`shoulder_L`'s
+is its PROXIMAL/shoulder end), so scaling only extends the DISTAL end further out;
+the sleeve-to-torso gap is unchanged at every scale factor swept, 1.00 through
+1.64. The actual cause is fix round 2's arm-chain `lateral_offset_frac` (-0.35):
+it over-pushes the whole far-arm chain clear of the torso, not just clear of its
+own silhouette. §3f (new this round) drops the arm-chain offset to -0.10 and
+separately restores `shoulder_L`'s own cut WIDTH (shrunk to 61% of the artist's
+cut as a side effect of the existing bone-length correction) via a new
+anisotropic form of `bone_length_fix.scaled` — two independent fixes, neither
+touching the committed part art. §4 and §6 restate the resulting numbers;
+`char_gen.shoulder_attachment_T0436` (new this round) carries the armhole/overlap
+measurement and `tests/test_shoulder_attachment_T0436.py` its test coverage.
+@DennieSeth also raised a possible `_R`/`_L` naming swap in the same comment
+(the source art is mirrored) — audited and found the current naming correct (a
+figure facing screen-right shows the viewer its anatomical RIGHT side, and the
+`_L` art independently shows the expected far-side cues: lower ink detail,
+e.g. `thigh_L` dark-ink fraction 0.02 vs `thigh_R` 0.22); no rename applied this
+round, see the card's own fix-round-5 comment for the full three-point check.
+
 ## 0. What this card changes, and what it does not
 
 **In scope:** this document, `side_view_rig.json` v2, and a static render proving
@@ -327,6 +351,12 @@ making the pose read as anatomically implausible. The leg chain's offset is smal
 because the pelvis bar (§3a) already does most of the separating — `-0.06` is a
 modest additional push, not the primary mechanism for that chain.
 
+**Superseded by fix round 5 (§3f): the arm-chain value is now -0.10, not -0.35.**
+This section's sweep only checked for new DETACHED fragments at the silhouette
+level; it never measured the armhole gap at the shoulder joint itself, which is
+what fix round 5 found and fixed. The leg-chain value (`-0.06`) and the
+reasoning above for it are unchanged and still current.
+
 ## 3d. Layer order — @DennieSeth's exact front-to-back order
 
 Front (closest to viewer) first, back last. `rig_compositor.render_frames` sorts
@@ -391,6 +421,13 @@ The gap between a pair's `contested_px` and its `lower-z wins` count (e.g. `tors
 pixels that belong to neither part's own exact rendered color — the same class of
 pixel the earlier `forearm_R`/`thigh_R` paragraph already called out, never a
 higher-z part winning outright (every `higher-z wins` column above is 0).
+
+**Re-confirmed again, fix round 5, after §3f's offset/width changes.** The new
+`torso`/`shoulder_L` overlap (4523px, §3f — the genuine overlap the attachment fix
+introduces) adds an 11th contested pair; it resolves the same way as every other
+pair here (`torso` is the lower-z/expected winner at z 5 vs `shoulder_L`'s z 8,
+and wins all 4523 contested pixels). **Still 0 of 11 pairs resolving against the
+published order.** §4 restates this result alongside the regenerated evidence.
 
 ## 3e. Per-side arm angles
 
@@ -457,6 +494,105 @@ Per §0/§7, no animation is re-derived this round — `walk_cycle`, `idle_cycle
 them sets the four new fields, confirmed by their own unmodified test files staying
 green (§7 restates this with the exact test count).
 
+## 3f. The far shoulder's attachment to the torso (fix round 5)
+
+**Fix round 4's armhole wedge is a two-part measurement problem, not one.**
+`char_gen.shoulder_attachment_T0436` (new this round) gives both halves:
+
+- `armhole_wedge_px` — background pixels enclosed between `shoulder_L` and
+  `torso`, within 130px of the shoulder joint. A per-row (scanline) test: on each
+  row within the circle, if `torso`'s own opaque x-range and `shoulder_L`'s own
+  opaque x-range don't overlap, the background pixels strictly between them are
+  the wedge.
+- `sleeve_torso_overlap_px` — pixels where both parts' own masks are opaque at
+  once — a genuine overlap, not an abutment.
+
+**Why a uniform up-scale does not work.** `shoulder_L`'s pivot (`rig.shoulder_L
+.pivot`, `[0.5, 0.08]`) is near its PROXIMAL (shoulder) end — a part is always
+placed and rotated about its own pivot, so scaling the image changes only how far
+the DISTAL end reaches, never where the proximal end sits relative to the torso.
+Swept directly: the sleeve-to-torso gap is unchanged at every scale factor from
+1.00 to 1.64 — restoring the sleeve's full raw width alone (without touching the
+offset below) cuts the armhole wedge by only ~6%.
+
+**What actually causes it: the arm-chain lateral offset.** At the fix-round-4
+committed value (-0.35), the far-arm chain is pushed far enough sideways that
+`shoulder_L`'s proximal end clears the torso's own silhouette entirely instead of
+just clearing it enough to read as attached. Re-swept directly against the fixed
+code (armhole wedge px / sleeve-torso overlap px / `shoulder_L`+`forearm_L`
+visible px, by arm-chain offset, with the width-restore anisotropic scale already
+applied so these are the actual committed sleeve geometry):
+
+```
+ offset   armhole wedge   sleeve/torso overlap   shoulder_L+forearm_L visible
+ -0.35         3322               166                      23963
+ -0.25         1482              1274                      22824
+ -0.16          516              2982                      21096
+ -0.10  <-      184              4523                      19580
+ -0.05           52              5865                      18231
+```
+
+**Chosen: -0.10, bracketed on both sides.** -0.05 leaves only 231px of margin
+above the 18000px far-arm-visibility floor (fix round 2's own floor for the far
+arm staying meaningfully visible) — too close to the edge of hiding the far arm
+again. -0.16 and above reopen the armhole past a 400px ceiling (fix round 4's
+committed -0.35 opened it to 3489px as originally measured by @DennieSeth; the
+re-sweep above, run against this round's own code, measured 3322px at that same
+offset — the two numbers differ slightly because this sweep already has the
+width-restore applied, not because the wedge geometry itself changed). -0.10
+keeps a comfortable margin on both bounds (184px of the 400px wedge ceiling,
+1580px of margin above the 18000px visibility floor) while `shoulder_L`
+genuinely overlaps the torso (4523px) rather than merely abutting it.
+
+**The width restore: `bone_length_fix.scaled` gains an anisotropic form.**
+`shoulder_L`'s entry was a single scalar (0.6087) through fix round 4, applied to
+both axes by `rig_compositor.scaled_parts`. That scalar exists to correct the
+BONE LENGTH (which `measured_bone_lengths` derives from height alone), but
+applying it to both axes also shrank the sleeve's own CUT WIDTH from its raw
+113px to 69px — 61% of the artist's own cut — as an unintended side effect.
+`side_view_rig.json`'s `shoulder_L` entry is now `{"height": 0.6087, "width":
+1.0}`; `scaled_parts` accepts either a plain number (isotropic — `calf_L`,
+unchanged) or this `{height, width}` form (anisotropic), applying each axis's
+own scale independently. The bone length is untouched: 103.04px before and
+after, matching `shoulder_R`'s 103.04px either way (only the WIDTH changed, from
+69px back to the raw 113px). The committed `shoulder_L.png` stays byte-identical
+— the fix lives entirely in the rig's own data and composite-time math, per this
+card's own no-re-cut rule (§6, §9).
+
+**Measured net effect on far-arm visibility and the silhouette.** Dropping the
+offset to -0.10 alone (before the width restore) cost 14.5% of far-arm
+visibility (19541px → 16716px at -0.35 vs -0.10, isotropic width); the width
+restore recovers most of that back (19580px combined, within 2% of fix round
+4's 19990px) because the wider sleeve itself now contributes more of its own
+visible area. Connected-component count on the regenerated evidence render
+(4-connectivity labelling, same algorithm §4 already uses): still 3 components
+≥50px — the main silhouette (238070px, down slightly from fix round 4's 238351px
+— the sleeve's own reach shrank with the smaller offset) plus the same two
+pre-existing, unrelated `calf_R` motion-streak fragments (726px, 73px). No new
+fragment — the figure stays one connected piece.
+
+**Draw order re-verified.** `char_gen.draw_order_audit_T0436`, run again against
+this round's geometry: realized rank still matches the published list 10 of 10,
+now with **11** contested pairs (gaining `torso`/`shoulder_L`, 4523px — the new
+genuine overlap this fix introduces) and **0** resolving against the order. The
+published z values (`forearm_R` 0 … `forearm_L` 9) are unchanged and must stay
+so (§3d) — this round touches only position (the offset) and the part's own
+pixel geometry (the width restore), never `rig.*.z`.
+
+**On the possible `_R`/`_L` naming swap.** @DennieSeth's fix-round-5 comment also
+raised, and then itself resolved, a question about whether the mirrored source
+art means `_R`/`_L` are backwards. Three independent checks say the current
+naming is correct: (1) the raw `head` part's face/eyes sit on the figure's own
+right side with no flip anywhere in `rig_compositor.py` (confirmed by grep), so
+`facing: "right"` is accurate; (2) a figure facing screen-right shows the viewer
+its own anatomical RIGHT side (the frontal-view rule — "the side on the viewer's
+left is the character's right" — inverts for a profile, it does not hold as-is);
+(3) the `_L` parts independently carry the far-side cut signature — less ink
+detail, e.g. `thigh_L` dark-ink fraction 0.02 vs `thigh_R` 0.22, `shoulder_L`
+0.15 vs `shoulder_R` 0.38, `calf_L` 0.25 vs `calf_R` 0.43 — consistent with the
+rig's own existing note that `calf_L`'s cut is short because "the far calf's top
+is occluded in a side view." No rename is applied this round.
+
 ## 4. The static render
 
 `char_gen.reference_pose_T0436.render()` composites one static frame: a wide-stance
@@ -468,69 +604,70 @@ prove"), with `shoulder_points`/`hip_points` set to the two canonical bar ends (
 (`canonical_rig.lateral_offset_axis.demonstration_values`):
 
 ```
-shoulder_L: -0.35   forearm_L: -0.35   thigh_L: -0.06   calf_L: -0.06
+shoulder_L: -0.10   forearm_L: -0.10   thigh_L: -0.06   calf_L: -0.06
 ```
 
 (fractions of torso width — ONE value per limb chain, applied once at the chain's
-root and inherited through FK, fix round 2 this round; see §3c for why fix round 1's
+root and inherited through FK, fix round 2; see §3c for why fix round 1's
 equalized-but-still-doubled values didn't actually achieve this, and for the sweep
-run against the corrected code that derives this magnitude).
+run against the corrected code that derives this magnitude. **The arm-chain value
+dropped from -0.35 to -0.10 in fix round 5** — §3f has the armhole-wedge sweep that
+derives it; the leg-chain value is unchanged).
 
 **Far-arm visibility, measured directly from the composited placements**
-(`visible_pixel_count` in `tests/test_reference_pose_render_T0436.py` — a pixel is
-counted only if removing the part changes the final composite AND the "with" result
-is itself non-transparent there, so an occluded part's own opaque pixels do not
-count). **Re-measured fix round 4, after the per-side arm angle fix (§3e)** — these
-numbers supersede the fix-round-2 table (shoulder_L 0→5523, forearm_L 0→2888),
-which was measured against the old shared rest-pose angle
-(`SHOULDER_REST_DEG`/`ELBOW_REST_DEG`, both arms hanging the same way):
+(`shoulder_attachment_T0436.visible_pixel_count`, fix round 5 — a production-code
+copy of the same definition `tests/test_reference_pose_render_T0436.py`'s own
+helper used through fix round 4: a pixel counts only if removing the part changes
+the final composite AND the "with" result is itself non-transparent there, so an
+occluded part's own opaque pixels do not count). **Re-measured fix round 5, after
+the arm-chain offset and the `shoulder_L` width restore (§3f)** — these numbers
+supersede the fix-round-4 table (shoulder_L 2623→7162, forearm_L 12789→12828,
+measured at the -0.35 offset):
 
-| | without `lateral_offset_frac` | with it |
+| | without `lateral_offset_frac` | with it (-0.10, fix round 5) |
 |---|---|---|
-| `shoulder_L` | **2623** | **7162** |
-| `forearm_L` | **12789** | **12828** |
-| `shoulder_L` + `forearm_L` | **15412** | **19990** |
+| `shoulder_L` | **4253** | **6908** |
+| `forearm_L` | **12672** | **12672** |
+| `shoulder_L` + `forearm_L` | **16925** | **19580** |
 
-Both parts are non-zero even WITHOUT the lateral offset now, unlike fix round 2's
-table — the far arm's new angle (trailing back at −56.4°/+33.2°, §3e) already swings
-it partly clear of the torso by itself; the lateral offset still visibly increases
-`shoulder_L`'s own count (2623→7162, +173%) and gives `forearm_L` a smaller further
-gain (12789→12828) since it was already mostly clear. This does not change the
-card's premise — `shoulder_L`/`forearm_L` were 0/0 at this card's own starting point
-(the pre-T-0436 rig, a single shared shoulder attach with no lateral axis at all);
-it changes relative to fix round 2's specific rest-pose angle, which is exactly what
-§3e's fix was for.
+Within 2% of fix round 4's 19990px combined, despite the smaller offset — the
+`shoulder_L` width restore (69px → 113px, §3f) gives the part more of its own
+visible area back, largely offsetting the reduced sideways push. Comfortably
+above the 18000px floor §3f's bracket is built around.
 
 **Connected-component count on the regenerated evidence render.** 4-connectivity
 labelling of the composited RGBA frame (`reference_pose_T0436.render()`'s own native
 frame, 1071×1023 before the opaque background flatten `reference_pose_render.png` is
-saved with) finds 3 components ≥50px: the main silhouette (**238351px**, up from fix
-round 2's 221813px — the reaching/trailing arms cover more canvas) and the same two
-pre-existing `calf_R` motion-streak fragments described in §3c (726px, 73px —
-present at `lateral_offset_frac={}` too, i.e. independent of this card's chain
-offsets and unaffected by this round's arm-angle change, confirmed by removing
-`calf_R` from the composite). **No new fragment is introduced by the arm-angle
-fix** — the figure's own silhouette (everything except the pre-existing, untouched
-`calf_R` art detail) is still one connected piece, and `shoulder_L` + `forearm_L`
-together own 19990 of its pixels with the lateral offset active, confirming the far
-arm is both attached and visible in the same render.
+saved with) finds 3 components ≥50px: the main silhouette (**238070px**, down
+slightly from fix round 4's 238351px — the smaller arm-chain offset reaches
+slightly less far) and the same two pre-existing `calf_R` motion-streak fragments
+described in §3c (726px, 73px — present at `lateral_offset_frac={}` too, i.e.
+independent of this card's chain offsets and unaffected by this round's changes,
+confirmed by removing `calf_R` from the composite). **No new fragment is
+introduced by this round's offset/width change** — the figure's own silhouette
+(everything except the pre-existing, untouched `calf_R` art detail) is still one
+connected piece, and `shoulder_L` + `forearm_L` together own 19580 of its pixels
+with the lateral offset active, confirming the far arm is both attached and
+visible in the same render, now without the armhole gap §3f fixes.
 
-Evidence, regenerated this round (fix round 4) from the fixed per-side arm angles
-and committed:
+Evidence, regenerated this round (fix round 5) from the smaller arm-chain offset
+and the `shoulder_L` width restore, and committed:
 
 - `docs/assets/evidence/T-0436/reference_pose_render.png` (1071×1023) — the
-  composited pose, now with the near arm reaching forward and the far arm trailing
-  back (§3e) instead of both hanging at the same rest droop, the far arm still
-  attached to its own shoulder by a single, non-doubled chain offset (§3c), and the
-  unchanged layer order (§3d — the hood draws over the torso collar, and the near
-  fist crosses in front of the torso).
+  composited pose: the near arm reaching forward and the far arm trailing back
+  (§3e), the far shoulder now genuinely overlapping the torso instead of reading
+  as detached (§3f), and the unchanged layer order (§3d — the hood draws over the
+  torso collar, and the near fist crosses in front of the torso).
 - `docs/assets/evidence/T-0436/rig_vs_reference_overlay.png` (1071×1023) — the same
   render with the shoulder bar (red), pelvis bar (red), spine (yellow) drawn on top,
   plus the front shin's actual-vs-adopted-target length (orange solid vs cyan
-  dashed, §5) and a caption restating the pixel counts above.
-- `docs/assets/evidence/T-0436/draw_order_audit.png` (1071×1023, new this round) —
-  the same pose with every part labeled by its realized draw rank and published z
-  (§3d), generated by `gen_draw_order_audit_T0436.py`.
+  dashed, §5) and a caption restating the pixel counts above, now including the
+  armhole wedge and sleeve/torso overlap counts (§3f).
+- `docs/assets/evidence/T-0436/draw_order_audit.png` (1071×1023) — the same pose
+  with every part labeled by its realized draw rank and published z (§3d),
+  generated by `gen_draw_order_audit_T0436.py`, re-run against this round's
+  geometry (11 contested pairs now, up from 10 — the new `torso`/`shoulder_L`
+  overlap — 0 resolving against the order).
 
 ### Per-joint deviation
 
@@ -614,7 +751,7 @@ is occluded by the near leg). `shoulder_L` now carries its own entry:
 ```
 "scaled": {
   "calf_L": 1.2929,
-  "shoulder_L": 0.6087
+  "shoulder_L": {"height": 0.6087, "width": 1.0}
 }
 ```
 
@@ -623,14 +760,33 @@ length (169.28). `rig_compositor.scaled_parts` is generalized from a hardcoded
 `calf_L` lookup to iterate every entry in `bone_length_fix.scaled`, so `shoulder_L`
 is picked up by the same code path, not a second one.
 
-**Both asserted directly:**
+**The `width: 1.0` is fix round 5 (§3f).** Through fix round 4, `shoulder_L`'s
+entry was the plain number `0.6087`, applied by the old `scaled_parts` to BOTH
+axes — correcting the bone length (height-derived) but also, as an unintended
+side effect, shrinking the sleeve's own cut WIDTH from 113px to 69px (61% of the
+artist's own cut). `scaled_parts` now accepts either a plain number (isotropic —
+`calf_L`, unchanged) or a `{height, width}` object (anisotropic — `shoulder_L`);
+`measured_bone_lengths` only ever reads a part's HEIGHT, so the bone length is
+unaffected by this change (103.04px before and after) — only the sleeve's own
+width changed, back to its raw 113px. §3f has the full armhole-attachment
+reasoning this fix is part of.
+
+**Asserted directly:**
 - `tests/test_canonical_rig_T0436.py::TestBoneLengthFix::
   test_shoulder_l_scaled_length_matches_shoulder_r` — after scaling,
   `shoulder_L`'s measured bone length equals `shoulder_R`'s (103.04 ≈ 103.04).
 - `tests/test_canonical_rig_T0436.py::TestBoneLengthFix::
+  test_shoulder_l_width_is_not_shrunk_by_the_length_correction` (fix round 5) —
+  the width scale is 1.0 and the scaled part's width equals the raw part's width.
+- `tests/test_canonical_rig_T0436.py::TestBoneLengthFix::
   test_shoulder_l_png_is_byte_identical` — asserts the raw committed
   `shoulder_L.png` is `(113, 184)`, the un-re-cut source size. §7 confirms from the
   diff that the file itself is untouched.
+- `tests/test_shoulder_attachment_T0436.py::TestReferencePoseShoulderAttachment::
+  test_shoulder_l_bone_length_is_unchanged_by_the_width_restore` and
+  `test_shoulder_l_png_is_still_byte_identical` (fix round 5) — the same two
+  invariants, re-asserted against the real reference pose rather than only the
+  raw part.
 
 ## 7. Animation impact — what changes, and by how much
 
@@ -650,10 +806,10 @@ resolve to the same shared `shoulder_deg`/`elbow_deg` those modules already pass
 Confirmed both by direct test
 (`TestPerSideArmAngles::test_omitting_the_per_side_fields_is_byte_identical_to_before`)
 and by the same full existing suite named above, run again after this round's
-change — 237 tests across those seven files plus this card's own three test files
-(`test_canonical_rig_T0436.py`, `test_reference_pose_render_T0436.py`,
-`test_draw_order_audit_T0436.py`, the last one new this round) — stays green with
-no edits to any animation test file.
+changes — 253 tests across those seven animation files plus this card's own four
+test files (`test_canonical_rig_T0436.py`, `test_reference_pose_render_T0436.py`,
+`test_draw_order_audit_T0436.py`, `test_shoulder_attachment_T0436.py`, the last
+one new fix round 5) — stays green with no edits to any animation test file.
 
 **The z-order (§3d): yes for `idle_cycle` and `sitting_idle_cycle`, not for
 `walk_cycle`, and here is the exact size of it.** Unlike the lateral-offset axis,
