@@ -93,8 +93,9 @@ HIP_HEIGHT_ABOVE_GROUND = 300.0
 
 #: The stagger (T-0269 round 3): two different ankle x-targets on the SAME ground
 #: plane, solved independently from the ONE shared hip. R (the near leg, topmost
-#: z-order -- `side_view_rig.json`'s `thigh_R`/`calf_R` z=0, drawn last/frontmost) leads
-#: -- it is the forward foot. L (the far leg, drawn behind) trails. This is the card's
+#: z-order among the leg parts -- `side_view_rig.json`'s `thigh_R` z=2 / `calf_R` z=3,
+#: both in front of the torso's z=5) leads -- it is the forward foot. L (the far leg,
+#: `thigh_L` z=7 / `calf_L` z=6, behind the torso) trails. This is the card's
 #: own worked feasibility check verbatim: both reaches (313.2, 305.9) are comfortably
 #: inside the leg's (83.52, 576.96) workspace, both solves are exact (not clamped), and
 #: the separation is ~6 final px -- clearly visible, not round 2's 0.48px.
@@ -109,18 +110,21 @@ ANKLE_X_BACK = -85.0
 
 #: Round 4 (@DennieSeth: "something weird in the very middle"). Diagnosed from the
 #: composite: the offender is `thigh_R`. Its hand-cut crop is a near-rectangle
-#: (bbox_fill 0.87, not a traced silhouette), and at this crouch's ~88deg thigh rotation
-#: that opaque box swings across the belly. Because `side_view_rig.json` puts the near
-#: leg frontmost (z=0), the box painted OVER the torso, reading as an unidentified slab.
-#: Neither the part nor the shared rig is touched -- this pose alone draws `thigh_R`
-#: behind the torso (z=3), which hides the surplus box where it crosses the body while
-#: the real thigh still reads in front of the far leg.
+#: (bbox_fill 0.94 -- `keying_stats.json`'s `fill_of_bbox` for `thigh_R`, not a traced
+#: silhouette), and at this crouch's ~88deg thigh rotation that opaque box swings
+#: across the belly. Because `side_view_rig.json` puts the near leg frontmost by
+#: default (`thigh_R` z=2, in front of the torso's z=5), the box painted OVER the
+#: torso, reading as an unidentified slab. Neither the part nor the shared rig is
+#: touched -- this pose alone draws `thigh_R` behind the torso (z=3.5, below), which
+#: hides the surplus box where it crosses the body while the real thigh still reads
+#: in front of the far leg.
 CROUCH_Z_OVERRIDE = {"thigh_R": 3.5, "thigh_L": 3.6}
 #: Round 5 adds `thigh_L`. Widening the stance to @DennieSeth's marked-up geometry
-#: swings the trailing thigh's crop -- also a near-rectangle (bbox fill 0.94, the
-#: least-traced part of the ten) -- across the front of the body, where it filled the
-#: gap between the legs and read as one green mass rather than two legs. Behind the
-#: torso it stops competing with the silhouette and the stance reads.
+#: swings the trailing thigh's crop -- also a near-rectangle (bbox fill 0.87 --
+#: `keying_stats.json`'s `fill_of_bbox` for `thigh_L`, the least-traced of the two
+#: thighs) -- across the front of the body, where it filled the gap between the legs
+#: and read as one green mass rather than two legs. Behind the torso it stops
+#: competing with the silhouette and the stance reads.
 
 #: Round 4 (@DennieSeth: the forward foot should sit flat on the floor). The leading
 #: foot is the near/R leg -- `ANKLE_X_FRONT` above. Applied as a rotation about the

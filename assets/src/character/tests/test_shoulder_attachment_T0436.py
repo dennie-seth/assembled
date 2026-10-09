@@ -182,8 +182,9 @@ class TestReferencePoseShoulderAttachment:
         """4-connectivity labelling of the rendered alpha -- the same algorithm
         `docs/design/23-canonical-rig.md` Sec 4 already used for the fix-round-4
         evidence (3 components >=50px: the main silhouette plus two pre-existing,
-        unrelated calf motion-streak fragments on the near/front leg). This
-        round's rename must not add a 4th."""
+        unrelated calf motion-streak fragments, baked into `calf_L.png`'s own
+        source art, on the far/behind leg). This round's rename must not add a
+        4th."""
         result = refpose.render()
         alpha_mask = np.asarray(result.native_frames[0])[:, :, 3] > 0
         labels, component_count = _label_connected_components(alpha_mask)

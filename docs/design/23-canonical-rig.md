@@ -211,10 +211,13 @@ pose's legs. See §3's reconciliation.
 "pelvis_bar": {
   "reference_frac": 0.08,
   "px": 18.5074,
-  "R_local_px": [115.3337, 236.44],
-  "L_local_px": [96.8263, 236.44]
+  "R_local_px": [96.8263, 236.44],
+  "L_local_px": [115.3337, 236.44]
 }
 ```
+
+(Corrected, fix round 11: this block had `R_local_px`/`L_local_px` swapped against the
+committed `side_view_rig.json` -- the values above are the actual committed pair.)
 
 `0.08 × spine_px (231.3422) = 18.5074px`, split evenly either side of the existing
 single `attach_torso_local_px.hip` point `[106.08, 236.44]`, along the local-x axis
@@ -234,10 +237,13 @@ split either side of `attach_torso_local_px.shoulder` `[114.92, 30.84]`:
 "shoulder_bar": {
   "reference_frac": 0.55,
   "px": 127.2382,
-  "R_local_px": [178.5391, 30.84],
-  "L_local_px": [51.3009, 30.84]
+  "R_local_px": [51.3009, 30.84],
+  "L_local_px": [178.5391, 30.84]
 }
 ```
+
+(Corrected, fix round 11: this block also had `R_local_px`/`L_local_px` swapped against
+the committed `side_view_rig.json` -- the values above are the actual committed pair.)
 
 ### 3c. No lateral axis → a per-part opt-in lateral offset
 
@@ -336,12 +342,15 @@ package, run directly against the fixed code):
 `*` **"extra" is beyond 2 pre-existing, unrelated fragments**, not beyond zero: even
 at `lateral_offset_frac={}` (no lateral push at all), the composited alpha mask
 already shows 2 components ≥50px besides the main body — a 726px and a 73px
-fragment. Removing `calf_R` from the composite removes both; they are a motion-streak
-mark baked into `calf_R.png`'s own committed art (visible under the boot in a direct
-crop), present whenever `calf_R` renders at all, completely independent of this
-card's lateral-offset mechanism or chosen magnitude. `calf_R` is not re-cut or
-otherwise touched (§6/§9 forbid that), so the two fragments persist in the evidence
-render; every count above is beyond those two.
+fragment. Removing `calf_L` from the composite removes both; they are a motion-streak
+mark baked into `calf_L.png`'s own committed art (visible under the boot in a direct
+crop), present whenever `calf_L` renders at all, completely independent of this
+card's lateral-offset mechanism or chosen magnitude. **Corrected, fix round 11:**
+this part was named `calf_R` at the time this sweep ran (fix round 2, before the
+fix-round-7 L/R rename) -- the physical file is unchanged and is renamed `calf_L`
+under the committed naming. `calf_L` is not re-cut or otherwise touched (§6/§9
+forbid that), so the two fragments persist in the evidence render; every count
+above is beyond those two.
 
 **Chosen: `shoulder_L`/`forearm_L` = -0.35, `thigh_L`/`calf_L` = -0.06.** Both sit
 far inside their own safe bracket — arm detaches at -1.00, chosen value has a
@@ -360,8 +369,12 @@ modest additional push, not the primary mechanism for that chain.
 **Superseded by fix round 5 (§3f): the arm-chain value is now -0.10, not -0.35.**
 This section's sweep only checked for new DETACHED fragments at the silhouette
 level; it never measured the armhole gap at the shoulder joint itself, which is
-what fix round 5 found and fixed. The leg-chain value (`-0.06`) and the
-reasoning above for it are unchanged and still current.
+what fix round 5 found and fixed. The leg-chain **magnitude** (`0.06`) and the
+reasoning above for choosing it are unchanged, but the sign and the name it is
+keyed to are NOT current: fix round 6 flipped the sign to `+0.06` when the far
+side moved to `_R`, and fix round 7's rename moved that same `+0.06` onto
+`thigh_L`/`calf_L`. The committed value today is `thigh_L`/`calf_L` = `+0.06`
+(§3h/§4), not the `-0.06` this section measured.
 
 ## 3d. Layer order — @DennieSeth's exact front-to-back order
 
@@ -596,8 +609,10 @@ visible area. Connected-component count on the regenerated evidence render
 (4-connectivity labelling, same algorithm §4 already uses): still 3 components
 ≥50px — the main silhouette (238070px, down slightly from fix round 4's 238351px
 — the sleeve's own reach shrank with the smaller offset) plus the same two
-pre-existing, unrelated `calf_R` motion-streak fragments (726px, 73px). No new
-fragment — the figure stays one connected piece.
+pre-existing, unrelated `calf_R` motion-streak fragments (726px, 73px — named
+`calf_R` under fix round 5's naming, renamed `calf_L` by fix round 7; same
+physical file, same two fragments). No new fragment — the figure stays one
+connected piece.
 
 **Draw order re-verified.** `char_gen.draw_order_audit_T0436`, run again against
 this round's geometry: realized rank still matches the published list 10 of 10,
@@ -731,7 +746,7 @@ Re-measured directly on the new far side against the committed rig (`shoulder_na
 | `shoulder_R` visible px | 6260 (3555 without the offset) | > 0 |
 | `forearm_R` visible px | 12432 | > 0 |
 | `shoulder_R` + `forearm_R` | **18692** | ≥ 18000 |
-| silhouette components ≥50px | **3** (237800 main + 726 + 73, both pre-existing `calf_R` motion-streak fragments) | no new fragment |
+| silhouette components ≥50px | **3** (237800 main + 726 + 73, both pre-existing `calf_R` motion-streak fragments -- named `calf_R` under fix round 6's naming, renamed `calf_L` by fix round 7) | no new fragment |
 
 `shoulder_R` and `shoulder_L` are different art (only `shoulder_L` carries the
 anisotropic bone-length-fix width restore, §6), so these numbers are NOT the
@@ -1040,11 +1055,27 @@ never transcribed into the card body, only the two bar widths and the limb-lengt
 ratios; see the module's own docstring, "What this render does and does not
 prove"), with `shoulder_points`/`hip_points` set to the two canonical bar ends (§3a/
 3b) and `lateral_offset_frac` set to the rig's own recorded demonstration values
-(`canonical_rig.lateral_offset_axis.demonstration_values`):
+(`canonical_rig.lateral_offset_axis.demonstration_values`), **under fix round 5's
+naming** (before the fix-round-6 z-swap and the fix-round-7 L/R rename):
 
 ```
 shoulder_L: -0.10   forearm_L: -0.10   thigh_L: -0.06   calf_L: -0.06
 ```
+
+**Corrected, fix round 11: the block above is fix round 5's own value under
+fix round 5's naming, NOT the currently committed value.** The committed
+`canonical_rig.lateral_offset_axis.demonstration_values` today (post fix round
+7's rename) is:
+
+```
+shoulder_L: +0.10   forearm_L: +0.10   thigh_L: +0.06   calf_L: +0.06
+```
+
+Same magnitude, opposite sign, same key names -- but those key names now refer
+to the physical parts that were `shoulder_R`/`forearm_R`/`thigh_R`/`calf_R`
+under fix round 5's naming (see §3g/§3h for the rename). §4's narrative below
+is retained describing fix round 5's own render on fix round 5's naming; §3g
+has the fix-round-6 re-measurement and §3h/§9 the fix-round-7 rename.
 
 (fractions of torso width — ONE value per limb chain, applied once at the chain's
 root and inherited through FK, fix round 2; see §3c for why fix round 1's
@@ -1080,11 +1111,13 @@ frame, 1071×1023 before the opaque background flatten `reference_pose_render.pn
 saved with) finds 3 components ≥50px: the main silhouette (**238070px**, down
 slightly from fix round 4's 238351px — the smaller arm-chain offset reaches
 slightly less far) and the same two pre-existing `calf_R` motion-streak fragments
-described in §3c (726px, 73px — present at `lateral_offset_frac={}` too, i.e.
-independent of this card's chain offsets and unaffected by this round's changes,
-confirmed by removing `calf_R` from the composite). **No new fragment is
-introduced by this round's offset/width change** — the figure's own silhouette
-(everything except the pre-existing, untouched `calf_R` art detail) is still one
+(named `calf_R` under fix round 5's naming; renamed `calf_L` by fix round 7 --
+same physical file) described in §3c (726px, 73px — present at
+`lateral_offset_frac={}` too, i.e. independent of this card's chain offsets and
+unaffected by this round's changes, confirmed by removing that part from the
+composite). **No new fragment is introduced by this round's offset/width
+change** — the figure's own silhouette
+(everything except the pre-existing, untouched art detail) is still one
 connected piece, and `shoulder_L` + `forearm_L` together own 19580 of its pixels
 with the lateral offset active, confirming the far arm is both attached and
 visible in the same render, now without the armhole gap §3f fixes.
@@ -1098,14 +1131,15 @@ the pixel numbers inside them are fix round 6's (§3g), not fix round 5's:
 - `docs/assets/evidence/T-0436/reference_pose_render.png` (1071×1023) — the
   composited pose: the near arm reaching forward and the far arm trailing back
   (§3e), the far shoulder now genuinely overlapping the torso instead of reading
-  as detached (§3f/§3g), and the committed Option B layer order (§3g — the near
-  (`_L`) arm and leg group draws in front of the torso, the far (`_R`) group trails
-  behind it).
+  as detached (§3f/§3g), and the committed Option B layer order (§3g/§3h — under
+  the committed, post-fix-round-7 naming, the near (`_R`) arm and leg group draws
+  in front of the torso, the far (`_L`) group trails behind it).
 - `docs/assets/evidence/T-0436/rig_vs_reference_overlay.png` (1071×1023) — the same
   render with the shoulder bar (red), pelvis bar (red), spine (yellow) drawn on top,
   plus the front shin's actual-vs-adopted-target length (orange solid vs cyan
   dashed, §5) and a caption restating the pixel counts, including the armhole
-  wedge and sleeve/torso overlap counts, now measured on `shoulder_R` (§3g).
+  wedge and sleeve/torso overlap counts, measured on the far shoulder -- named
+  `shoulder_R` at fix round 6, renamed `shoulder_L` by fix round 7 (§3g/§3h).
 - `docs/assets/evidence/T-0436/draw_order_audit.png` (1071×1023) — the same pose
   with every part labeled by its realized draw rank and published z (§3g),
   generated by `gen_draw_order_audit_T0436.py`, re-run against the committed Option
@@ -1377,6 +1411,15 @@ from, verified via `git hash-object` on both sides of the rename (not by inspect
 and so on for all eight. `head.png` and `torso.png` are untouched — not renamed, not
 touched in the diff at all. See §3h for the full rename table and verification.
 
+**Corrected, fix round 11: `parts/side_view/keying_stats.json` also changes in fix
+round 7**, alongside `side_view_rig.json` — its eight limb-part entries carry a
+`"part"` label (e.g. `"part": "shoulder_R"`), and each pairwise swap re-keys that
+label the same way the PNG filename moves (`git diff` on this file shows exactly
+the eight-entry pairwise relabel, no other field touched). This is the same
+rename, not a re-measurement — the numeric fields on each entry (`fill_of_bbox`,
+`cropped_size`, etc.) are unchanged; only which part name owns which measured row
+moved, consistent with the PNG it describes.
+
 ## 10. Secret scan (gitleaks), reported honestly
 
 No persona driving this card's implementer or reviewer sessions holds a grant to
@@ -1388,3 +1431,12 @@ round's diff (fix round 10, docs and test-only) was read in full and contains no
 API keys, tokens, passwords, private-key blocks, or other secret-shaped strings —
 only geometry numbers, prose corrections, and a hardcoded SHA-256 content digest in
 a test fixture. No scan tool was run; this is a manual read, stated as such.
+
+**Fix round 11 (docs and one Python prose-comment edit, no geometry/code change):**
+same disposition. This round's own diff was read in full (`git diff` over
+`docs/design/23-canonical-rig.md` and
+`assets/src/character/src/char_gen/sitting_idle_cycle.py` and
+`assets/src/character/tests/test_shoulder_attachment_T0436.py`) and contains no
+API keys, tokens, passwords, private-key blocks, or other secret-shaped strings —
+only corrected geometry numbers and side-keyed prose. No scan tool was run; this
+is a manual read, stated as such, for the same reason given above.
