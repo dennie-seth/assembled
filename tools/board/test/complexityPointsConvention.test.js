@@ -69,7 +69,7 @@ describe("docs/complexity-points.md names the auto-generated-stub exemption", ()
     const doc = readDoc().toLowerCase();
     expect(doc).toContain("meaningless");
     expect(doc).toMatch(/intended|deliberate/);
-    expect(doc).not.toMatch(/omission|forgot/);
+    expect(doc).toMatch(/not an omission|not.*somebody forgot/);
   });
 
   it("clarifies a flow-health card a human picks up and scopes is ordinary work and gets scored normally", () => {
