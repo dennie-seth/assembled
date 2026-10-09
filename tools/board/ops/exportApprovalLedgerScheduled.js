@@ -120,6 +120,28 @@ async function readJsonOrNull(readFileFn, filePath) {
   return JSON.parse(raw);
 }
 
+/**
+ * Reads the ledger as last COMMITTED (`git show HEAD:<path>`), never the working-tree file --
+ * the preflight above deliberately allows the ledger file itself to be dirty (a prior export's
+ * tmp-rename, or a human mid-edit), so an uncommitted-but-fresh copy sitting on a stale HEAD must
+ * never be read as "already fresh". `git show` failing (most commonly: the path doesn't exist at
+ * HEAD yet, e.g. the very first run) is treated as "no committed ledger", the same fail-toward-
+ * refresh direction `readJsonOrNull`'s ENOENT case already takes.
+ */
+async function defaultReadCommittedLedger(execFileFn, repoRoot, ledgerRelativePath) {
+  let stdout;
+  try {
+    ({ stdout } = await git(execFileFn, repoRoot, ["show", `HEAD:${ledgerRelativePath}`]));
+  } catch {
+    return null;
+  }
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+}
+
 async function writeSummary({ mkdirFn, writeFileFn, appendFileFn, logDir, timestamp, summary, logFn }) {
   logFn(summary);
   try {
@@ -147,6 +169,7 @@ export async function runLedgerExport({
   mkdirFn = fs.mkdir,
   writeFileFn = fs.writeFile,
   appendFileFn = fs.appendFile,
+  readCommittedLedgerFn = defaultReadCommittedLedger,
   now = () => new Date(),
   logFn = console.log
 }) {
@@ -193,73 +216,85 @@ export async function runLedgerExport({
   }
 
   const tmpPath = `${ledgerAbsPath}.tmp-${now().getTime()}`;
+  // Scoped to this one try/finally so the temp file is removed on EVERY exit path out of the
+  // block below -- a non-zero exporter exit, an unparseable/empty result, a skip, or a later
+  // git failure -- not just the success path. A prior round deleted it only on two of the four
+  // failure branches; the exporter-subprocess-failure branch left it behind, and the next tick
+  // then read it as untracked working-tree dirt and skipped forever (self-perpetuating).
+  // `tmpOwned` flips to false only once `renameFn` has actually moved it onto the real ledger
+  // path, so the finally block never tries to unlink a path that no longer exists there.
+  let tmpOwned = true;
   try {
-    await execFileFn("node", [EXPORTER_RELATIVE_PATH, tmpPath], {
-      cwd: config.repoRoot,
-      env: { ...env, BOARD_TASK_STORE: config.taskStoreKind }
+    try {
+      await execFileFn("node", [EXPORTER_RELATIVE_PATH, tmpPath], {
+        cwd: config.repoRoot,
+        env: { ...env, BOARD_TASK_STORE: config.taskStoreKind }
+      });
+    } catch (err) {
+      return finish(EXIT_CODE_EXPORT_FAILED, "export-failed", [
+        "the exporter subprocess failed -- this often means the task store (DB) was unreachable.",
+        err.stderr || err.message
+      ]);
+    }
+
+    let freshLedger;
+    try {
+      freshLedger = await readJsonOrNull(readFileFn, tmpPath);
+    } catch (err) {
+      return finish(EXIT_CODE_EXPORT_FAILED, "export-produced-empty-ledger", [`the exported tmp ledger was unreadable/invalid: ${err.message}`]);
+    }
+    if (!freshLedger || !Array.isArray(freshLedger.cards) || freshLedger.cards.length === 0) {
+      return finish(EXIT_CODE_EXPORT_FAILED, "export-produced-empty-ledger", [
+        "the exporter produced no cards -- refusing to touch the committed ledger."
+      ]);
+    }
+
+    const existingLedger = await readCommittedLedgerFn(execFileFn, config.repoRoot, config.ledgerRelativePath);
+    const cardsChanged = !existingLedger || JSON.stringify(existingLedger.cards) !== JSON.stringify(freshLedger.cards);
+    const ledgerAgeHours = ledgerAgeHoursOf(existingLedger, now);
+    const decision = decideLedgerExport({
+      cardsChanged,
+      ledgerAgeHours,
+      refreshThresholdHours: config.refreshThresholdHours
     });
-  } catch (err) {
-    return finish(EXIT_CODE_EXPORT_FAILED, "export-failed", [
-      "the exporter subprocess failed -- this often means the task store (DB) was unreachable.",
-      err.stderr || err.message
-    ]);
-  }
 
-  let freshLedger;
-  try {
-    freshLedger = await readJsonOrNull(readFileFn, tmpPath);
-  } catch (err) {
-    await unlinkFn(tmpPath).catch(() => {});
-    return finish(EXIT_CODE_EXPORT_FAILED, "export-produced-empty-ledger", [`the exported tmp ledger was unreadable/invalid: ${err.message}`]);
-  }
-  if (!freshLedger || !Array.isArray(freshLedger.cards) || freshLedger.cards.length === 0) {
-    await unlinkFn(tmpPath).catch(() => {});
-    return finish(EXIT_CODE_EXPORT_FAILED, "export-produced-empty-ledger", [
-      "the exporter produced no cards -- refusing to touch the committed ledger."
-    ]);
-  }
+    if (!decision.shouldCommit) {
+      return finish(EXIT_CODE_OK, decision.reason, [
+        `committed ledger is ${Number.isFinite(ledgerAgeHours) ? `${ledgerAgeHours.toFixed(1)}h` : "age-unknown"} old, ` +
+          `cards unchanged, threshold ${config.refreshThresholdHours}h -- nothing to do.`
+      ]);
+    }
 
-  const existingLedger = await readJsonOrNull(readFileFn, ledgerAbsPath);
-  const cardsChanged = !existingLedger || JSON.stringify(existingLedger.cards) !== JSON.stringify(freshLedger.cards);
-  const ledgerAgeHours = ledgerAgeHoursOf(existingLedger, now);
-  const decision = decideLedgerExport({
-    cardsChanged,
-    ledgerAgeHours,
-    refreshThresholdHours: config.refreshThresholdHours
-  });
+    await renameFn(tmpPath, ledgerAbsPath);
+    tmpOwned = false;
+    try {
+      await git(execFileFn, config.repoRoot, ["add", "--", config.ledgerRelativePath]);
+      const cardCount = freshLedger.cards.length;
+      const ageDisplay = Number.isFinite(ledgerAgeHours) ? `${ledgerAgeHours.toFixed(1)}h` : "no prior ledger";
+      await git(execFileFn, config.repoRoot, [
+        "commit",
+        "-m",
+        `[auto] refresh approval ledger (${cardCount} card(s), reason: ${decision.reason}, previous age: ${ageDisplay})\n\nAutomated-by: board-ledger-export.sh`
+      ]);
+    } catch (err) {
+      return finish(EXIT_CODE_GIT_FAILED, "commit-failed", [`git add/commit failed: ${err.message}`]);
+    }
 
-  if (!decision.shouldCommit) {
-    await unlinkFn(tmpPath).catch(() => {});
-    return finish(EXIT_CODE_OK, decision.reason, [
-      `committed ledger is ${Number.isFinite(ledgerAgeHours) ? `${ledgerAgeHours.toFixed(1)}h` : "age-unknown"} old, ` +
-        `cards unchanged, threshold ${config.refreshThresholdHours}h -- nothing to do.`
-    ]);
+    try {
+      await git(execFileFn, config.repoRoot, ["push", config.remote, config.branch]);
+    } catch (err) {
+      return finish(EXIT_CODE_GIT_FAILED, "push-failed", [
+        `the ledger refresh was committed locally but 'git push ${config.remote} ${config.branch}' failed: ${err.message}`,
+        "the commit stays local; the next run's sync check will skip until this is resolved by hand."
+      ]);
+    }
+
+    return finish(EXIT_CODE_OK, decision.reason, [`committed and pushed a refreshed ledger (${freshLedger.cards.length} card(s)).`]);
+  } finally {
+    if (tmpOwned) {
+      await unlinkFn(tmpPath).catch(() => {});
+    }
   }
-
-  await renameFn(tmpPath, ledgerAbsPath);
-  try {
-    await git(execFileFn, config.repoRoot, ["add", "--", config.ledgerRelativePath]);
-    const cardCount = freshLedger.cards.length;
-    const ageDisplay = Number.isFinite(ledgerAgeHours) ? `${ledgerAgeHours.toFixed(1)}h` : "no prior ledger";
-    await git(execFileFn, config.repoRoot, [
-      "commit",
-      "-m",
-      `[auto] refresh approval ledger (${cardCount} card(s), reason: ${decision.reason}, previous age: ${ageDisplay})\n\nAutomated-by: board-ledger-export.sh`
-    ]);
-  } catch (err) {
-    return finish(EXIT_CODE_GIT_FAILED, "commit-failed", [`git add/commit failed: ${err.message}`]);
-  }
-
-  try {
-    await git(execFileFn, config.repoRoot, ["push", config.remote, config.branch]);
-  } catch (err) {
-    return finish(EXIT_CODE_GIT_FAILED, "push-failed", [
-      `the ledger refresh was committed locally but 'git push ${config.remote} ${config.branch}' failed: ${err.message}`,
-      "the commit stays local; the next run's sync check will skip until this is resolved by hand."
-    ]);
-  }
-
-  return finish(EXIT_CODE_OK, decision.reason, [`committed and pushed a refreshed ledger (${freshLedger.cards.length} card(s)).`]);
 }
 
 const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
