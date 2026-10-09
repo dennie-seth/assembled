@@ -132,10 +132,16 @@ this codebase — it does not; see §7) `sit_down_transition` are not re-derived
 Re-deriving each one's own pose, now that the rig has changed under it, is the
 follow-on sequence, one card at a time, each reviewed on its own.
 
-One exception, explicit and bounded: `shoulder_L`'s bone-length-fix scale (§5) DOES
-reach every existing pose module, the same way `calf_L`'s already did — because both
+One exception, explicit and bounded: `shoulder_R`'s bone-length-fix scale (§6) DOES
+reach every existing pose module, the same way `calf_R`'s already did — because both
 are the same existing mechanism (`rig_compositor.scaled_parts`), generalized, not a
 new one. §7 states exactly what that changes and by how much.
+
+> Fix round 10 correction: this paragraph named `shoulder_L`/`calf_L` and cited §5
+> (leg-proportion reconciliation); the correction is keyed `shoulder_R`/`calf_R` in
+> the committed rig, and the right cross-reference is §6 (the section the
+> correction is actually described in). Both fixed directly, not pointer-noted —
+> see §6's own fix-round-10 note for why.
 
 ## 1. Conventions carried forward from `docs/design/21-character-rig-bones.md`
 
@@ -478,8 +484,18 @@ down, positive swings the tip toward +x — `rig = world + 90`):
 
 | | upper arm, ref | mirrored | forearm, ref | mirrored | **shoulder_deg** | **elbow_deg** |
 |---|---|---|---|---|---|---|
-| **R** (near, reaches forward) | −134.3 | −45.7 | −175.0 | −5.0 | **+44.3** | **+40.7** |
-| **L** (far, trails back) | −33.6 | −146.4 | −66.8 | −113.2 | **−56.4** | **+33.2** |
+| **R** (near, trails back) | −33.6 | −146.4 | −66.8 | −113.2 | **−56.4** | **+33.2** |
+| **L** (far, reaches forward) | −134.3 | −45.7 | −175.0 | −5.0 | **+44.3** | **+40.7** |
+
+**Naming note (fix round 10).** This table uses the POST-fix-round-7 names, matching
+the committed `reference_pose_T0436.py` constants below. At the time these angles
+were first measured (fix round 4), the near/trails-back arm was named `R` and the
+far/reaches-forward arm was named `L` — the opposite of this table's own labels at
+that time. Fix round 7's suffix rename (§3h) swapped which physical arm each name
+answers to, and this table was left under the pre-rename labels for three
+subsequent rounds; it is corrected here. The physical measurements themselves (the
+raw/mirrored columns and the resulting `shoulder_deg`/`elbow_deg` values) are
+unchanged by the rename — only which row they sit under moved with it.
 
 `reference_pose_T0436.py` carries these as `SHOULDER_DEG_R`/`ELBOW_DEG_R`/
 `SHOULDER_DEG_L`/`ELBOW_DEG_L`, replacing the previous `SHOULDER_REST_DEG = 10.0`/
@@ -733,6 +749,19 @@ approved with the near arm reaching and the far arm trailing exactly as fix roun
 measured them from the reference; only which side draws in front of the torso
 changed, not which angle either side is posed at.
 
+> **Correction (fix round 10):** the paragraph above is a historical record of the
+> fix-round-6-era naming — at that time `R` was the near/reaching-forward arm and
+> `L` was the far/trailing-back arm, matching fix round 4's own names, and the claim
+> that the angle VALUES don't move across fix round 6 is still true. Fix round 7's
+> suffix rename (§3h), two sub-sections later in this same document, swapped which
+> physical arm each name answers to. At HEAD, `SHOULDER_DEG_R` is **−56.4** /
+> `ELBOW_DEG_R` is **+33.2** (now the near, trailing-back arm) and `SHOULDER_DEG_L`
+> is **+44.3** / `ELBOW_DEG_L` is **+40.7** (now the far, reaching-forward arm) —
+> see §3e's corrected table. A reviewer FAIL (2026-10-09T19:10) found this
+> paragraph's present-tense "(§3e) are unchanged" phrasing read as a current claim
+> rather than a fix-round-6 snapshot, and cited it as authority for the (then-stale)
+> §3e table; both are now consistent.
+
 **Animation impact of the z-order swap** is restated in §7 with the numbers
 re-measured against this round's rig (idle_cycle/sitting_idle_cycle changed-pixel
 counts relative to the immediately-prior, fix-round-5 z values).
@@ -806,8 +835,8 @@ eight pairs. `head.png`/`torso.png` are not renamed and do not appear in the dif
   physical leg, still the same two angle constants) stays attached to the same
   physical thigh under its new name.
 - **`bone_length_fix.scaled`** — `calf_R: 1.2929` (was `calf_L`), `shoulder_R:
-  {"height": 0.6087, "width": 1.0}` (was `shoulder_L`) — see §6's pointer note and
-  §3h's own note below.
+  {"height": 0.6087, "width": 1.0}` (was `shoulder_L`) — see §6 (rewritten under the
+  current names, fix round 10) and §3h's own note below.
 - **`canonical_rig.shoulder_bar`/`pelvis_bar`** — `R_local_px`/`L_local_px` swap
   values with each other, so the same physical attach point continues to be used
   by the same physical PNG under its new name (`canonical_world_points` always
@@ -919,15 +948,24 @@ part of this rename — it is the mechanism, not a name tied to one physical par
   the wrong key. Fixed in this round's diff to say `calf_R`, with a parenthetical
   noting the rename; no functional line in the module changed, so its test file
   needed no update and none was made.
-- `docs/design/23-canonical-rig.md` (this document) — §3a–§3g, §5, §6 describe
-  what was true THROUGH the round named in each section's own heading; left as
-  written, as a historical record, with a pointer note added at §6 (the one
-  section whose own title and active-correction description would otherwise read
-  as describing the CURRENT committed data under the old name) and this section
-  as the current authority for every side-keyed value. §9 is corrected directly
-  (not just pointed at) because its claim — "no `.png` file appears in the diff" —
-  is a factual statement about THIS round's own diff, not a historical record of a
-  prior one.
+- `docs/design/23-canonical-rig.md` (this document) — §3f, §3g describe what was
+  true THROUGH the round named in each section's own heading; left as written, as a
+  historical record, with a correction annotation added inline at §3g where it made
+  a forward-looking present-tense claim that later went stale. §9 is corrected
+  directly (not just pointed at) because its claim — "no `.png` file appears in the
+  diff" — is a factual statement about THIS round's own diff, not a historical
+  record of a prior one. **Fix round 10 correction to this bullet itself:** §0, §3e,
+  §6 and §7 are NOT historical records — none of their headings name a round, and
+  §0/§7 describe the card's present-tense scope/impact — so this section's own
+  stated policy already required them to match HEAD. They didn't: all four still
+  used the pre-fix-round-7 `shoulder_L`/`calf_L` names in places (§0's scope
+  exception, §3e's angle-derivation table, §6's heading and body, and two spots in
+  §7 — the bone-length-fix paragraph and the `CROUCH_Z_OVERRIDE` aside). §6 had
+  previously been given a pointer note ("read `shoulder_L` below as `shoulder_R`")
+  instead of a wording fix; a reviewer FAIL (2026-10-09T19:10) correctly rejected
+  that as not meeting the card's own "corrected, not annotated around" bar. All four
+  are now corrected directly under the current names, and this section as the
+  current authority for every side-keyed value.
 - `docs/assets/evidence/T-0269/{README.md,rig.json}`,
   `docs/assets/evidence/T-0430/{README.md,rig.json}`,
   `docs/assets/evidence/side-view-walk-reference/README.md` — committed evidence
@@ -1140,54 +1178,56 @@ apply this target when they touch that animation.
 The forearm's own reference deviation (+30% over, §2) is left unapplied for the
 identical reason, recorded in `canonical_rig.upper_limb_reference_comparison`.
 
-## 6. `shoulder_L` — normalized by length, not re-cut
+## 6. `shoulder_R` — normalized by length, not re-cut
 
-> **Fix round 7 (§3h) renamed this part from `shoulder_L` to `shoulder_R`** — the
-> file this section describes (the longer-cut sleeve, raw bone 169.28px) is, since
-> that round, named `shoulder_R`, and the correction below is keyed to
-> `bone_length_fix.scaled.shoulder_R` in the committed rig, not `.shoulder_L`. This
-> section's own narrative and test names are left as originally written — a
-> historical record of what was true through fix round 6 — because every number in
-> it (the scale factor, the raw/corrected bone lengths, the alpha-fill/width-profile
-> measurements) is a fact about how the PNG was CUT, unchanged by which name a later
-> round attaches to it. Where you read `shoulder_L` below, read "the part fix round 7
-> renamed to `shoulder_R`"; the test names pytest actually runs today use the `_R`
-> suffix (`test_shoulder_r_scaled_length_matches_shoulder_l`, etc. — see §3h).
+> **Fix round 10 correction.** Through fix round 9 this section was titled
+> `shoulder_L` and narrated under that name, with a pointer note asking the reader
+> to mentally substitute `shoulder_R` throughout. A reviewer FAIL (2026-10-09T19:10)
+> correctly rejected that as not satisfying the card's own requirement that "the
+> wording must be corrected, not annotated around" — a pointer note is exactly the
+> kind of workaround that requirement exists to rule out. This section is now
+> rewritten directly under the current names. Fix round 7 (§3h) is what renamed the
+> file this section describes (the longer-cut sleeve, raw bone 169.28px) from
+> `shoulder_L` to `shoulder_R`; the correction below is keyed to
+> `bone_length_fix.scaled.shoulder_R` in the committed rig. The test names pytest
+> actually runs today use the `_R` suffix (`test_shoulder_r_scaled_length_matches_
+> shoulder_l`, etc. — see §3h).
 
-An earlier analysis proposed re-cutting `shoulder_L` because its raw bone length
-(169.28px) is 64% longer than `shoulder_R`'s (103.04px). **That proposal is
-withdrawn.** Examined directly, `shoulder_L` is a clean sleeve crop — alpha fill
+An earlier analysis proposed re-cutting `shoulder_R` because its raw bone length
+(169.28px) is 64% longer than `shoulder_L`'s (103.04px). **That proposal is
+withdrawn.** Examined directly, `shoulder_R` is a clean sleeve crop — alpha fill
 0.88, a uniform width profile down its length, no torso fragment, no second limb, no
-stray costume. It is simply cut further down the arm than `shoulder_R`; the cut is
+stray costume. It is simply cut further down the arm than `shoulder_L`; the cut is
 long, not the bone.
 
-This is exactly what `bone_length_fix` already exists to correct — `calf_L` carries
-a `1.2929` scale for the opposite case: its cut is SHORT relative to `calf_R`'s even
+This is exactly what `bone_length_fix` already exists to correct — `calf_R` carries
+a `1.2929` scale for the opposite case: its cut is SHORT relative to `calf_L`'s even
 though the bone is not. (This was explained as occlusion of "the far calf's top" by
-the near leg, correct when `calf_L` was the far side through fix round 5 — fix round
-6's Option B now draws `calf_L` in FRONT, so that explanation is retracted, not
-replaced; see `side_view_rig.json`'s own `note` field and §3g. The measured 77.3%
-shortfall itself is unchanged — it describes how the two PNGs were cut, not which
-one a later round draws in front.) `shoulder_L` now carries its own entry:
+the near leg, correct when `calf_R` was the far side through fix round 5 — fix round
+6's Option B, then fix round 7's rename, now draws `calf_R` in FRONT, so that
+explanation is retracted, not replaced; see `side_view_rig.json`'s own `note` field
+and §3g/§3h. The measured 77.3% shortfall itself is unchanged — it describes how the
+two PNGs were cut, not which one a later round draws in front.) `shoulder_R` now
+carries its own entry:
 
 ```
 "scaled": {
-  "calf_L": 1.2929,
-  "shoulder_L": {"height": 0.6087, "width": 1.0}
+  "calf_R": 1.2929,
+  "shoulder_R": {"height": 0.6087, "width": 1.0}
 }
 ```
 
-`0.6087 = shoulder_R`'s measured length (103.04) `/ shoulder_L`'s own raw measured
+`0.6087 = shoulder_L`'s measured length (103.04) `/ shoulder_R`'s own raw measured
 length (169.28). `rig_compositor.scaled_parts` is generalized from a hardcoded
-`calf_L` lookup to iterate every entry in `bone_length_fix.scaled`, so `shoulder_L`
+`calf_R` lookup to iterate every entry in `bone_length_fix.scaled`, so `shoulder_R`
 is picked up by the same code path, not a second one.
 
-**The `width: 1.0` is fix round 5 (§3f).** Through fix round 4, `shoulder_L`'s
+**The `width: 1.0` is fix round 5 (§3f).** Through fix round 4, `shoulder_R`'s
 entry was the plain number `0.6087`, applied by the old `scaled_parts` to BOTH
 axes — correcting the bone length (height-derived) but also, as an unintended
 side effect, shrinking the sleeve's own cut WIDTH from 113px to 69px (61% of the
 artist's own cut). `scaled_parts` now accepts either a plain number (isotropic —
-`calf_L`, unchanged) or a `{height, width}` object (anisotropic — `shoulder_L`);
+`calf_R`, unchanged) or a `{height, width}` object (anisotropic — `shoulder_R`);
 `measured_bone_lengths` only ever reads a part's HEIGHT, so the bone length is
 unaffected by this change (103.04px before and after) — only the sleeve's own
 width changed, back to its raw 113px. §3f has the full armhole-attachment
@@ -1195,18 +1235,19 @@ reasoning this fix is part of.
 
 **Asserted directly:**
 - `tests/test_canonical_rig_T0436.py::TestBoneLengthFix::
-  test_shoulder_l_scaled_length_matches_shoulder_r` — after scaling,
-  `shoulder_L`'s measured bone length equals `shoulder_R`'s (103.04 ≈ 103.04).
+  test_shoulder_r_scaled_length_matches_shoulder_l` — after scaling,
+  `shoulder_R`'s measured bone length equals `shoulder_L`'s (103.04 ≈ 103.04).
 - `tests/test_canonical_rig_T0436.py::TestBoneLengthFix::
-  test_shoulder_l_width_is_not_shrunk_by_the_length_correction` (fix round 5) —
+  test_shoulder_r_width_is_not_shrunk_by_the_length_correction` (fix round 5) —
   the width scale is 1.0 and the scaled part's width equals the raw part's width.
 - `tests/test_canonical_rig_T0436.py::TestBoneLengthFix::
-  test_shoulder_l_png_is_byte_identical` — asserts the raw committed
-  `shoulder_L.png` is `(113, 184)`, the un-re-cut source size. §7 confirms from the
+  test_shoulder_r_png_is_byte_identical` — asserts the raw committed
+  `shoulder_R.png` is `(113, 184)`, the un-re-cut source size. §7 confirms from the
   diff that the file itself is untouched.
 - `tests/test_shoulder_attachment_T0436.py::TestReferencePoseShoulderAttachment::
-  test_shoulder_l_bone_length_is_unchanged_by_the_width_restore` and
-  `test_shoulder_l_png_is_still_byte_identical` (fix round 5) — the same two
+  test_shoulder_r_bone_length_is_unchanged_by_the_width_restore` and
+  `test_shoulder_r_png_is_still_byte_identical` (fix round 5, made a real
+  content check in fix round 10 — see that test's own history) — the same two
   invariants, re-asserted against the real reference pose rather than only the
   raw part.
 
@@ -1243,7 +1284,7 @@ change — confirmed by grep, no `render_frames` call anywhere in that module or
 own test file. `idle_cycle.py` supplies no `z_override`, so it is fully exposed to
 the new z values; `sitting_idle_cycle.py` overrides only `thigh_R`/`thigh_L`
 (`CROUCH_Z_OVERRIDE = {"thigh_R": 3.5, "thigh_L": 3.6}`, unchanged by fix round 6 —
-these two absolute z values still land between `calf_L`'s z (3) and `head`'s (4) in
+these two absolute z values still land between `calf_R`'s z (3) and `head`'s (4) in
 the new ordering just as they did in the old one, so the crouch's own tuned
 layering is unaffected), so its other eight parts pick up the new default too.
 
@@ -1265,22 +1306,22 @@ contested pixels resolve differently. Both existing suites (`test_idle_cycle.py`
 `test_sitting_idle_cycle.py`) stay green — neither asserts exact per-pixel output
 tied to the old draw order, only geometry (contact points, bounding bands,
 determinism) that this change does not touch. This is expected, not a regression,
-per the same framing §0 and the shoulder_L paragraph below already establish for
+per the same framing §0 and the shoulder_R paragraph below already establish for
 the bone-length fix: the follow-on cards that re-derive each animation's own pose
 will see this new, corrected draw order when they do, and re-tuning either
 animation for it is explicitly their business, not this round's.
 
-**`shoulder_L`'s bone-length fix (§6): yes, and here is the exact size of it.**
-Every pose that composites `shoulder_L`/`forearm_L` (all three: `walk_cycle`,
-`idle_cycle`, `sitting_idle_cycle`) now places `forearm_L`'s attach point (the
+**`shoulder_R`'s bone-length fix (§6): yes, and here is the exact size of it.**
+Every pose that composites `shoulder_R`/`forearm_R` (all three: `walk_cycle`,
+`idle_cycle`, `sitting_idle_cycle`) now places `forearm_R`'s attach point (the
 elbow) **66.24 native px closer to the shoulder** than before this card
-(`shoulder_L`'s measured bone length: 169.28px → 103.04px). At the shipped
+(`shoulder_R`'s measured bone length: 169.28px → 103.04px). At the shipped
 `CHARACTER_SCALE` (0.0398), that is **≈2.64px** at the final 48px cell — a real,
-visible shift in where `forearm_L` sits relative to `shoulder_L` in every frame of
-every pose. `shoulder_R`/`forearm_R` are completely unaffected by this specific fix
+visible shift in where `forearm_R` sits relative to `shoulder_R` in every frame of
+every pose. `shoulder_L`/`forearm_L` are completely unaffected by this specific fix
 (they are not a `bone_length_fix` entry) — independent of which side a given round's
 `rig.*.z` draws in front (fix round 6, §3g, swapped that; this bone-length
-correction did not move with it, since it corrects `shoulder_L`'s own longer CUT,
+correction did not move with it, since it corrects `shoulder_R`'s own longer CUT,
 not whichever side happens to be far).
 
 This is expected, not a regression — it is the intended effect of §6's fix, and it
@@ -1335,3 +1376,15 @@ from, verified via `git hash-object` on both sides of the rename (not by inspect
 `shoulder_R.png`'s new blob hash equals the pre-round-7 `shoulder_L.png`'s blob hash,
 and so on for all eight. `head.png` and `torso.png` are untouched — not renamed, not
 touched in the diff at all. See §3h for the full rename table and verification.
+
+## 10. Secret scan (gitleaks), reported honestly
+
+No persona driving this card's implementer or reviewer sessions holds a grant to
+execute `~/.local/bin/gitleaks`, so no automated gitleaks scan has been run against
+this round's commits. Per the card's own acceptance criterion ("if no persona holds
+a grant to execute gitleaks, satisfy this by keeping new content free of
+secret-shaped strings and reporting that honestly"), this is that report: this
+round's diff (fix round 10, docs and test-only) was read in full and contains no
+API keys, tokens, passwords, private-key blocks, or other secret-shaped strings —
+only geometry numbers, prose corrections, and a hardcoded SHA-256 content digest in
+a test fixture. No scan tool was run; this is a manual read, stated as such.

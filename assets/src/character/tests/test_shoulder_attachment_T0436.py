@@ -39,6 +39,8 @@ fragment, and the draw order is unaffected.
 """
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pytest
 from PIL import Image
@@ -216,9 +218,20 @@ class TestReferencePoseShoulderAttachment:
     def test_shoulder_r_png_is_still_byte_identical(self):
         """No re-cut -- the fix lives entirely in the rig's scale/offset data.
         Fix round 7 renamed this file from `shoulder_L.png`, but did not touch
-        its bytes."""
+        its bytes. Fix round 10: the prior version of this test compared
+        `shoulder_R.png` to itself, which passes unconditionally and proves
+        nothing (flagged by reviewer FAIL 2026-10-09T19:10). This asserts
+        against the actual pre-rename content instead -- the sha256 below is
+        the develop-branch `shoulder_L.png` blob's digest (git blob
+        `1a11d543ef848bbac72520ccbbc5eb360a6d1871`, confirmed via
+        `git diff --raw develop...HEAD` to be the exact blob `shoulder_R.png`
+        now carries), so a future change that starts mutating the PNG in
+        place fails this test loudly."""
         raw = (rig_compositor.PARTS_DIR / "shoulder_R.png").read_bytes()
-        assert raw == (rig_compositor.PARTS_DIR / "shoulder_R.png").read_bytes()
+        pre_rename_shoulder_l_sha256 = (
+            "eac455901485d36acc9729ec523f05d86e0374785aa68041edf6334c95d3cc39"
+        )
+        assert hashlib.sha256(raw).hexdigest() == pre_rename_shoulder_l_sha256
 
 
 class TestLateralOffsetValue:
