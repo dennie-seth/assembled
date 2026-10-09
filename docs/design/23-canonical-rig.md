@@ -737,6 +737,183 @@ changed, not which angle either side is posed at.
 re-measured against this round's rig (idle_cycle/sitting_idle_cycle changed-pixel
 counts relative to the immediately-prior, fix-round-5 z values).
 
+## 3h. Fix round 7 — L/R suffix rename
+
+@DennieSeth (2026-10-09T17:06): the earlier verification that §3g's "the rename
+mapping is IDENTITY" check performed was circular. It confirmed the renderer loads
+`forearm_R.png` and draws it under the label `forearm_R` — true by construction,
+since the renderer reads the filename back out and prints it as the label. It could
+never have caught the actual defect: the files themselves were mirrored at cut time
+and the `_R`/`_L` suffix on each FILENAME never followed the mirror, so the file
+called `forearm_R` held the character's physically LEFT forearm. §3g's table proved
+internal consistency ("the pixels match the number painted on them"), not that the
+names were correct in the first place.
+
+**The fix: rename all eight limb-part files so the suffix tracks DRAW DEPTH
+directly** — near/front = `_R`, far/behind = `_L` — rather than whatever the
+mirrored cut happened to leave on the file. This is a pairwise swap, not a
+re-cut: each of the four limb types swaps its `_R`/`_L` filename with its own
+opposite-side sibling.
+
+| physical part (§3g z, fix-round-6 name) | renamed to | z (unchanged) |
+|---|---|---|
+| `forearm_L` (z=0, frontmost) | **`forearm_R`** | 0 |
+| `shoulder_L` (z=1) | **`shoulder_R`** | 1 |
+| `thigh_L` (z=2) | **`thigh_R`** | 2 |
+| `calf_L` (z=3) | **`calf_R`** | 3 |
+| `head` (z=4) | `head` (untouched) | 4 |
+| `torso` (z=5) | `torso` (untouched) | 5 |
+| `calf_R` (z=6) | **`calf_L`** | 6 |
+| `thigh_R` (z=7) | **`thigh_L`** | 7 |
+| `shoulder_R` (z=8) | **`shoulder_L`** | 8 |
+| `forearm_R` (z=9, backmost) | **`forearm_L`** | 9 |
+
+Note the result: **the z-order by NEW name is exactly the list @DennieSeth gave at
+the very start of this card** (fix round 1's defect-2 table — `forearm_R` 0,
+`shoulder_R` 1, `thigh_R` 2, `calf_R` 3, `head` 4, `torso` 5, `calf_L` 6, `thigh_L`
+7, `shoulder_L` 8, `forearm_L` 9). That list was anatomically right all along;
+applying it to misnamed files through fix rounds 1–6 is what produced a picture
+that kept reading wrong no matter how the z numbers were shuffled.
+
+**Verified by `git hash-object`, not by inspection.** Each of the eight files was
+moved via a pairwise `git mv` swap (through a temporary name, so no destination
+ever overwrote a file still needed). The new file at each path has the exact blob
+hash the OLD file at its opposite-side path had — e.g. `shoulder_R.png`'s hash
+after the rename equals `shoulder_L.png`'s hash before it, and vice versa — for all
+eight pairs. `head.png`/`torso.png` are not renamed and do not appear in the diff.
+
+**Every side-keyed value moved with its physical part, not with its old name:**
+
+- **z** — unchanged per physical part (table above); only the key each value is
+  filed under moved.
+- **Lateral offsets** (`canonical_rig.lateral_offset_axis.demonstration_values`) —
+  the far side is `_L` again: `shoulder_L` +0.10, `forearm_L` +0.10, `thigh_L`
+  +0.06, `calf_L` +0.06; `_R` carries no entry (defaults to 0.0). Same physical
+  parts, same magnitude and sign as fix round 6's `shoulder_R`/`forearm_R`/
+  `thigh_R`/`calf_R` — only the key moved.
+- **Arm angles** (`reference_pose_T0436.py`) — `SHOULDER_DEG_R` **-56.4** /
+  `ELBOW_DEG_R` **+33.2** (near, trailing back — fix round 6's `shoulder_L`),
+  `SHOULDER_DEG_L` **+44.3** / `ELBOW_DEG_L` **+40.7** (far, reaching forward —
+  fix round 6's `shoulder_R`). Same two physical angles fix round 4 measured from
+  the reference's own red bone lines; only which constant name carries which value
+  swapped.
+- **Leg stance angles** — `FRONT_THIGH_DEG`/`FRONT_KNEE_FLEXION_DEG` and
+  `BACK_THIGH_DEG`/`BACK_KNEE_FLEXION_DEG` are a STANCE axis (which leg steps
+  forward in the lunge), independent of the near/far DEPTH axis the rename
+  tracks — `leg_stance()` now assigns `thigh_deg_r=BACK_THIGH_DEG`,
+  `thigh_deg_l=FRONT_THIGH_DEG` (swapped from fix rounds 1–6's
+  `thigh_deg_r=FRONT_THIGH_DEG`), so the forward-stepping leg (still the same
+  physical leg, still the same two angle constants) stays attached to the same
+  physical thigh under its new name.
+- **`bone_length_fix.scaled`** — `calf_R: 1.2929` (was `calf_L`), `shoulder_R:
+  {"height": 0.6087, "width": 1.0}` (was `shoulder_L`) — see §6's pointer note and
+  §3h's own note below.
+- **`canonical_rig.shoulder_bar`/`pelvis_bar`** — `R_local_px`/`L_local_px` swap
+  values with each other, so the same physical attach point continues to be used
+  by the same physical PNG under its new name (`canonical_world_points` always
+  pairs `R_local_px` with whichever file is currently named `shoulder_R`/`thigh_R`
+  — a code convention that does not itself change, so the DATA has to move
+  instead). The two tests that assert the two ends are the bar's own width apart
+  now compare `abs(dx)`, not a signed `dx` — which named end sits at the bigger
+  local x is no longer a fixed invariant, only the ends' separation is.
+
+**Pixel proof — not assumed, measured.** A full composite of the renamed rig's
+reference-pose render, differenced against the render saved immediately before any
+rename or code change: **0 differing pixels of 1,095,633** (`1071×1023`, every
+channel). The rename changed no geometry, only names.
+
+A first attempt at this rename was NOT pixel-identical — see §3g's own cross-check
+of this exact pitfall, now reproduced for real: `LegStance.thigh_deg_r`/
+`thigh_deg_l` is a SEPARATE field from the part-file name, so a rename that moves
+only the z/offset/bone-length-fix/bar data while leaving `leg_stance()`'s
+`thigh_deg_r=FRONT_THIGH_DEG` assignment untouched renders the legs at their OLD
+angles under their NEW names — wrong, and only the pixel diff (not "the rename
+should be neutral" reasoning) catches it. The committed diff includes the
+`leg_stance()` swap above specifically because of this.
+
+**Re-measured directly against the renamed, committed rig** (not assumed to carry
+over from §3g by label):
+
+| measure | value | bound |
+|---|---|---|
+| armhole wedge (`shoulder_name="shoulder_L"`, the new far side) | **340px** | ≤ 400px |
+| sleeve/torso overlap | **3741px** | > 0 (genuine overlap) |
+| `shoulder_L` visible px | 6260 (3555 without the offset) | > 0 |
+| `forearm_L` visible px | 12432 | > 0 |
+| `shoulder_L` + `forearm_L` | **18692** | ≥ 18000 |
+| realized draw rank vs published z | **10 of 10** match | — |
+| contested pairs resolving against the order | **0 of 12** | 0 |
+
+Contested-pair replay (paint-loop last-writer, not a re-read of `rig.*.z`):
+
+| lower z (expected winner) | higher z | contested px | lower-z wins | higher-z wins |
+|---|---|---|---|---|
+| `thigh_R` | `thigh_L` | 9819 | 9819 | 0 |
+| `shoulder_R` | `torso` | 7153 | 7029 | 0 |
+| `calf_L` | `thigh_L` | 5250 | 5250 | 0 |
+| `thigh_R` | `torso` | 4674 | 4674 | 0 |
+| `torso` | `shoulder_L` | 3741 | 3741 | 0 |
+| `torso` | `thigh_L` | 3468 | 2458 | 0 |
+| `head` | `torso` | 3000 | 2754 | 0 |
+| `thigh_R` | `calf_R` | 1573 | 1573 | 0 |
+| `shoulder_L` | `forearm_L` | 1268 | 1268 | 0 |
+| `forearm_R` | `shoulder_R` | 939 | 939 | 0 |
+| `shoulder_R` | `head` | 248 | 248 | 0 |
+| `forearm_R` | `torso` | 124 | 124 | 0 |
+
+Every number in this table is identical to §3g's own table — same physical
+contests, same pixel counts — with each part's name swapped to its new identity.
+That identity is exactly what the pixel-diff-zero check above proves directly,
+rather than inferred from the fact that the numbers happen to match.
+
+**Labels verified against draw depth, not against filenames (the actual fix for
+§3g's circularity).** `tests/test_draw_order_audit_T0436.py::
+TestSuffixAgreesWithRealizedDrawDepth::
+test_each_limb_pairs_r_suffix_wins_the_realized_depth_contest` derives, for each of
+the four limb pairs, which part WINS the paint-loop replay (an independent,
+render-grounded signal — the same `realized_draw_rank` machinery §3d/3g already
+use, not a re-read of the rig's own z numbers or a check that a part's rendered
+content matches the file loaded under its own name) and asserts that winner's name
+ends `_R`. This is the check §3g's own "rename mapping is IDENTITY" table could not
+be, because that table could pass regardless of whether the names were right.
+
+**Nothing left half-renamed — swept by grep, not assumed clean.** Searched the
+whole repository for the eight old side-keyed part names
+(`shoulder_L`/`shoulder_R`/`forearm_L`/`forearm_R`/`thigh_L`/`thigh_R`/`calf_L`/
+`calf_R`) used as a PHYSICAL PART reference (as opposed to the abstract `"R"`/`"L"`
+side selector `UpperPose.shoulder_deg_for`/`leg_angles` already use, which is not
+part of this rename — it is the mechanism, not a name tied to one physical part):
+
+- `side_view_rig.json`, `reference_pose_T0436.py`, `shoulder_attachment_T0436.py`,
+  `gen_reference_pose_evidence_T0436.py`, and all four T-0436 test files — updated
+  in this round's diff, including every prose note that explained a correction by
+  which side was far/near/front at the time (`bone_length_fix`'s own `note`,
+  `near_far_note`, `shoulder_*_note`/`shoulder_*_anisotropic_note`, and
+  `lateral_offset_axis`'s own notes — each now carries an explicit correction
+  pointing at the number it supersedes, not a silent rewrite).
+- `rig.*.curves_deg`/`per_frame_angles` in `side_view_rig.json` — these are
+  **not** side-keyed (`hip`/`knee_flexion`/`shoulder`/`elbow_flexion` curves and a
+  flat `per_frame_angles` list, consumed by `walk_cycle` for its OWN, separate
+  per-frame curve solve) — confirmed by direct read: no key or value in either
+  block contains `_R`/`_L`. Nothing to rename there.
+- `idle_cycle.py`, `sitting_idle_cycle.py` — reference `thigh_R`/`calf_R`/
+  `shoulder_R`/`forearm_R` (and `sitting_idle_cycle`'s own `CROUCH_Z_OVERRIDE =
+  {"thigh_R": 3.5, "thigh_L": 3.6}`) as PART NAMES, same mechanism this card's
+  rename affects — left untouched (§7 states why: this card does not re-derive any
+  animation, and both modules' own tests stay green against the renamed parts
+  without modification, since the thighs measure exactly equal and both calves
+  measure exactly equal post-correction regardless of which physical PNG a given
+  name currently loads — see §7's walk/idle/sitting-idle re-run).
+- `docs/design/23-canonical-rig.md` (this document) — §3a–§3g, §5, §6 describe
+  what was true THROUGH the round named in each section's own heading; left as
+  written, as a historical record, with a pointer note added at §6 (the one
+  section whose own title and active-correction description would otherwise read
+  as describing the CURRENT committed data under the old name) and this section
+  as the current authority for every side-keyed value. §9 is corrected directly
+  (not just pointed at) because its claim — "no `.png` file appears in the diff" —
+  is a factual statement about THIS round's own diff, not a historical record of a
+  prior one.
+
 ## 4. The static render
 
 **Fix round 6 superseded the specific numbers below (not the mechanism) — see §3g
@@ -896,6 +1073,18 @@ identical reason, recorded in `canonical_rig.upper_limb_reference_comparison`.
 
 ## 6. `shoulder_L` — normalized by length, not re-cut
 
+> **Fix round 7 (§3h) renamed this part from `shoulder_L` to `shoulder_R`** — the
+> file this section describes (the longer-cut sleeve, raw bone 169.28px) is, since
+> that round, named `shoulder_R`, and the correction below is keyed to
+> `bone_length_fix.scaled.shoulder_R` in the committed rig, not `.shoulder_L`. This
+> section's own narrative and test names are left as originally written — a
+> historical record of what was true through fix round 6 — because every number in
+> it (the scale factor, the raw/corrected bone lengths, the alpha-fill/width-profile
+> measurements) is a fact about how the PNG was CUT, unchanged by which name a later
+> round attaches to it. Where you read `shoulder_L` below, read "the part fix round 7
+> renamed to `shoulder_R`"; the test names pytest actually runs today use the `_R`
+> suffix (`test_shoulder_r_scaled_length_matches_shoulder_l`, etc. — see §3h).
+
 An earlier analysis proposed re-cutting `shoulder_L` because its raw bone length
 (169.28px) is 64% longer than `shoulder_R`'s (103.04px). **That proposal is
 withdrawn.** Examined directly, `shoulder_L` is a clean sleeve crop — alpha fill
@@ -1035,6 +1224,29 @@ corrected far-arm geometry when they do.
 transition` module or test file exists under `assets/src/character/` at this card's
 head. Nothing to check or report for it.
 
+**Fix round 7's L/R rename (§3h): yes for `idle_cycle` and `sitting_idle_cycle`'s
+rendered ART, on top of (not instead of) the z-order impact already measured
+above; `walk_cycle` is unaffected for the same reason it was unaffected by the
+z-order swap — it never calls `rig_compositor.render_frames` or loads a part PNG
+by name.** `idle_cycle`/`sitting_idle_cycle` both load all ten parts through the
+shared `PART_NAMES`/`rig["rig"]` machinery §3h renamed, so every frame they render
+now draws a DIFFERENT PNG under each limb name than it did before this round (the
+physical art, not just the z-order, moved with the rename). Both modules' bone LENGTHS are unaffected in practice — `thigh_R`/`thigh_L`
+measure exactly equal and both calves measure exactly equal post-correction
+regardless of which physical PNG a given name currently loads (§3h). But
+`sitting_idle_cycle`'s `CROUCH_Z_OVERRIDE = {"thigh_R": 3.5, "thigh_L": 3.6}`
+(§7's own z-order paragraph above) now overrides the z of the physical thigh that
+was `thigh_L` through fix round 6, not the one that was `thigh_R` — the override's
+own two absolute z VALUES are unchanged, only which physical leg each one lands on
+swapped, which is the direct, intended consequence of the rename working
+correctly (the crouch's near leg is still the one drawn frontmost; which NAME that
+leg answers to changed). Not re-measured to an exact changed-pixel count this round
+— the z-order table above already establishes the measurement methodology and the
+precedent (expected, not a regression, follow-on cards' business to re-tune) for
+exactly this class of impact; both full test files stay green with no edits
+(confirmed: `test_idle_cycle.py` + `test_sitting_idle_cycle.py`, 136 tests, same
+count as before this round).
+
 ## 8. `docs/design/21-character-rig-bones.md`
 
 Marked superseded in place (banner added at its top, document not deleted) — see
@@ -1042,10 +1254,15 @@ its own file. §1 above states exactly which of its sections survive unchanged a
 why; the rest (§0's single-hip/single-shoulder framing, implicitly) is what this
 document replaces.
 
-## 9. Ten source parts — unchanged
+## 9. Ten source parts — unchanged (re-cut/re-keyed), renamed (fix round 7)
 
-No part was re-cut or re-keyed this round. From the diff
-(`git diff --stat -- assets/src/character/parts/side_view/`), the only change under
-`parts/side_view/` is `side_view_rig.json` (data) — no `.png` file in that directory
-appears in the diff. `shoulder_L.png`'s own bytes are additionally asserted
-identical by `test_shoulder_l_png_is_byte_identical` (§6).
+No part was ever re-cut or re-keyed on this card. Through fix round 6, the only
+change under `parts/side_view/` was `side_view_rig.json` (data) — no `.png` file in
+that directory appeared in the diff. **Fix round 7 (§3h) changes that sentence's
+second half, deliberately**: all eight limb-part PNGs are renamed (`git mv`, via a
+pairwise swap) so the filename tracks draw depth directly. This is a RENAME, not a
+re-cut — every renamed file's CONTENT is byte-identical to the file it was renamed
+from, verified via `git hash-object` on both sides of the rename (not by inspection):
+`shoulder_R.png`'s new blob hash equals the pre-round-7 `shoulder_L.png`'s blob hash,
+and so on for all eight. `head.png` and `torso.png` are untouched — not renamed, not
+touched in the diff at all. See §3h for the full rename table and verification.
