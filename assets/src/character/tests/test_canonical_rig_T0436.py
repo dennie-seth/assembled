@@ -299,6 +299,115 @@ class TestOptInCompositorHooks:
         assert calf_dx == pytest.approx(thigh_dx)
 
 
+class TestPerSideArmAngles:
+    """T-0436 fix round 4: `UpperPose` gains four additive, `None`-defaulting
+    per-side angle overrides (`shoulder_deg_r`/`elbow_deg_r`/`shoulder_deg_l`/
+    `elbow_deg_l`) so the two arms can take different angles -- the reference's
+    near arm reaches forward while its far arm trails back, which one shared
+    `shoulder_deg`/`elbow_deg` scalar cannot express."""
+
+    @staticmethod
+    def _common():
+        rig = RIG
+        parts = PARTS
+        scaled = rig_compositor.scaled_parts(parts, rig)
+        lengths = measured_bone_lengths(parts, rig)
+        leg = rig_compositor.LegStance(
+            hip=(0.0, 0.0), ground_plane_y=500.0,
+            thigh_deg_r=0.0, knee_flexion_deg_r=0.0,
+            thigh_deg_l=0.0, knee_flexion_deg_l=0.0,
+            far_leg_offset_frac=-0.055,
+        )
+        return leg, scaled, rig["rig"], rig["attach_torso_local_px"], lengths
+
+    def test_new_fields_default_to_none(self):
+        pose = rig_compositor.UpperPose(
+            upper_dy=0.0, shoulder_deg=10.0, elbow_deg=20.0, head_deg=0.0,
+        )
+        assert pose.shoulder_deg_r is None
+        assert pose.elbow_deg_r is None
+        assert pose.shoulder_deg_l is None
+        assert pose.elbow_deg_l is None
+
+    def test_shoulder_and_elbow_deg_for_fall_back_to_the_shared_scalar(self):
+        pose = rig_compositor.UpperPose(
+            upper_dy=0.0, shoulder_deg=10.0, elbow_deg=20.0, head_deg=0.0,
+        )
+        assert pose.shoulder_deg_for("R") == 10.0
+        assert pose.shoulder_deg_for("L") == 10.0
+        assert pose.elbow_deg_for("R") == 20.0
+        assert pose.elbow_deg_for("L") == 20.0
+
+    def test_shoulder_and_elbow_deg_for_prefer_the_per_side_override(self):
+        pose = rig_compositor.UpperPose(
+            upper_dy=0.0, shoulder_deg=10.0, elbow_deg=20.0, head_deg=0.0,
+            shoulder_deg_r=44.3, elbow_deg_r=40.7, shoulder_deg_l=-56.4, elbow_deg_l=33.2,
+        )
+        assert pose.shoulder_deg_for("R") == pytest.approx(44.3)
+        assert pose.elbow_deg_for("R") == pytest.approx(40.7)
+        assert pose.shoulder_deg_for("L") == pytest.approx(-56.4)
+        assert pose.elbow_deg_for("L") == pytest.approx(33.2)
+
+    def test_omitting_the_per_side_fields_is_byte_identical_to_before(self):
+        leg, scaled, rig_entries, attach, lengths = self._common()
+        shared = rig_compositor.UpperPose(
+            upper_dy=0.0, shoulder_deg=10.0, elbow_deg=20.0, head_deg=0.0,
+        )
+        explicit_none = rig_compositor.UpperPose(
+            upper_dy=0.0, shoulder_deg=10.0, elbow_deg=20.0, head_deg=0.0,
+            shoulder_deg_r=None, elbow_deg_r=None, shoulder_deg_l=None, elbow_deg_l=None,
+        )
+        base = rig_compositor.build_placements(shared, leg, scaled, rig_entries, attach, lengths)
+        explicit = rig_compositor.build_placements(
+            explicit_none, leg, scaled, rig_entries, attach, lengths,
+        )
+        base_sig = {p.name: (p.target_xy, p.pivot_px, p.z) for p in base}
+        explicit_sig = {p.name: (p.target_xy, p.pivot_px, p.z) for p in explicit}
+        assert base_sig == explicit_sig
+
+    def test_per_side_shoulder_angle_changes_only_that_sides_elbow_target(self):
+        leg, scaled, rig_entries, attach, lengths = self._common()
+        shared = rig_compositor.UpperPose(
+            upper_dy=0.0, shoulder_deg=10.0, elbow_deg=20.0, head_deg=0.0,
+        )
+        left_only = rig_compositor.UpperPose(
+            upper_dy=0.0, shoulder_deg=10.0, elbow_deg=20.0, head_deg=0.0, shoulder_deg_l=-56.4,
+        )
+        base = {
+            p.name: p
+            for p in rig_compositor.build_placements(
+                shared, leg, scaled, rig_entries, attach, lengths,
+            )
+        }
+        overridden = {
+            p.name: p
+            for p in rig_compositor.build_placements(
+                left_only, leg, scaled, rig_entries, attach, lengths,
+            )
+        }
+        assert overridden["forearm_R"].target_xy == base["forearm_R"].target_xy
+        assert overridden["shoulder_R"].target_xy == base["shoulder_R"].target_xy
+        assert overridden["forearm_L"].target_xy != base["forearm_L"].target_xy
+
+    def test_both_arms_take_different_angles_from_the_same_shoulder_point(self):
+        """Baseline (pre-T-0436) behaviour puts both shoulders at one shared
+        point when `shoulder_points` is not supplied -- isolating angle as the
+        only variable between the two sides."""
+        leg, scaled, rig_entries, attach, lengths = self._common()
+        pose = rig_compositor.UpperPose(
+            upper_dy=0.0, shoulder_deg=10.0, elbow_deg=20.0, head_deg=0.0,
+            shoulder_deg_r=44.3, elbow_deg_r=40.7, shoulder_deg_l=-56.4, elbow_deg_l=33.2,
+        )
+        placements = {
+            p.name: p
+            for p in rig_compositor.build_placements(
+                pose, leg, scaled, rig_entries, attach, lengths,
+            )
+        }
+        assert placements["shoulder_R"].target_xy == placements["shoulder_L"].target_xy
+        assert placements["forearm_R"].target_xy != placements["forearm_L"].target_xy
+
+
 class TestJsonIsValid:
     def test_side_view_rig_json_round_trips(self):
         path = PARTS_DIR / "side_view_rig.json"

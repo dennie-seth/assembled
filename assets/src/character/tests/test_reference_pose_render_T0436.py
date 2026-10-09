@@ -141,6 +141,49 @@ class TestLegDebugPixelsTrackTheLateralOffset:
         assert result.ankle_l_px == expected_ankle_l_px
 
 
+class TestPerSideArmAnglesFromTheReference:
+    """Fix round 4: the near (R) and far (L) arms are posed from DIFFERENT angles
+    measured off the red bone lines in the attached
+    `dennie_canonical_skeleton_ref.png` (mirrored and converted into this rig's own
+    sign convention) -- replacing the previous SHOULDER_REST_DEG/ELBOW_REST_DEG
+    pair that gave both arms the same droop."""
+
+    def test_arm_angle_constants_match_the_measured_reference(self):
+        assert refpose.SHOULDER_DEG_R == pytest.approx(44.3)
+        assert refpose.ELBOW_DEG_R == pytest.approx(40.7)
+        assert refpose.SHOULDER_DEG_L == pytest.approx(-56.4)
+        assert refpose.ELBOW_DEG_L == pytest.approx(33.2)
+
+    def test_upper_pose_gives_each_arm_its_own_angle(self):
+        pose = refpose.upper_pose(0.0, 100.0)
+        assert pose.shoulder_deg_for("R") == pytest.approx(refpose.SHOULDER_DEG_R)
+        assert pose.shoulder_deg_for("L") == pytest.approx(refpose.SHOULDER_DEG_L)
+        assert pose.elbow_deg_for("R") == pytest.approx(refpose.ELBOW_DEG_R)
+        assert pose.elbow_deg_for("L") == pytest.approx(refpose.ELBOW_DEG_L)
+        assert pose.shoulder_deg_for("R") != pose.shoulder_deg_for("L")
+
+    def test_reference_placements_put_each_elbow_at_a_different_angle_derived_target(self):
+        """Both shoulders share one world point in this pose (set from the
+        canonical shoulder-bar ends, not from `shoulder_deg`), so the elbow
+        target is the one place a difference in ANGLE (not just root position)
+        is directly observable."""
+        placements = {p.name: p for p in refpose.build_reference_placements(lateral_offset_frac={})}
+        rig = rig_compositor.load_rig()
+        lengths = rig_compositor.measured_bone_lengths(rig_compositor.load_parts(), rig)
+
+        from char_gen.walk_cycle import distal_joint
+
+        elbow_r = distal_joint(
+            placements["shoulder_R"].target_xy, lengths["shoulder_R"], refpose.SHOULDER_DEG_R,
+        )
+        elbow_l = distal_joint(
+            placements["shoulder_L"].target_xy, lengths["shoulder_L"], refpose.SHOULDER_DEG_L,
+        )
+        assert placements["forearm_R"].target_xy == pytest.approx(elbow_r)
+        assert placements["forearm_L"].target_xy == pytest.approx(elbow_l)
+        assert elbow_r != elbow_l
+
+
 class TestDeterminism:
     def test_render_is_deterministic(self):
         r1 = refpose.render()
