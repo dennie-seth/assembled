@@ -134,4 +134,38 @@ describe("simulateWorstCaseAgeHours", () => {
     expect(maxAgeHours).toBe(28);
     expect(maxAgeHours).toBeGreaterThan(24);
   });
+
+  it("pins the real edge: three consecutive missed runs already exhausts the margin to the 24h gate, not four", () => {
+    // A prior round's README claimed the design survives three consecutive misses and only
+    // breaks at four. That undercounts: a gap positioned where the run that WOULD have forced a
+    // refresh is itself missed (ticks 3-5, the same alignment the specs above already use) drives
+    // the worst case to exactly 24h -- the gate's own BOARD_APPROVAL_LEDGER_STALE_HOURS threshold,
+    // with zero hours of margin left, not comfortably under it. This is the gap "straddling the
+    // gate boundary" the fix-round asked this suite to pin, rather than just restating one
+    // convenient offset.
+    const { maxAgeHours } = simulateWorstCaseAgeHours({
+      intervalHours: 4,
+      refreshThresholdHours: 12,
+      totalHours: 240,
+      missedRunTicks: new Set([3, 4, 5]) // hours 12, 16, 20 all silently skipped
+    });
+    expect(maxAgeHours).toBe(24);
+  });
+
+  it("a gap positioned right after a publish is the SAFE case -- position, not just gap length, determines the margin", () => {
+    // Same gap length (3 consecutive misses) as the spec above, but positioned immediately after
+    // the natural first refresh (which lands at hour 16 in this schedule) instead of over the run
+    // that would have forced one. The slack already built into the refresh cadence absorbs this
+    // gap entirely -- worst case never rises above the steady-state 16h high-water mark. Proves
+    // the arithmetic depends on WHERE an outage falls relative to the schedule, not only how long
+    // it lasts, so a single offset can't stand in for "the" worst case.
+    const { maxAgeHours } = simulateWorstCaseAgeHours({
+      intervalHours: 4,
+      refreshThresholdHours: 12,
+      totalHours: 240,
+      missedRunTicks: new Set([5, 6, 7]) // hours 20, 24, 28 -- right after the hour-16 refresh
+    });
+    expect(maxAgeHours).toBe(16);
+    expect(maxAgeHours).toBeLessThan(24);
+  });
 });

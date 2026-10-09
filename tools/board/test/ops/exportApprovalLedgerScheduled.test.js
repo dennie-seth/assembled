@@ -46,17 +46,25 @@ function makeGit(overrides = {}) {
 function makeDeps({
   git = makeGit(),
   exportResult = { exitCode: 0, tmpContent: JSON.stringify(makeLedger([{ id: "T-0001", requires_approval: false, approved_by: null, approved_at: null }])) },
-  existingLedger = null
+  existingLedger = null,
+  readCommittedLedgerFn
 } = {}) {
   const execFileFn = vi.fn(async (cmd, args, opts) => {
     if (cmd === "node") {
+      const tmpPath = args[1];
       if (exportResult.exitCode !== 0) {
+        // A real exporter that dies partway through can still have written something to the
+        // tmp path before exiting non-zero -- simulate that here so a test asserting the tmp
+        // path is gone after a failed run is actually exercising the cleanup, not just observing
+        // that nothing was ever there.
+        if (exportResult.partialTmpContent !== undefined) {
+          await deps_writeFileFn(tmpPath, exportResult.partialTmpContent, "utf8");
+        }
         const err = new Error("exporter failed");
         err.stderr = exportResult.stderr || "exportApprovalLedger: the task store returned no cards";
         throw err;
       }
       // Simulate the real exporter: it writes the tmp path itself.
-      const tmpPath = args[1];
       await deps_writeFileFn(tmpPath, exportResult.tmpContent, "utf8");
       return { stdout: "", stderr: "" };
     }
@@ -64,7 +72,6 @@ function makeDeps({
   });
 
   const files = new Map();
-  if (existingLedger) files.set(LEDGER_ABS_PATH, JSON.stringify(existingLedger));
 
   async function deps_writeFileFn(p, content) {
     files.set(p, content);
@@ -91,8 +98,25 @@ function makeDeps({
   });
   const appendFileFn = vi.fn(async () => {});
   const logFn = vi.fn();
+  // Defaults to "the committed ledger is `existingLedger`" -- the semantics every existing test
+  // already relies on (the param name predates T-0434's fix-round move from reading the
+  // working-tree file to reading `git show HEAD:<path>`, but the meaning -- "what HEAD currently
+  // has committed" -- was always what these tests meant by it). Tests proving the committed-vs-
+  // working-tree distinction itself override this function directly.
+  const resolvedReadCommittedLedgerFn = readCommittedLedgerFn || (async () => existingLedger);
 
-  return { execFileFn, readFileFn, renameFn, unlinkFn, mkdirFn, writeFileFn, appendFileFn, logFn, files };
+  return {
+    execFileFn,
+    readFileFn,
+    renameFn,
+    unlinkFn,
+    mkdirFn,
+    writeFileFn,
+    appendFileFn,
+    logFn,
+    files,
+    readCommittedLedgerFn: resolvedReadCommittedLedgerFn
+  };
 }
 
 describe("resolveConfig", () => {
@@ -234,6 +258,43 @@ describe("runLedgerExport", () => {
     expect(commitCalls).toHaveLength(0);
   });
 
+  it("does not leave the temp file behind after a failed export -- a transient failure must not disable every later run", async () => {
+    // A prior round only unlinked the tmp file on the "unreadable/invalid" and "empty cards"
+    // branches, never on the exporter-subprocess-failure branch itself. The temp file (at a
+    // fixed, timestamp-based path under `now().getTime()`) then sat as untracked working-tree
+    // dirt, which the very next run's preflight reads as "a run or other work may be in
+    // progress" -- `working-tree-dirty` forever, from a single transient failure.
+    const now = () => new Date("2026-10-09T00:00:00.000Z");
+    const failingDeps = makeDeps({
+      exportResult: { exitCode: 1, stderr: "DB unreachable", partialTmpContent: '{"version": 1, "cards": [' }
+    });
+
+    const run1 = await runLedgerExport({ env: { BOARD_REPO_ROOT: "/repo" }, now, ...failingDeps });
+
+    expect(run1.exitCode).toBe(EXIT_CODE_EXPORT_FAILED);
+    const tmpPath = `${LEDGER_ABS_PATH}.tmp-${now().getTime()}`;
+    expect(failingDeps.files.has(tmpPath)).toBe(false);
+
+    // Run 2: same shared file-backed "disk" (failingDeps.files), now against a healthy exporter.
+    // If run 1's tmp file had survived, run 2's `git status --porcelain` (stubbed below to report
+    // it) would read as foreign dirt and skip -- proving the leak, not just asserting it away.
+    const git = makeGit({
+      status: () => {
+        const leaked = [...failingDeps.files.keys()].some((p) => p.includes(".tmp-"));
+        return { stdout: leaked ? `?? ${tmpPath}\n` : "", stderr: "" };
+      }
+    });
+    const healthyDeps = makeDeps({ git, existingLedger: null });
+    healthyDeps.files.clear();
+    for (const [k, v] of failingDeps.files) healthyDeps.files.set(k, v);
+
+    const run2 = await runLedgerExport({ env: { BOARD_REPO_ROOT: "/repo" }, now, ...healthyDeps });
+
+    expect(run2.reason).not.toBe("working-tree-dirty");
+    expect(run2.exitCode).toBe(EXIT_CODE_OK);
+    expect(healthyDeps.renameFn).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses an empty/invalid exported ledger even if the subprocess exits 0 -- never overwrites the real file", async () => {
     const deps = makeDeps({ exportResult: { exitCode: 0, tmpContent: JSON.stringify({ version: 1, generated_at: "x", cards: [] }) } });
 
@@ -255,6 +316,34 @@ describe("runLedgerExport", () => {
     expect(deps.execFileFn.mock.calls.some(([, args]) => args?.includes("add"))).toBe(true);
     expect(deps.execFileFn.mock.calls.some(([, args]) => args?.includes("commit"))).toBe(true);
     expect(deps.execFileFn.mock.calls.some(([, args]) => args?.includes("push"))).toBe(true);
+  });
+
+  it("decides freshness from the committed ledger (HEAD), never an uncommitted working-tree copy", async () => {
+    // The preflight explicitly allows the ledger FILE itself to be the one dirty path (see
+    // "proceeds when the only dirty path is the ledger file itself" above) -- so a fresh,
+    // uncommitted copy can legitimately be sitting in the working tree while HEAD still carries a
+    // genuinely stale one. Reading that working-tree copy for the freshness decision would call
+    // this `fresh-no-change` and never publish -- recreating the exact staleness this card exists
+    // to end, inside the very check meant to catch it.
+    const cards = [{ id: "T-0001", requires_approval: false, approved_by: null, approved_at: null }];
+    const now = () => new Date("2026-10-08T19:00:00.000Z");
+    const staleCommitted = makeLedger(cards, "2026-10-08T06:00:00.000Z"); // 13h old at HEAD -- past the 12h threshold
+    const freshUncommitted = makeLedger(cards, "2026-10-08T18:59:00.000Z"); // 1 minute old, but never committed
+
+    const deps = makeDeps({
+      readCommittedLedgerFn: async () => staleCommitted,
+      exportResult: { exitCode: 0, tmpContent: JSON.stringify(makeLedger(cards, "2026-10-08T19:00:00.000Z")) }
+    });
+    // Seed the working-tree file with the FRESH copy a buggy "read the file on disk" approach
+    // would consult instead of HEAD -- proving the decision never looks at this.
+    deps.files.set(LEDGER_ABS_PATH, JSON.stringify(freshUncommitted));
+
+    const result = await runLedgerExport({ env: { BOARD_REPO_ROOT: "/repo" }, now, ...deps });
+
+    expect(result.reason).not.toBe("fresh-no-change");
+    expect(result.reason).toBe("refresh-threshold");
+    expect(deps.renameFn).toHaveBeenCalledTimes(1);
+    expect(deps.execFileFn.mock.calls.some(([, args]) => args?.includes("commit"))).toBe(true);
   });
 
   it("skips the commit when the cards are unchanged and the ledger is still within the refresh threshold", async () => {
