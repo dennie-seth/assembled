@@ -51,12 +51,17 @@ from pathlib import Path
 
 _CHARACTER_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _CHARACTER_DIR.parents[2]
-for _extra in (_REPO_ROOT / "tools" / "asset-gate" / "src", _CHARACTER_DIR / "src"):
+for _extra in (
+    _REPO_ROOT / "tools" / "asset-gate" / "src",
+    _REPO_ROOT / "tools" / "comfy-client" / "src",
+    _CHARACTER_DIR / "src",
+):
     if str(_extra) not in sys.path:
         sys.path.insert(0, str(_extra))
 
 from asset_gate import character as chargate  # noqa: E402
 from asset_gate.character import compute_file_sha256, compute_image_content_sha256  # noqa: E402
+from comfy_client.provenance_sidecar import ARM_C_BENCHMARK  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from char_gen import walk_sheet  # noqa: E402
@@ -64,13 +69,10 @@ from char_gen import walk_sheet  # noqa: E402
 GENERATOR_PATH = "assets/src/character/gen_walk_sheet_deterministic_T0431.py"
 CARD = "T-0431"
 
-#: CHR-1's own shared benchmark (docs/board-invariants.md) -- duplicated
-#: rather than imported from `comfy_client.provenance_sidecar.ARM_C_BENCHMARK`
-#: because this package deliberately has no dependency on `tools/comfy-client`
-#: (`pyproject.toml`'s own dependency list; every other cross-package
-#: constant this package needs, e.g. RIG_CONFIG_VERSION, is duplicated the
-#: same way, never cross-imported).
-ARM_C_BENCHMARK = (0.072, 0.112)
+#: CHR-1's own shared benchmark (docs/board-invariants.md, T-0258) -- imported
+#: above from `comfy_client.provenance_sidecar.ARM_C_BENCHMARK`, the single
+#: shared home, the same way `gen_pose_authority_idle_T0249.py` does; never
+#: restated here as a literal.
 
 KEYPOINTS_EVIDENCE_DIR = _CHARACTER_DIR / "pose_rig_walk_deterministic_frame_evidence_T0431"
 EVIDENCE_DIR = _REPO_ROOT / "docs" / "assets" / "evidence" / "T-0431"

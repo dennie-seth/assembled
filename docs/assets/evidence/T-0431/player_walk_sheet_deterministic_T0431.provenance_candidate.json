@@ -6,7 +6,7 @@
   "animation_module": "assets/src/character/src/char_gen/walk_cycle.py (unmodified)",
   "generator": "assets/src/character/gen_walk_sheet_deterministic_T0431.py",
   "card": "T-0431",
-  "run_id": "T-0431-2026-10-08T13-32-22-540Z",
+  "run_id": "T-0431-2026-10-09T23-15-56-005Z",
   "motion_class": "locomotion",
   "gpu_seconds": 0.0,
   "mechanical_gate_passed": false,
