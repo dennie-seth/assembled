@@ -32,8 +32,19 @@ FRONT_KNEE_FLEXION_DEG = 55.0
 BACK_THIGH_DEG = -22.0
 BACK_KNEE_FLEXION_DEG = 8.0
 
-SHOULDER_REST_DEG = 10.0
-ELBOW_REST_DEG = 20.0
+#: Fix round 4 -- per-side arm angles, extracted from the red bone lines in the
+#: attached `dennie_canonical_skeleton_ref.png`, then mirrored (the reference faces
+#: -x, this rig faces +x, so `theta -> 180 - theta`) and converted into this rig's
+#: own `sign_convention.positive_angle` (0 = hanging straight down, positive swings
+#: the tip toward +x). R is the near arm, reaching forward; L is the far arm,
+#: trailing back -- one shared scalar cannot express both, which is why
+#: `UpperPose` gained the per-side `*_r`/`*_l` fields this round. Replaces the
+#: previous SHOULDER_REST_DEG/ELBOW_REST_DEG rest pose (10.0/20.0 for both arms),
+#: which rendered as two parallel droops rather than a reach and a trail.
+SHOULDER_DEG_R = 44.3
+ELBOW_DEG_R = 40.7
+SHOULDER_DEG_L = -56.4
+ELBOW_DEG_L = 33.2
 HEAD_REST_DEG = 0.0
 
 #: Pulls the far shoulder/forearm/thigh/calf clear of the torso's own silhouette --
@@ -89,9 +100,17 @@ def leg_stance(hip_world: tuple[float, float], ground_plane_y: float) -> rig_com
 
 
 def upper_pose(_phase: float, _torso_height: float) -> rig_compositor.UpperPose:
+    """`shoulder_deg`/`elbow_deg` (the shared-scalar fields) are set to the near
+    (R) arm's own angle -- they are never read because `shoulder_deg_r`/
+    `elbow_deg_r` override them for side R, and `shoulder_deg_l`/`elbow_deg_l`
+    override them for side L, so no side ever falls back to the shared pair. They
+    carry a real value rather than 0.0 only so a reader diffing this dataclass
+    does not mistake the shared fields for an unset/placeholder pose."""
     return rig_compositor.UpperPose(
-        upper_dy=0.0, shoulder_deg=SHOULDER_REST_DEG, elbow_deg=ELBOW_REST_DEG,
+        upper_dy=0.0, shoulder_deg=SHOULDER_DEG_R, elbow_deg=ELBOW_DEG_R,
         head_deg=HEAD_REST_DEG,
+        shoulder_deg_r=SHOULDER_DEG_R, elbow_deg_r=ELBOW_DEG_R,
+        shoulder_deg_l=SHOULDER_DEG_L, elbow_deg_l=ELBOW_DEG_L,
     )
 
 

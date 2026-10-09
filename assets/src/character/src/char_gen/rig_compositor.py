@@ -88,12 +88,34 @@ class UpperPose:
     forearms -- inherits it as a PARENT rotation (`child absolute angle = torso_deg +
     child's own local angle`, same additive-chain convention the legs and arms already
     use), so a leaning torso carries its head and arms with it rather than leaving them
-    behind -- round 2's bug, where `TORSO_LEAN_DEG` was recorded but never consumed."""
+    behind -- round 2's bug, where `TORSO_LEAN_DEG` was recorded but never consumed.
+
+    `shoulder_deg_r`/`elbow_deg_r`/`shoulder_deg_l`/`elbow_deg_l` (T-0436, fix round
+    4) are per-side overrides, all defaulting to `None` -- a complete no-op for every
+    pre-existing caller. `shoulder_deg`/`elbow_deg` remain the single pair every pose
+    module before this round still sets, and both arms still use it when a side's own
+    override is absent. A 3/4 reference pose where the near arm reaches forward and
+    the far arm trails back cannot be expressed by one shared scalar -- this is the
+    minimal, additive split that lets `reference_pose_T0436` pose each arm from its
+    own measured angle without touching what `idle_cycle`/`sitting_idle_cycle` (which
+    never set these fields) render."""
     upper_dy: float
     shoulder_deg: float
     elbow_deg: float
     head_deg: float
     torso_deg: float = 0.0
+    shoulder_deg_r: float | None = None
+    elbow_deg_r: float | None = None
+    shoulder_deg_l: float | None = None
+    elbow_deg_l: float | None = None
+
+    def shoulder_deg_for(self, side: str) -> float:
+        override = self.shoulder_deg_r if side == "R" else self.shoulder_deg_l
+        return self.shoulder_deg if override is None else override
+
+    def elbow_deg_for(self, side: str) -> float:
+        override = self.elbow_deg_r if side == "R" else self.elbow_deg_l
+        return self.elbow_deg if override is None else override
 
 
 @dataclass(frozen=True)
@@ -259,9 +281,9 @@ def build_placements(
     neck_world = attach_world("neck")
     placements.append(place("head", upper.torso_deg + upper.head_deg, neck_world))
 
-    shoulder_abs_deg = upper.torso_deg + upper.shoulder_deg
     for side in ("R", "L"):
         sh_name, fa_name = f"shoulder_{side}", f"forearm_{side}"
+        shoulder_abs_deg = upper.torso_deg + upper.shoulder_deg_for(side)
         sh_world = (
             shoulder_points[side] if shoulder_points is not None else attach_world("shoulder")
         )
@@ -271,7 +293,7 @@ def build_placements(
         # ONE lateral offset lives at the root; fa_name is never applied a second
         # time (see lateral_offset_frac's own docstring above).
         elbow = distal_joint(sh_world, lengths[sh_name], shoulder_abs_deg)
-        placements.append(place(fa_name, shoulder_abs_deg + upper.elbow_deg, elbow))
+        placements.append(place(fa_name, shoulder_abs_deg + upper.elbow_deg_for(side), elbow))
 
     resolved_hip_points = hip_points if hip_points is not None else leg_hip_points(leg, torso.width)
     for side, hip_side in resolved_hip_points.items():
