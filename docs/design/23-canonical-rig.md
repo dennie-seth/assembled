@@ -73,6 +73,32 @@ and green after this round's fix. §4 below restates the per-joint deviation num
 as independently re-measured against the regenerated, now-correctly-calibrated
 overlay, rather than asserting the fix round 2 claim still holds.
 
+**Fix round 4, 2026-10-09 — @DennieSeth reviewed the render again and raised two
+items; one was a real defect, one was not.**
+
+1. **The z-order is NOT wrong.** @DennieSeth's own re-check (`T0436_ORDER_AUDIT.png`,
+   a part map built by replaying the paint loop and taking the last writer, not by
+   re-sorting z) found the committed `rig.*.z` values match the realized paint order
+   10 of 10, with 0 of 15 contested pairs resolving against the published list. §3d
+   below is unchanged in its numbers — a straight read of 21-'s now-replaced order
+   would have been wrong, but §3d's order was already correct going into this round.
+   What was actually wrong was the arms' *pose*, which made a correct order look
+   wrong because the overlaps it was supposed to govern barely existed. This round
+   adds a committed, re-runnable version of that same replay-the-paint-loop check
+   (`char_gen.draw_order_audit_T0436`, §3d) rather than leaving it as a one-off
+   script and a human-attached PNG.
+2. **Both arms were posed from one shared angle, and that IS wrong.**
+   `rig_compositor.build_placements` computed a single `shoulder_abs_deg` before the
+   per-side loop and applied it (plus one shared `elbow_deg`) to both arms. The
+   reference has the near arm reaching forward and the far arm trailing back — two
+   different angles no shared scalar can express. `UpperPose` gains four additive,
+   `None`-defaulting fields (§3e) and `reference_pose_T0436` now poses each arm from
+   its own angle, measured off the reference's own red bone lines (now attached to
+   the card as `dennie_canonical_skeleton_ref.png`).
+
+Evidence regenerated this round reflects both findings: the arm angles changed (§3e,
+§4), the published z-order did not (§3d).
+
 ## 0. What this card changes, and what it does not
 
 **In scope:** this document, `side_view_rig.json` v2, and a static render proving
@@ -335,6 +361,102 @@ either part's color exactly — not a parity-sort conflict) and only 4 match
 `thigh_R`'s — `forearm_R` visibly wins essentially all of the contested region, as
 z 0 vs z 2 says it should.
 
+**Re-confirmed, fix round 4, after the arm-angle fix (§3e) changed where the arms
+actually overlap everything else.** `char_gen.draw_order_audit_T0436` (new this
+round) replays the identical paint order `render_frames` uses and reports, per pair
+of parts whose own masks overlap, how many of the contested pixels each side
+actually wins. Run against the reference pose with the new per-side arm angles
+(`gen_draw_order_audit_T0436.py`, evidence below): **10 contested pairs, 0
+resolving against the published z-order** (this round's `forearm_R`/`thigh_R` pair
+from the paragraph above no longer overlaps at all at the new, more
+forward-reaching near-arm angle — the near arm instead contests `shoulder_R` — so
+the pair count itself is not meant to stay fixed across a pose change; the
+zero-violations result is what §3d's order claim rests on):
+
+| lower z (expected winner) | higher z | contested px | lower-z wins | higher-z wins |
+|---|---|---|---|---|
+| `thigh_R` | `thigh_L` | 9819 | 9819 | 0 |
+| `shoulder_R` | `torso` | 6418 | 6418 | 0 |
+| `thigh_R` | `calf_R` | 5250 | 5250 | 0 |
+| `torso` | `thigh_L` | 4271 | 3261 | 0 |
+| `thigh_R` | `torso` | 3597 | 3597 | 0 |
+| `head` | `torso` | 3000 | 2964 | 0 |
+| `calf_L` | `thigh_L` | 1573 | 1573 | 0 |
+| `forearm_R` | `shoulder_R` | 1268 | 1268 | 0 |
+| `shoulder_L` | `forearm_L` | 824 | 824 | 0 |
+| `shoulder_R` | `head` | 36 | 36 | 0 |
+
+The gap between a pair's `contested_px` and its `lower-z wins` count (e.g. `torso`/
+`thigh_L`: 4271 vs 3261, `head`/`torso`: 3000 vs 2964) is anti-aliased edge-blend
+pixels that belong to neither part's own exact rendered color — the same class of
+pixel the earlier `forearm_R`/`thigh_R` paragraph already called out, never a
+higher-z part winning outright (every `higher-z wins` column above is 0).
+
+## 3e. Per-side arm angles
+
+`rig_compositor.UpperPose` gained one shared `shoulder_deg`/`elbow_deg` pair, used
+by both arms, from its original authoring. That is sufficient for a hanging rest
+pose but cannot express the reference's near arm reaching forward while the far arm
+trails back — two different angles. Fix round 4 adds four fields, all defaulting to
+`None`:
+
+```
+shoulder_deg_r: float | None = None
+elbow_deg_r: float | None = None
+shoulder_deg_l: float | None = None
+elbow_deg_l: float | None = None
+```
+
+plus `shoulder_deg_for(side)`/`elbow_deg_for(side)` helpers that return the
+per-side override when set and fall back to the existing shared `shoulder_deg`/
+`elbow_deg` otherwise. `rig_compositor.build_placements` now computes each arm's
+`shoulder_abs_deg` *inside* the per-side loop via these helpers, instead of once
+before it. **A complete no-op when the four fields are omitted** — every
+pre-existing pose module (`idle_cycle`, `sitting_idle_cycle`, `walk_cycle`) does not
+set them, proven by
+`tests/test_canonical_rig_T0436.py::TestPerSideArmAngles::
+test_omitting_the_per_side_fields_is_byte_identical_to_before` and by the full
+existing animation suite staying green with no edits to any animation test file
+(§7 states the exact test count).
+
+### The angles, measured from the reference's own red bone lines
+
+`dennie_canonical_skeleton_ref.png` is attached to this card as of this round.
+Extracted from the red strokes, in image frame (CCW from +x, y up), then mirrored
+(the reference faces −x, this rig faces +x, so `theta -> 180 - theta`), then
+converted into this rig's own `sign_convention.positive_angle` (0 = hanging straight
+down, positive swings the tip toward +x — `rig = world + 90`):
+
+| | upper arm, ref | mirrored | forearm, ref | mirrored | **shoulder_deg** | **elbow_deg** |
+|---|---|---|---|---|---|---|
+| **R** (near, reaches forward) | −134.3 | −45.7 | −175.0 | −5.0 | **+44.3** | **+40.7** |
+| **L** (far, trails back) | −33.6 | −146.4 | −66.8 | −113.2 | **−56.4** | **+33.2** |
+
+`reference_pose_T0436.py` carries these as `SHOULDER_DEG_R`/`ELBOW_DEG_R`/
+`SHOULDER_DEG_L`/`ELBOW_DEG_L`, replacing the previous `SHOULDER_REST_DEG = 10.0`/
+`ELBOW_REST_DEG = 20.0` pair that gave both arms the same ~10° droop — within 10° of
+hanging straight down, which is the defect @DennieSeth's fix-round-4 comment points
+at directly. `upper_pose()` sets `shoulder_deg`/`elbow_deg` to the **R** values (so
+a reader diffing the dataclass never mistakes the shared fields for an unset
+placeholder) and sets `shoulder_deg_r`/`elbow_deg_r`/`shoulder_deg_l`/`elbow_deg_l`
+explicitly for both sides — so neither side ever actually falls back to the shared
+pair; every arm's posed angle traces to one of the four reference-derived numbers
+above.
+
+Tests: `tests/test_canonical_rig_T0436.py::TestPerSideArmAngles` (the dataclass and
+`build_placements` mechanism, against synthetic poses) and
+`tests/test_reference_pose_render_T0436.py::TestPerSideArmAnglesFromTheReference`
+(the constants match the measured values; the two elbows land at the
+angle-derived forward-kinematics target, not just at different root points).
+
+### Scope: additive, no animation re-derived
+
+Adding per-side arm angles touches `UpperPose`, which every pose module constructs.
+Per §0/§7, no animation is re-derived this round — `walk_cycle`, `idle_cycle` and
+`sitting_idle_cycle` render exactly as they did before this round because none of
+them sets the four new fields, confirmed by their own unmodified test files staying
+green (§7 restates this with the exact test count).
+
 ## 4. The static render
 
 `char_gen.reference_pose_T0436.render()` composites one static frame: a wide-stance
@@ -358,45 +480,57 @@ run against the corrected code that derives this magnitude).
 (`visible_pixel_count` in `tests/test_reference_pose_render_T0436.py` — a pixel is
 counted only if removing the part changes the final composite AND the "with" result
 is itself non-transparent there, so an occluded part's own opaque pixels do not
-count):
+count). **Re-measured fix round 4, after the per-side arm angle fix (§3e)** — these
+numbers supersede the fix-round-2 table (shoulder_L 0→5523, forearm_L 0→2888),
+which was measured against the old shared rest-pose angle
+(`SHOULDER_REST_DEG`/`ELBOW_REST_DEG`, both arms hanging the same way):
 
 | | without `lateral_offset_frac` | with it |
 |---|---|---|
-| `shoulder_L` | **0** | **5523** |
-| `forearm_L` | **0** | **2888** |
-| `shoulder_L` + `forearm_L` | **0** | **8411** |
+| `shoulder_L` | **2623** | **7162** |
+| `forearm_L` | **12789** | **12828** |
+| `shoulder_L` + `forearm_L` | **15412** | **19990** |
 
-Confirms the card's own premise (0 visible pixels at baseline) and that the lateral
-offset — not the two-point bar attach alone — is what fixes it: `shoulder_L` is
-still 0 with the bar-end attach active and the offset zeroed out. `forearm_L`'s count
-is lower than fix round 1's (fabricated, never actually measured) 11151 because this
-round's number is the REAL one: fix round 1's effective forearm shift was secretly
-double the shoulder's (§3c), pushing the sleeve further from the torso and
-incidentally out from behind more of the other parts than the corrected, non-doubled
--0.35 does.
+Both parts are non-zero even WITHOUT the lateral offset now, unlike fix round 2's
+table — the far arm's new angle (trailing back at −56.4°/+33.2°, §3e) already swings
+it partly clear of the torso by itself; the lateral offset still visibly increases
+`shoulder_L`'s own count (2623→7162, +173%) and gives `forearm_L` a smaller further
+gain (12789→12828) since it was already mostly clear. This does not change the
+card's premise — `shoulder_L`/`forearm_L` were 0/0 at this card's own starting point
+(the pre-T-0436 rig, a single shared shoulder attach with no lateral axis at all);
+it changes relative to fix round 2's specific rest-pose angle, which is exactly what
+§3e's fix was for.
 
 **Connected-component count on the regenerated evidence render.** 4-connectivity
 labelling of the composited RGBA frame (`reference_pose_T0436.render()`'s own native
 frame, 1071×1023 before the opaque background flatten `reference_pose_render.png` is
-saved with) finds 3 components ≥50px: the main silhouette (221813px) and the two
+saved with) finds 3 components ≥50px: the main silhouette (**238351px**, up from fix
+round 2's 221813px — the reaching/trailing arms cover more canvas) and the same two
 pre-existing `calf_R` motion-streak fragments described in §3c (726px, 73px —
 present at `lateral_offset_frac={}` too, i.e. independent of this card's chain
-offsets, confirmed by removing `calf_R` from the composite). **No new fragment is
-introduced by the corrected chain offsets** — the figure's own silhouette (everything
-except the pre-existing, untouched `calf_R` art detail) is one connected piece, and
-`shoulder_L` + `forearm_L` together own 8411 of its pixels, confirming the far arm is
-both attached and visible in the same render.
+offsets and unaffected by this round's arm-angle change, confirmed by removing
+`calf_R` from the composite). **No new fragment is introduced by the arm-angle
+fix** — the figure's own silhouette (everything except the pre-existing, untouched
+`calf_R` art detail) is still one connected piece, and `shoulder_L` + `forearm_L`
+together own 19990 of its pixels with the lateral offset active, confirming the far
+arm is both attached and visible in the same render.
 
-Evidence, regenerated this round from the fixed compositor and committed:
+Evidence, regenerated this round (fix round 4) from the fixed per-side arm angles
+and committed:
 
 - `docs/assets/evidence/T-0436/reference_pose_render.png` (1071×1023) — the
-  composited pose, now with the far arm attached to its own shoulder by a single,
-  non-doubled chain offset (§3c) and the new layer order (§3d — the hood draws over
-  the torso collar, and the near fist sits in front of the near thigh).
+  composited pose, now with the near arm reaching forward and the far arm trailing
+  back (§3e) instead of both hanging at the same rest droop, the far arm still
+  attached to its own shoulder by a single, non-doubled chain offset (§3c), and the
+  unchanged layer order (§3d — the hood draws over the torso collar, and the near
+  fist crosses in front of the torso).
 - `docs/assets/evidence/T-0436/rig_vs_reference_overlay.png` (1071×1023) — the same
   render with the shoulder bar (red), pelvis bar (red), spine (yellow) drawn on top,
   plus the front shin's actual-vs-adopted-target length (orange solid vs cyan
   dashed, §5) and a caption restating the pixel counts above.
+- `docs/assets/evidence/T-0436/draw_order_audit.png` (1071×1023, new this round) —
+  the same pose with every part labeled by its realized draw rank and published z
+  (§3d), generated by `gen_draw_order_audit_T0436.py`.
 
 ### Per-joint deviation
 
@@ -508,6 +642,18 @@ test (`TestOptInCompositorHooks`) and by the full existing suite: every test in
 `test_pose_rig_walk_T0259.py` and `test_pose_rig_profile_T0272.py` — 192 tests,
 unchanged — stays green after this round's changes, with no edits to any of those
 test files.
+
+**The four per-side arm angle fields (§3e, fix round 4): none.**
+`shoulder_deg_r`/`elbow_deg_r`/`shoulder_deg_l`/`elbow_deg_l` all default to `None`;
+no pre-existing pose module sets them, so `shoulder_deg_for`/`elbow_deg_for` always
+resolve to the same shared `shoulder_deg`/`elbow_deg` those modules already passed.
+Confirmed both by direct test
+(`TestPerSideArmAngles::test_omitting_the_per_side_fields_is_byte_identical_to_before`)
+and by the same full existing suite named above, run again after this round's
+change — 237 tests across those seven files plus this card's own three test files
+(`test_canonical_rig_T0436.py`, `test_reference_pose_render_T0436.py`,
+`test_draw_order_audit_T0436.py`, the last one new this round) — stays green with
+no edits to any animation test file.
 
 **The z-order (§3d): yes for `idle_cycle` and `sitting_idle_cycle`, not for
 `walk_cycle`, and here is the exact size of it.** Unlike the lateral-offset axis,
