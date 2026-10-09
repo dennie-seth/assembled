@@ -648,13 +648,25 @@ Before doing anything else, the job requires:
    other branch is a deliberate no-op skip (`reason: "wrong-branch"`) --
    this job commits to exactly one branch and never to whatever a human or
    another process happens to have checked out.
-2. **Nothing is dirty except possibly the ledger file itself.** Any other
-   uncommitted change in the working tree is read as "a run or other work
-   may be in progress here" and the whole run skips without writing
-   anything (`reason: "working-tree-dirty"`). Since every card's actual
-   implementation work happens in its own worktree under `worktrees/`, not
-   in this shared checkout, a dirty tree here is already unusual -- this
-   job treats "unusual" as "don't touch it" rather than guessing.
+2. **Nothing is dirty except possibly the ledger file itself and the
+   `worktrees/` directory.** Any other uncommitted change in the working
+   tree is read as "a run or other work may be in progress here" and the
+   whole run skips without writing anything (`reason: "working-tree-dirty"`).
+   `worktrees/` is excluded from that check on purpose, not because it's
+   unusual: every card's actual implementation work happens in its own
+   checkout under `worktrees/`, but that directory is NOT gitignored (no
+   pattern in `.gitignore` or `info/exclude` covers it) and its cache
+   persists even with no card running -- so `git status --porcelain` in
+   this shared checkout reports `?? worktrees/` on every single run,
+   regardless of whether anything is actually in flight. Treating that line
+   as foreign dirt made every real scheduled run skip forever (caught in
+   review, pinned by `test/ops/exportApprovalLedgerScheduled.test.js`'s
+   "does not treat the always-untracked worktrees/ directory as foreign
+   dirt" spec), which defeated the card's entire purpose behind a mocked
+   subprocess boundary the suite never exercised with a `??` status line.
+   A genuinely untracked path OUTSIDE `worktrees/` still skips the run, per
+   that same suite's "still skips on a genuinely untracked path outside
+   worktrees/" spec.
 3. **Local `develop` matches `origin/develop` exactly**, re-checked via a
    fresh `git fetch` immediately before the comparison. A mismatch skips
    (`reason: "not-in-sync-with-remote"`) rather than running `git pull` or

@@ -80,12 +80,21 @@ async function git(execFileFn, repoRoot, args) {
   return execFileFn("git", ["-C", repoRoot, ...args]);
 }
 
+// Every card's actual implementation work happens in its own checkout under worktrees/, never
+// in this shared one -- but worktrees/ itself is NOT gitignored (no pattern in .gitignore or
+// info/exclude covers it), and the cache under it persists even with no card running, so
+// `git status --porcelain` always reports `?? worktrees/` here whether or not anything is
+// actually in flight. Reading that line as foreign dirt made every real run skip forever; it is
+// the repo's own structural layout, not evidence of in-progress work in THIS checkout.
+const IGNORED_UNTRACKED_PREFIXES = ["worktrees/"];
+
 /** `git status --porcelain` lines whose path is NOT the ledger -- "something else is dirty." */
 function findForeignDirtyPaths(statusStdout, ledgerRelativePath) {
   return statusStdout
     .split("\n")
     .filter(Boolean)
-    .filter((line) => line.slice(3).trim() !== ledgerRelativePath);
+    .filter((line) => line.slice(3).trim() !== ledgerRelativePath)
+    .filter((line) => !IGNORED_UNTRACKED_PREFIXES.some((prefix) => line.slice(3).trim().startsWith(prefix)));
 }
 
 function ledgerAgeHoursOf(ledger, now) {
