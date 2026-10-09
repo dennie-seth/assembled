@@ -36,15 +36,67 @@ export const READY_CAP = 4;
  * recorded-outcome section per the source spec's "a stop-and-report outcome already recorded" --
  * so its mere presence is a governing signal even without one of the other phrase markers also
  * appearing in the same body (see T-0384's fix-round AC).
+ *
+ * T-0420: `\bheld\b` and `\bsuperseded\b` are both ordinary English words, not just directive
+ * vocabulary -- "the list held 3 entries" (T-0413) and "is held with a reason" (T-0402) are plain
+ * prose, and `\b` boundaries (which only stop a *substring* match like `upheld`/`withheld`) do
+ * nothing to stop a *whole-word* match on ordinary usage. Both labels below are matched by
+ * `isDirectiveMarkerLine` instead of a bare `\bword\b` test: the word only counts when it is
+ * written as a MARKER LINE someone intended as a directive -- a heading ("## HELD"), a bold
+ * marker ("**HELD ...**"), or a line-leading "WORD:" label -- the same "is this actually a
+ * directive, not prose that merely discusses it" discipline `approvalGate.js`'s
+ * `isApprovalMarker` and `roundCap.js`'s `isRescopeMarker` already apply to a comment's first
+ * line. Here the marker can be any line in the body, not just the first, since a hold/supersede
+ * directive is routinely written partway through a card (e.g. under its own `## Scope` section).
+ * RE-SCOPED, STOP AND REPORT, and "This section governs" are deliberately left on the broader
+ * `\b`/phrase match: none of the real cards found reusing those words as ordinary prose, and
+ * narrowing a marker nothing has ever false-triggered on would only add risk for no fixed defect.
  */
 const SUPERSEDED_MARKER_RULES = [
-  { label: "HELD", test: (body) => /\bheld\b/i.test(body) },
+  { label: "HELD", test: (body) => isDirectiveMarkerLine(body, "held") },
   { label: "RE-SCOPED", test: (body) => /\bre-?scoped\b/i.test(body) },
-  { label: "SUPERSEDED", test: (body) => /\bsuperseded\b/i.test(body) },
+  { label: "SUPERSEDED", test: (body) => isDirectiveMarkerLine(body, "superseded") },
   { label: "This section governs", test: (body) => /this section governs/i.test(body) },
   { label: "STOP AND REPORT", test: (body) => /stop[\s-]+and[\s-]+report/i.test(body) },
   { label: "## Finding", test: (body) => /^\s{0,3}#{1,6}\s*findings?\b/im.test(body) }
 ];
+
+/**
+ * Removes fenced code blocks and inline code spans before line-scanning for a marker (T-0420).
+ * A body that only *quotes* a marker as a worked example -- this very module's own doc comment
+ * shape, or a card documenting the rule -- must never trip on the quote. Order matters: triple
+ * backticks are stripped first so a fence's own backtick-fence lines can't be mistaken for inline
+ * code spans by the second pass.
+ */
+function stripCodeSpans(body) {
+  return body.replace(/```[\s\S]*?```/g, "\n").replace(/`[^`\n]*`/g, "");
+}
+
+/**
+ * Is `word` written, anywhere in `body`, as a marker LINE rather than used in prose? Three shapes
+ * count, each anchored to the start of a (trimmed) line so a sentence that merely *begins* a line
+ * with the word ("held entries were counted again", T-0338's "superseded by the dedicated-legs-
+ * panel amendment") does not qualify -- that line-leading-bare-word shape is exactly the trap a
+ * wrapped line recreates, and exactly what T-0413/T-0402 reproduce:
+ *
+ *   - a heading:            `## HELD`, `### held`
+ *   - a bold marker:        `**HELD ...**`, `**HELD --**`
+ *   - a line-leading label: `HELD: ...`
+ *
+ * Case-insensitive throughout -- this narrows *where* the marker counts, never *which case* it is
+ * written in (Codex's #396 case-insensitivity fix stays intact).
+ */
+function isDirectiveMarkerLine(body, word) {
+  const headingRe = new RegExp(`^#{1,6}\\s*${word}\\b`, "i");
+  const boldRe = new RegExp(`^\\*\\*${word}\\b`, "i");
+  const labelRe = new RegExp(`^${word}\\s*:`, "i");
+  return stripCodeSpans(body ?? "")
+    .split(/\r?\n/)
+    .some((rawLine) => {
+      const line = rawLine.trim();
+      return headingRe.test(line) || boldRe.test(line) || labelRe.test(line);
+    });
+}
 
 /** Display labels for the rules above -- used by tests and anything that wants the marker list. */
 export const SUPERSEDED_MARKERS = SUPERSEDED_MARKER_RULES.map((rule) => rule.label);

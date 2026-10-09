@@ -445,7 +445,9 @@ describe("vetAndReady -- end to end selection", () => {
     const tasks = [
       makeTask({
         id: "T-0007",
-        body: "## Acceptance\n\n- [ ] Reconciling it found the list held 3 entries while the host had 14.\n"
+        body:
+          "## Acceptance\n\n- [ ] Reconciling it found the list held 3 entries while the host had 14.\n" +
+          "- [ ] Update `src/lib/doTheThing.js` to do the thing.\n"
       })
     ];
     const result = await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS });
