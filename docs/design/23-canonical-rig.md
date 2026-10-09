@@ -932,13 +932,37 @@ part of this rename — it is the mechanism, not a name tied to one physical par
   `docs/assets/evidence/T-0430/{README.md,rig.json}`,
   `docs/assets/evidence/side-view-walk-reference/README.md` — committed evidence
   for EARLIER, unrelated cards (T-0269, T-0430, and the original side-view-walk
-  reference cut), predating this card entirely. Each already uses `_R` for the
-  near leg/arm and `_L` for the far one — e.g.
-  `docs/assets/evidence/side-view-walk-reference/README.md`: "the far calf's
-  upper portion is occluded... I corrected only `calf_L`". That is the SAME
-  convention fix round 7 restores (near/front = `_R`, far/behind = `_L`), so
-  these documents' own prose is still correct against the current rig and needs
-  no change — checked directly, not assumed, by reading each hit in context.
+  reference cut), predating this card entirely, left untouched. **Correction to
+  this section's own first pass on these three files**: it previously claimed
+  their `_R`/`_L` prose "is the SAME convention fix round 7 restores... still
+  correct against the current rig." Re-checked against the actual physical-file
+  identity rather than the wording alone, that claim is wrong, and the true
+  answer is the opposite. `docs/assets/evidence/side-view-walk-reference/README.md`
+  wrote "the far calf's upper portion is occluded... I corrected only `calf_L`" —
+  at 77.3% of the other calf's length. That 77.3%-length, corrected calf is the
+  SAME physical PNG `bone_length_fix.scaled` still corrects today (§3h's own
+  table above), but fix round 7 renamed that exact file from `calf_L` to
+  `calf_R` (it is the one Option B now draws in front, §3f/§3g). So
+  `calf_L` as this old document uses the name points at the far/short physical
+  part under ITS OWN, pre-T-0436 file identity — under the CURRENT, post-round-7
+  identity, that same sentence's physical referent is named `calf_R`, not
+  `calf_L`. The same inversion holds for `shoulder_R`/`shoulder_L` in
+  `docs/assets/evidence/T-0430/rig.json` (its `shoulder_R: 103.0` /
+  `shoulder_L: 169.3` is the pre-rename physical mapping; §3h's current
+  `shoulder_R_note` above has the same two lengths on the opposite names) and for
+  `thigh_R`/`thigh_L`/`calf_L` in `docs/assets/evidence/T-0269/README.md`'s "the
+  near/R leg", "`thigh_L` joins `thigh_R` behind the torso" lines. The wording
+  ("near/front = `_R`") is coincidentally identical because T-0269/T-0430 were
+  written when the file identity happened to already match that rule — fix round
+  7 is what RESTORES the rule, after T-0436's own fix round 6 (Option B)
+  temporarily broke it by swapping draw depth without renaming files. That
+  restoration is what makes the CURRENT files match the rule again; it does not
+  make these three OLDER documents' specific part-name references resolve to the
+  same physical art they did when written. **Not edited anyway**: they are
+  another card's closed, frozen evidence, and rewriting them to track a rename
+  made by a later card would corrupt the historical record of what was actually
+  true when T-0269/T-0430 ran. The correct disposition is to leave them as-is and
+  record the inversion here, not to assert an equivalence that does not hold.
 
 **Correction to this section's own prior claim.** A reviewer FAIL
 (2026-10-09T18:06) found this sweep's list above, as it stood at that time, did
