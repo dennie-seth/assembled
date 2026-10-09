@@ -22,16 +22,17 @@ the test coverage (`tests/test_reference_pose_render_T0436.py`,
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
-
-from char_gen import reference_pose_T0436 as refpose  # noqa: E402
-from char_gen import rig_compositor  # noqa: E402
-from test_reference_pose_render_T0436 import visible_pixel_count  # noqa: E402
+from char_gen import reference_pose_T0436 as refpose
+from char_gen import rig_compositor
+from char_gen.shoulder_attachment_T0436 import (
+    armhole_wedge_px,
+    sleeve_torso_overlap_px,
+    visible_pixel_count,
+)
 
 OUT_DIR = Path(__file__).resolve().parents[3] / "docs" / "assets" / "evidence" / "T-0436"
 
@@ -120,6 +121,9 @@ def main() -> None:
     adopted_shin_frac = rig["canonical_rig"]["leg_proportions"]["adopted"]["shin_frac"]
     deviation_shin = lengths["calf_R"] / spine - adopted_shin_frac
 
+    armhole_wedge = armhole_wedge_px(with_offset)
+    sleeve_overlap = sleeve_torso_overlap_px(with_offset)
+
     shoulder_bar = rig["canonical_rig"]["shoulder_bar"]
     pelvis_bar = rig["canonical_rig"]["pelvis_bar"]
     caption_lines = [
@@ -128,6 +132,7 @@ def main() -> None:
         f"shoulder_L visible px: {shoulder_l_px_no_offset} (no offset) "
         f"-> {shoulder_l_px} (with offset)",
         f"forearm_L visible px: {forearm_l_px}",
+        f"armhole wedge: {armhole_wedge}px  sleeve/torso overlap: {sleeve_overlap}px",
         f"WORST JOINT: front shin (calf_R), deviation {deviation_shin:+.2f} x spine"
         " (current, unreconciled, vs adopted far-side target -- deliberately not applied)",
     ]
@@ -141,6 +146,8 @@ def main() -> None:
     print("shoulder_L visible px (no offset):", shoulder_l_px_no_offset)
     print("shoulder_L visible px (with offset):", shoulder_l_px)
     print("forearm_L visible px (with offset):", forearm_l_px)
+    print("armhole wedge px:", armhole_wedge)
+    print("sleeve/torso overlap px:", sleeve_overlap)
     print("front shin deviation (x spine):", deviation_shin)
     print("wrote", OUT_DIR / "reference_pose_render.png")
     print("wrote", OUT_DIR / "rig_vs_reference_overlay.png")
