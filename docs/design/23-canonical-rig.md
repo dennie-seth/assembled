@@ -359,6 +359,16 @@ reasoning above for it are unchanged and still current.
 
 ## 3d. Layer order — @DennieSeth's exact front-to-back order
 
+**Superseded by fix round 6 (§3g) — the table immediately below is the order fix
+rounds 1 through 5 shipped (`_R` near, `_L` far). @DennieSeth's Option B
+(2026-10-09T16:43) replaces it wholesale: the two limb groups swap, so `_L` is now
+the near/frontmost group and `_R` is the far/backmost group. This is NOT a
+regression back to 21-'s retired order — see §3g for the committed table, the
+re-measured contested-pair audit, and why the swap happened. The rest of this
+section (§3d) is kept as a historical record of what shipped through fix round 5
+and the reasoning that supported it at the time; where it says "this round" below,
+it means fix rounds 1–5, not fix round 6.**
+
 Front (closest to viewer) first, back last. `rig_compositor.render_frames` sorts
 `key=lambda p: -p.z` then composites in that order, so a LOWER z draws LAST and
 therefore wins every contested pixel — z 0 is frontmost, z 9 is backmost:
@@ -370,6 +380,8 @@ therefore wins every contested pixel — z 0 is frontmost, z 9 is backmost:
 | 2 | `thigh_R` | | 7 | `thigh_L` | |
 | 3 | `calf_R` | | 8 | `shoulder_L` | |
 | 4 | `head` | | 9 | `forearm_L` | backmost |
+
+*(fix rounds 1–5 table — superseded by §3g)*
 
 This is `side_view_rig.json`'s own `rig.*.z` for all ten parts — the SAME default
 every pose module reads unless it supplies its own `z_override` (§7 states exactly
@@ -587,13 +599,156 @@ right side with no flip anywhere in `rig_compositor.py` (confirmed by grep), so
 `facing: "right"` is accurate; (2) a figure facing screen-right shows the viewer
 its own anatomical RIGHT side (the frontal-view rule — "the side on the viewer's
 left is the character's right" — inverts for a profile, it does not hold as-is);
-(3) the `_L` parts independently carry the far-side cut signature — less ink
-detail, e.g. `thigh_L` dark-ink fraction 0.02 vs `thigh_R` 0.22, `shoulder_L`
-0.15 vs `shoulder_R` 0.38, `calf_L` 0.25 vs `calf_R` 0.43 — consistent with the
-rig's own existing note that `calf_L`'s cut is short because "the far calf's top
-is occluded in a side view." No rename is applied this round.
+(3) the `_L` parts independently carry a different ink-detail signature from the
+`_R` parts — e.g. `thigh_L` dark-ink fraction 0.02 vs `thigh_R` 0.22, `shoulder_L`
+0.15 vs `shoulder_R` 0.38, `calf_L` 0.25 vs `calf_R` 0.43. No rename is applied
+this round. **Fix round 6 note:** at the time this paragraph was written, the
+ink-detail gap was read as "the `_L` parts are the far side" (consistent with the
+then-current occlusion explanation for `calf_L`'s short cut, below). @DennieSeth's
+Option B (§3g) draws `_L` in front instead, which the measurement above does not
+by itself rule out — the ink-detail gap is a fact about how the ten PNGs were cut,
+not about which one a later round decides to draw in front. §3g records that
+Option B was chosen and verified by direct part-to-label comparison (not re-argued
+from ink detail), and that the rename mapping it implies is identity — no part's
+name actually changes.
+
+## 3g. Fix round 6 — Option B: the near/far layering swap
+
+@DennieSeth raised the z-order again after fix round 4's re-audit, this time
+attaching a side-by-side numbered part map (`T0436_AB_layer_choice.png`): Option A
+is what fix rounds 1–5 shipped (§3d's table — `_R` near, `_L` far), Option B is the
+same art with the near/far roles swapped. **@DennieSeth chose Option B
+(2026-10-09T16:43).**
+
+**Why, and what was actually wrong.** The earlier suspicion was that a part had
+been renamed and the z-order list applied to the new names — that never happened;
+no part has been renamed at any point on this card (confirmed again below). The
+real issue was the frame of reference the z-order list was read against: fix round
+4's audit confirmed the composite REALIZES the published numbers (a check of
+internal consistency), but never checked whether those numbers were being applied
+to the intended limb group. The A/B sheet resolved that with a direct visual
+choice instead of another internal-consistency re-check.
+
+**The rename mapping is IDENTITY — verified mechanically, not assumed.**
+`T0436_B_labels_verified.png` (attached to the card) shows, for every rank under
+Option B, the art AS DRAWN beside the raw cutout file of that same name:
+
+| rank | label | file drawn | same limb? |
+|---|---|---|---|
+| 0 | `forearm_L` | `forearm_L.png` | yes |
+| 1 | `shoulder_L` | `shoulder_L.png` | yes |
+| 2 | `thigh_L` | `thigh_L.png` | yes |
+| 3 | `calf_L` | `calf_L.png` | yes |
+| 4 | `head` | `head.png` | yes |
+| 5 | `torso` | `torso.png` | yes |
+| 6 | `calf_R` | `calf_R.png` | yes |
+| 7 | `thigh_R` | `thigh_R.png` | yes |
+| 8 | `shoulder_R` | `shoulder_R.png` | yes |
+| 9 | `forearm_R` | `forearm_R.png` | yes |
+
+Every rendered patch is the cutout of its own name. Since @DennieSeth confirmed
+the contact-sheet part labels are correct (fix round 5), and each drawn part is
+that same file, the labels already describe the art honestly — old label → correct
+label is identity for all ten. What was wrong was never the names; it was the
+z-order, which had the two limb groups the wrong way round.
+
+**The committed z values — this REPLACES §3d's table, which is superseded, not a
+regression to restore:**
+
+| z | part | | z | part | |
+|---|---|---|---|---|---|
+| 0 | `forearm_L` | frontmost | 5 | `torso` | |
+| 1 | `shoulder_L` | | 6 | `calf_R` | |
+| 2 | `thigh_L` | | 7 | `thigh_R` | |
+| 3 | `calf_L` | | 8 | `shoulder_R` | |
+| 4 | `head` | | 9 | `forearm_R` | backmost |
+
+`head` and `torso` keep their fix-round-1 values (4, 5) — the two limb groups swap
+wholesale, nothing else moves.
+
+**Verified by replaying the paint loop and taking the last writer** — the same
+`char_gen.draw_order_audit_T0436` check used every prior round, re-run against this
+committed rig (`gen_draw_order_audit_T0436.py`, evidence regenerated, below):
+realized rank matches the published z 10 of 10, **12 contested pairs, 0 resolving
+against the order**:
+
+| lower z (expected winner) | higher z | contested px | lower-z wins | higher-z wins |
+|---|---|---|---|---|
+| `thigh_L` | `thigh_R` | 9819 | 9819 | 0 |
+| `shoulder_L` | `torso` | 7153 | 7029 | 0 |
+| `calf_R` | `thigh_R` | 5250 | 5250 | 0 |
+| `thigh_L` | `torso` | 4674 | 4674 | 0 |
+| `torso` | `shoulder_R` | 3741 | 3741 | 0 |
+| `torso` | `thigh_R` | 3468 | 2458 | 0 |
+| `head` | `torso` | 3000 | 2754 | 0 |
+| `thigh_L` | `calf_L` | 1573 | 1573 | 0 |
+| `shoulder_R` | `forearm_R` | 1268 | 1268 | 0 |
+| `forearm_L` | `shoulder_L` | 939 | 939 | 0 |
+| `shoulder_L` | `head` | 248 | 248 | 0 |
+| `forearm_L` | `torso` | 124 | 124 | 0 |
+
+Every gap between `contested_px` and the winning side's own count is anti-aliased
+edge-blend pixels (same class §3d already called out) — no `higher-z wins` column
+is ever non-zero, i.e. zero violations.
+
+**Lateral offsets move to the side that is now FAR.** The offset's purpose —
+clearing the far limb from the torso's own silhouette — is unchanged; only which
+named side needs it changed. `_R` is far under Option B, so
+`canonical_rig.lateral_offset_axis.demonstration_values` moves from `shoulder_L`/
+`forearm_L`/`thigh_L`/`calf_L` to `shoulder_R`/`forearm_R`/`thigh_R`/`calf_R`, sign
+flipped (the far side now sits screen-right of the hip), magnitude unchanged
+(0.10 arm, 0.06 leg — fix round 5's bracket, re-verified below rather than
+re-derived, since equalizing the pair without checking the magnitude is exactly the
+mistake fix round 1 made):
+
+```
+shoulder_R: 0.10   forearm_R: 0.10   thigh_R: 0.06   calf_R: 0.06
+```
+
+Re-measured directly on the new far side against the committed rig (`shoulder_name=
+"shoulder_R"` is now `shoulder_attachment_T0436`'s default):
+
+| measure | value | bound |
+|---|---|---|
+| armhole wedge | **340px** | ≤ 400px |
+| sleeve/torso overlap | **3741px** | > 0 (genuine overlap) |
+| `shoulder_R` visible px | 6260 (3555 without the offset) | > 0 |
+| `forearm_R` visible px | 12432 | > 0 |
+| `shoulder_R` + `forearm_R` | **18692** | ≥ 18000 |
+| silhouette components ≥50px | **3** (237800 main + 726 + 73, both pre-existing `calf_R` motion-streak fragments) | no new fragment |
+
+`shoulder_R` and `shoulder_L` are different art (only `shoulder_L` carries the
+anisotropic bone-length-fix width restore, §6), so these numbers are NOT the
+fix-round-5 numbers transplanted — they are measured fresh on `shoulder_R`, and
+both bounds hold with real but narrower margin than fix round 5 had on `shoulder_L`
+(60px of headroom on the wedge ceiling, 692px above the visibility floor). A sweep
+at the baseline fix-round-4 magnitude (0.35) on the new side confirms this is a
+real improvement, not an accident of the bound: armhole wedge 4214px at 0.35 vs
+340px at 0.10.
+
+**Per-side arm angles do NOT swap.** `SHOULDER_DEG_R` +44.3 / `ELBOW_DEG_R` +40.7
+and `SHOULDER_DEG_L` -56.4 / `ELBOW_DEG_L` +33.2 (§3e) are unchanged —
+`reference_pose_T0436.py`'s constants are untouched by this round. Option B was
+approved with the near arm reaching and the far arm trailing exactly as fix round 4
+measured them from the reference; only which side draws in front of the torso
+changed, not which angle either side is posed at.
+
+**Animation impact of the z-order swap** is restated in §7 with the numbers
+re-measured against this round's rig (idle_cycle/sitting_idle_cycle changed-pixel
+counts relative to the immediately-prior, fix-round-5 z values).
 
 ## 4. The static render
+
+**Fix round 6 superseded the specific numbers below (not the mechanism) — see §3g
+for the current, authoritative figures.** Everything from here through the end of
+this section describes fix round 5's render, when the lateral offset and the
+armhole-attachment fix both lived on `shoulder_L`/`forearm_L` (the far side at the
+time). Fix round 6's Option B moved them to `shoulder_R`/`forearm_R`; the mechanism
+(two-point bar attach, one offset per chain, the anisotropic width restore) is
+unchanged and this section's description of HOW it works still applies — only
+WHICH named part the numbers are measured on changed. The evidence images named at
+the end of this section are regenerated fix round 6, from the current rig; their
+captions and the §3g table reflect the current numbers.
 
 `char_gen.reference_pose_T0436.render()` composites one static frame: a wide-stance
 lunge (representative of the reference's own framing — its exact joint ANGLES were
@@ -650,24 +805,28 @@ connected piece, and `shoulder_L` + `forearm_L` together own 19580 of its pixels
 with the lateral offset active, confirming the far arm is both attached and
 visible in the same render, now without the armhole gap §3f fixes.
 
-Evidence, regenerated this round (fix round 5) from the smaller arm-chain offset
-and the `shoulder_L` width restore, and committed:
+Evidence as of fix round 5 (the smaller arm-chain offset and the `shoulder_L`
+width restore) — **superseded by the fix round 6 regeneration described in §3g**,
+which the three files below now actually contain. The bullets are kept as a
+description of what each file shows and how it is produced, which is unchanged;
+the pixel numbers inside them are fix round 6's (§3g), not fix round 5's:
 
 - `docs/assets/evidence/T-0436/reference_pose_render.png` (1071×1023) — the
   composited pose: the near arm reaching forward and the far arm trailing back
   (§3e), the far shoulder now genuinely overlapping the torso instead of reading
-  as detached (§3f), and the unchanged layer order (§3d — the hood draws over the
-  torso collar, and the near fist crosses in front of the torso).
+  as detached (§3f/§3g), and the committed Option B layer order (§3g — the near
+  (`_L`) arm and leg group draws in front of the torso, the far (`_R`) group trails
+  behind it).
 - `docs/assets/evidence/T-0436/rig_vs_reference_overlay.png` (1071×1023) — the same
   render with the shoulder bar (red), pelvis bar (red), spine (yellow) drawn on top,
   plus the front shin's actual-vs-adopted-target length (orange solid vs cyan
-  dashed, §5) and a caption restating the pixel counts above, now including the
-  armhole wedge and sleeve/torso overlap counts (§3f).
+  dashed, §5) and a caption restating the pixel counts, including the armhole
+  wedge and sleeve/torso overlap counts, now measured on `shoulder_R` (§3g).
 - `docs/assets/evidence/T-0436/draw_order_audit.png` (1071×1023) — the same pose
-  with every part labeled by its realized draw rank and published z (§3d),
-  generated by `gen_draw_order_audit_T0436.py`, re-run against this round's
-  geometry (11 contested pairs now, up from 10 — the new `torso`/`shoulder_L`
-  overlap — 0 resolving against the order).
+  with every part labeled by its realized draw rank and published z (§3g),
+  generated by `gen_draw_order_audit_T0436.py`, re-run against the committed Option
+  B geometry (12 contested pairs, 0 resolving against the order — see §3g for the
+  full table).
 
 ### Per-joint deviation
 
@@ -745,8 +904,13 @@ stray costume. It is simply cut further down the arm than `shoulder_R`; the cut 
 long, not the bone.
 
 This is exactly what `bone_length_fix` already exists to correct — `calf_L` carries
-a `1.2929` scale for the opposite case (its cut is SHORT, because its upper portion
-is occluded by the near leg). `shoulder_L` now carries its own entry:
+a `1.2929` scale for the opposite case: its cut is SHORT relative to `calf_R`'s even
+though the bone is not. (This was explained as occlusion of "the far calf's top" by
+the near leg, correct when `calf_L` was the far side through fix round 5 — fix round
+6's Option B now draws `calf_L` in FRONT, so that explanation is retracted, not
+replaced; see `side_view_rig.json`'s own `note` field and §3g. The measured 77.3%
+shortfall itself is unchanged — it describes how the two PNGs were cut, not which
+one a later round draws in front.) `shoulder_L` now carries its own entry:
 
 ```
 "scaled": {
@@ -811,7 +975,7 @@ test files (`test_canonical_rig_T0436.py`, `test_reference_pose_render_T0436.py`
 `test_draw_order_audit_T0436.py`, `test_shoulder_attachment_T0436.py`, the last
 one new fix round 5) — stays green with no edits to any animation test file.
 
-**The z-order (§3d): yes for `idle_cycle` and `sitting_idle_cycle`, not for
+**The z-order (§3d/§3g): yes for `idle_cycle` and `sitting_idle_cycle`, not for
 `walk_cycle`, and here is the exact size of it.** Unlike the lateral-offset axis,
 `rig.*.z` is not opt-in — it is the one shared default every part's `Placement`
 carries unless a caller supplies its own `z_override`. `walk_cycle.py` does not call
@@ -820,34 +984,46 @@ carries unless a caller supplies its own `z_override`. `walk_cycle.py` does not 
 change — confirmed by grep, no `render_frames` call anywhere in that module or its
 own test file. `idle_cycle.py` supplies no `z_override`, so it is fully exposed to
 the new z values; `sitting_idle_cycle.py` overrides only `thigh_R`/`thigh_L`
-(`CROUCH_Z_OVERRIDE = {"thigh_R": 3.5, "thigh_L": 3.6}`), so its other eight parts
-pick up the new default too. Measured directly (render each at frame 0 with the new
-rig, then again forcing the old z values via `z_override`, and count changed
-pixels):
+(`CROUCH_Z_OVERRIDE = {"thigh_R": 3.5, "thigh_L": 3.6}`, unchanged by fix round 6 —
+these two absolute z values still land between `calf_L`'s z (3) and `head`'s (4) in
+the new ordering just as they did in the old one, so the crouch's own tuned
+layering is unaffected), so its other eight parts pick up the new default too.
+
+Measured directly, in two steps since the z-order changed twice (fix rounds 1/2's
+original canonical assignment, then fix round 6's Option B swap): render each pose
+at frame 0 with the CURRENT (Option B) rig, then again forcing the PRIOR round's z
+values (fix round 5's, the ones §3d's superseded table lists) via `z_override`, and
+count changed pixels:
 
 | pose | changed px | frame size | fraction |
 |---|---|---|---|
-| `idle_cycle` | 9,379 | 486×986 (479,196px) | ≈2.0% |
-| `sitting_idle_cycle` | 17,842 | 938×999 (937,062px) | ≈1.9% |
+| `idle_cycle` | 80,305 | 486×986 (479,196px) | ≈16.8% |
+| `sitting_idle_cycle` | 48,959 | 938×999 (937,062px) | ≈5.2% |
 
-Both existing suites (`test_idle_cycle.py`, `test_sitting_idle_cycle.py`) stay green
-— neither asserts exact per-pixel output tied to the old draw order, only geometry
-(contact points, bounding bands, determinism) that this change does not touch. This
-is expected, not a regression, per the same framing §0 and the shoulder_L paragraph
-below already establish for the bone-length fix: the follow-on cards that re-derive
-each animation's own pose will see this new, corrected draw order when they do, and
-re-tuning either animation for it is explicitly their business, not this round's.
+Larger than fix round 4's 9,379px/17,842px (≈2%) by roughly an order of magnitude
+for `idle_cycle` — expected, since Option B swaps two whole limb groups wholesale
+rather than reordering two individual pairs, so far more of the composite's
+contested pixels resolve differently. Both existing suites (`test_idle_cycle.py`,
+`test_sitting_idle_cycle.py`) stay green — neither asserts exact per-pixel output
+tied to the old draw order, only geometry (contact points, bounding bands,
+determinism) that this change does not touch. This is expected, not a regression,
+per the same framing §0 and the shoulder_L paragraph below already establish for
+the bone-length fix: the follow-on cards that re-derive each animation's own pose
+will see this new, corrected draw order when they do, and re-tuning either
+animation for it is explicitly their business, not this round's.
 
 **`shoulder_L`'s bone-length fix (§6): yes, and here is the exact size of it.**
 Every pose that composites `shoulder_L`/`forearm_L` (all three: `walk_cycle`,
 `idle_cycle`, `sitting_idle_cycle`) now places `forearm_L`'s attach point (the
-elbow) **66.24 native px closer to the shoulder** than before this round
+elbow) **66.24 native px closer to the shoulder** than before this card
 (`shoulder_L`'s measured bone length: 169.28px → 103.04px). At the shipped
 `CHARACTER_SCALE` (0.0398), that is **≈2.64px** at the final 48px cell — a real,
-visible shift in where the far forearm sits relative to the shoulder in every frame
-of every pose, in the direction that shortens the far upper arm (the near arm,
-`shoulder_R`/`forearm_R`, is completely unaffected: it is not a `bone_length_fix`
-entry).
+visible shift in where `forearm_L` sits relative to `shoulder_L` in every frame of
+every pose. `shoulder_R`/`forearm_R` are completely unaffected by this specific fix
+(they are not a `bone_length_fix` entry) — independent of which side a given round's
+`rig.*.z` draws in front (fix round 6, §3g, swapped that; this bone-length
+correction did not move with it, since it corrects `shoulder_L`'s own longer CUT,
+not whichever side happens to be far).
 
 This is expected, not a regression — it is the intended effect of §6's fix, and it
 is accepted this round rather than re-tuned, per §0: the follow-on cards that
