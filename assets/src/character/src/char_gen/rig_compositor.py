@@ -1,9 +1,11 @@
 """Generic part-compositing machinery shared by every side-view pose animation.
 
 Factored out of T-0269 round 1's `sitting_idle_cycle` (round 2) so a new pose does not
-duplicate part-loading, pivot math, the calf_L length correction, or the
-rotation-padding fix -- it supplies its own leg stance (a fixed hip and both leg
-angles) and its own per-phase upper-body pose, and gets a compositor for free.
+duplicate part-loading, pivot math, the calf_R length correction (T-0436 fix round 7:
+renamed from `calf_L` -- same physical correction, the L/R suffix swap moved which key
+names it), or the rotation-padding fix -- it supplies its own leg stance (a fixed hip
+and both leg angles) and its own per-phase upper-body pose, and gets a compositor for
+free.
 
 A pose module (`char_gen.idle_cycle`, `char_gen.sitting_idle_cycle`) is responsible for:
 * its own `LegStance` (hip position, ground plane, thigh/knee angles -- phase-independent)
@@ -48,20 +50,40 @@ def load_parts(parts_dir: Path = PARTS_DIR) -> dict[str, Image.Image]:
     return {name: Image.open(parts_dir / f"{name}.png").convert("RGBA") for name in PART_NAMES}
 
 
-def calf_l_scale(rig: dict) -> float:
-    return float(rig["bone_length_fix"]["scaled"]["calf_L"])
-
-
 def scaled_parts(parts: dict[str, Image.Image], rig: dict) -> dict[str, Image.Image]:
-    """calf_L carries the rig's own length-scale correction -- its upper portion is
-    occluded by the near leg in a side view, so the cut is short even though the bone is
-    not. Scaling the part restores the bone; the normalized pivot keeps the chain intact."""
-    scale = calf_l_scale(rig)
+    """Every part named in `bone_length_fix.scaled` carries the rig's own length-scale
+    correction -- generic over however many entries that dict has (T-0436 added
+    `shoulder_R` alongside `calf_R`; a future round can add more without a new code
+    path here). NOTE (T-0436 fix round 7): both keys moved with the L/R suffix rename
+    -- the correction that was keyed `calf_L`/`shoulder_L` through fix round 6 is the
+    SAME physical PNG and the SAME correction, now keyed `calf_R`/`shoulder_R` so the
+    name tracks draw depth (near/front = `_R`) instead of the mirrored source art's
+    original labelling. The reasoning for each correction (why one cut is short, why
+    the other is long) is recorded once, in `side_view_rig.json`'s own
+    `bone_length_fix.measured_before.near_far_note`, `shoulder_R_note` and
+    `shoulder_R_anisotropic_note` -- read there rather than duplicated here, so a
+    future rename only has to update one place.
+
+    An entry is either a plain number -- an ISOTROPIC scale applied to both axes
+    (`calf_R`'s `1.2929`, unchanged since fix round 4 other than the key it is filed
+    under) -- or a `{"height": ..., "width": ...}` object -- an ANISOTROPIC scale
+    (T-0436 fix round 5, `shoulder_R`). `measured_bone_lengths` only ever reads a
+    part's HEIGHT (bone length runs along the pivot axis, which is vertical for every
+    part here), so an anisotropic entry's `height` is what carries the length
+    correction and `width` is free to differ without moving the bone -- exactly the
+    case `shoulder_R` needed: see `shoulder_R_anisotropic_note` in
+    `side_view_rig.json` for the measurement."""
+    scales = rig["bone_length_fix"]["scaled"]
     out = dict(parts)
-    w, h = parts["calf_L"].size
-    out["calf_L"] = parts["calf_L"].resize(
-        (round(w * scale), round(h * scale)), Image.Resampling.LANCZOS
-    )
+    for name, scale in scales.items():
+        w, h = parts[name].size
+        if isinstance(scale, dict):
+            height_scale, width_scale = scale["height"], scale["width"]
+        else:
+            height_scale = width_scale = scale
+        out[name] = parts[name].resize(
+            (round(w * width_scale), round(h * height_scale)), Image.Resampling.LANCZOS
+        )
     return out
 
 
@@ -86,12 +108,34 @@ class UpperPose:
     forearms -- inherits it as a PARENT rotation (`child absolute angle = torso_deg +
     child's own local angle`, same additive-chain convention the legs and arms already
     use), so a leaning torso carries its head and arms with it rather than leaving them
-    behind -- round 2's bug, where `TORSO_LEAN_DEG` was recorded but never consumed."""
+    behind -- round 2's bug, where `TORSO_LEAN_DEG` was recorded but never consumed.
+
+    `shoulder_deg_r`/`elbow_deg_r`/`shoulder_deg_l`/`elbow_deg_l` (T-0436, fix round
+    4) are per-side overrides, all defaulting to `None` -- a complete no-op for every
+    pre-existing caller. `shoulder_deg`/`elbow_deg` remain the single pair every pose
+    module before this round still sets, and both arms still use it when a side's own
+    override is absent. A 3/4 reference pose where the near arm reaches forward and
+    the far arm trails back cannot be expressed by one shared scalar -- this is the
+    minimal, additive split that lets `reference_pose_T0436` pose each arm from its
+    own measured angle without touching what `idle_cycle`/`sitting_idle_cycle` (which
+    never set these fields) render."""
     upper_dy: float
     shoulder_deg: float
     elbow_deg: float
     head_deg: float
     torso_deg: float = 0.0
+    shoulder_deg_r: float | None = None
+    elbow_deg_r: float | None = None
+    shoulder_deg_l: float | None = None
+    elbow_deg_l: float | None = None
+
+    def shoulder_deg_for(self, side: str) -> float:
+        override = self.shoulder_deg_r if side == "R" else self.shoulder_deg_l
+        return self.shoulder_deg if override is None else override
+
+    def elbow_deg_for(self, side: str) -> float:
+        override = self.elbow_deg_r if side == "R" else self.elbow_deg_l
+        return self.elbow_deg if override is None else override
 
 
 @dataclass(frozen=True)
@@ -176,11 +220,43 @@ def build_placements(
     *,
     z_override: dict[str, float] | None = None,
     foot_flatten: dict[str, float] | None = None,
+    shoulder_points: dict[str, tuple[float, float]] | None = None,
+    hip_points: dict[str, tuple[float, float]] | None = None,
+    lateral_offset_frac: dict[str, float] | None = None,
 ) -> list[Placement]:
     """Place all ten parts for one phase. Generic over pose: the hip, both leg angles
     and the far-leg offset all come from `leg`; the only thing that may differ frame to
-    frame is `upper.upper_dy`."""
+    frame is `upper.upper_dy`.
+
+    Three keyword-only parameters, added for T-0436, all default to `None` and are a
+    complete no-op when omitted -- every pre-existing pose module (`idle_cycle`,
+    `walk_cycle`, `sitting_idle_cycle`) omits all three, so none of them changes
+    behaviour because these exist:
+
+    * `shoulder_points` -- `{"R": (x, y), "L": (x, y)}` world points, replacing the
+      single shared `attach["shoulder"]` point every pose used before this card.
+    * `hip_points` -- same shape, replacing `leg_hip_points`'s computed result.
+    * `lateral_offset_frac` -- `{part_name: frac}`, a sideways shift (as a fraction of
+      the torso's own width) applied ONCE per limb chain, at that chain's ROOT part
+      (`shoulder_*` for the arm chain, `thigh_*` for the leg chain). The distal part
+      (`forearm_*`/`calf_*`) is never shifted a second time -- it inherits the root's
+      shift automatically through the forward-kinematics chain, since its own target
+      is computed from the root's already-shifted position. A caller may still name
+      the distal part in this dict at the SAME fraction as its root, to document "one
+      offset for this whole chain" (the committed rig's own
+      `canonical_rig.lateral_offset_axis.demonstration_values` does exactly this) --
+      but that entry is not separately consulted, precisely so two equal values can
+      never compound into a doubled shift that tears the chain's two sprites apart
+      (T-0436 FAIL verdict 2026-10-08T21:54:30Z). This is the mechanism a 3/4 pose
+      uses to pull a far-side limb clear of the torso's own rectangular silhouette --
+      a z/depth value only changes which part wins a contested pixel, never where
+      either one is."""
     torso = scaled["torso"]
+
+    def lateral(point: tuple[float, float], name: str) -> tuple[float, float]:
+        if not lateral_offset_frac or name not in lateral_offset_frac:
+            return point
+        return (point[0] + lateral_offset_frac[name] * torso.width, point[1])
 
     def pivot_of(name: str) -> tuple[float, float]:
         img = scaled[name]
@@ -225,18 +301,29 @@ def build_placements(
     neck_world = attach_world("neck")
     placements.append(place("head", upper.torso_deg + upper.head_deg, neck_world))
 
-    shoulder_world = attach_world("shoulder")
-    shoulder_abs_deg = upper.torso_deg + upper.shoulder_deg
     for side in ("R", "L"):
         sh_name, fa_name = f"shoulder_{side}", f"forearm_{side}"
-        placements.append(place(sh_name, shoulder_abs_deg, shoulder_world))
-        elbow = distal_joint(shoulder_world, lengths[sh_name], shoulder_abs_deg)
-        placements.append(place(fa_name, shoulder_abs_deg + upper.elbow_deg, elbow))
+        shoulder_abs_deg = upper.torso_deg + upper.shoulder_deg_for(side)
+        sh_world = (
+            shoulder_points[side] if shoulder_points is not None else attach_world("shoulder")
+        )
+        sh_world = lateral(sh_world, sh_name)
+        placements.append(place(sh_name, shoulder_abs_deg, sh_world))
+        # elbow inherits sh_world's own shift through this FK step -- the chain's
+        # ONE lateral offset lives at the root; fa_name is never applied a second
+        # time (see lateral_offset_frac's own docstring above).
+        elbow = distal_joint(sh_world, lengths[sh_name], shoulder_abs_deg)
+        placements.append(place(fa_name, shoulder_abs_deg + upper.elbow_deg_for(side), elbow))
 
-    for side, hip_side in leg_hip_points(leg, torso.width).items():
+    resolved_hip_points = hip_points if hip_points is not None else leg_hip_points(leg, torso.width)
+    for side, hip_side in resolved_hip_points.items():
         th_name, cf_name = f"thigh_{side}", f"calf_{side}"
+        hip_side = lateral(hip_side, th_name)
         thigh_deg, knee_flexion_deg = leg_angles(leg, side)
         placements.append(place(th_name, thigh_deg, hip_side))
+        # knee/ankle inherit hip_side's own shift through this FK step -- same
+        # one-offset-per-chain rule as the arm chain above; cf_name is never
+        # applied a second time.
         knee, ankle = leg_chain(hip_side, lengths[th_name], lengths[cf_name], leg, side)
         calf_deg = thigh_deg - knee_flexion_deg
         extra = (foot_flatten or {}).get(cf_name, 0.0)
@@ -327,11 +414,18 @@ def render_frames(
     rig_path: Path = RIG_PATH,
     z_override: dict[str, float] | None = None,
     foot_flatten: dict[str, float] | None = None,
+    shoulder_points: dict[str, tuple[float, float]] | None = None,
+    hip_points: dict[str, tuple[float, float]] | None = None,
+    lateral_offset_frac: dict[str, float] | None = None,
 ) -> RenderResult:
     """Composite `frame_count` frames for one pose. `character_scale` and
     `ground_anchor_cell_y` default to the one shared convention in
     `char_gen.character_scale` -- a caller only overrides them in a test that is
-    specifically checking the shared-scale behaviour itself."""
+    specifically checking the shared-scale behaviour itself.
+
+    `shoulder_points`/`hip_points`/`lateral_offset_frac` (T-0436) pass straight
+    through to `build_placements` -- see its own docstring. All three default to
+    `None`, so every pre-existing caller is unaffected."""
     parts = load_parts(parts_dir)
     rig = load_rig(rig_path)
     scaled = scaled_parts(parts, rig)
@@ -343,7 +437,9 @@ def render_frames(
     phases = [i / frame_count for i in range(frame_count)]
     all_placements = [
         build_placements(upper_pose_at(ph, torso_height), leg, scaled, rig_entries, attach,
-                          lengths, z_override=z_override, foot_flatten=foot_flatten)
+                          lengths, z_override=z_override, foot_flatten=foot_flatten,
+                          shoulder_points=shoulder_points, hip_points=hip_points,
+                          lateral_offset_frac=lateral_offset_frac)
         for ph in phases
     ]
 
@@ -412,13 +508,42 @@ def render_frames(
     # own canvas pixel, and both ankles', a direct pixel proof rather than a band that
     # has to dodge the breathing upper body. Same `leg_chain` two-bone solve
     # `build_placements` used to place each calf -- not a second, re-derived geometry.
-    hip_points = leg_hip_points(leg, scaled["torso"].width)
-    knee_r, ankle_r = leg_chain(hip_points["R"], lengths["thigh_R"], lengths["calf_R"], leg, "R")
-    knee_l, ankle_l = leg_chain(hip_points["L"], lengths["thigh_L"], lengths["calf_L"], leg, "L")
+    resolved_hip_points = hip_points if hip_points is not None else leg_hip_points(
+        leg, scaled["torso"].width
+    )
+
+    def lateral_debug(point: tuple[float, float], name: str) -> tuple[float, float]:
+        # Mirrors `build_placements`'s own `lateral()` closure exactly -- the leg
+        # chain placed here is a debug re-derivation of the SAME geometry
+        # `build_placements` already used for `calf_R`/`calf_L` (see the comment
+        # above), so it must apply that chain's one lateral offset too, or this
+        # debug `ankle_l_px`/`knee_l_px` silently disagrees with where `calf_L`
+        # actually rendered whenever `lateral_offset_frac` is active.
+        if not lateral_offset_frac or name not in lateral_offset_frac:
+            return point
+        return (point[0] + lateral_offset_frac[name] * scaled["torso"].width, point[1])
+
+    knee_r, ankle_r = leg_chain(
+        lateral_debug(resolved_hip_points["R"], "thigh_R"), lengths["thigh_R"], lengths["calf_R"],
+        leg, "R",
+    )
+    knee_l, ankle_l = leg_chain(
+        lateral_debug(resolved_hip_points["L"], "thigh_L"), lengths["thigh_L"], lengths["calf_L"],
+        leg, "L",
+    )
 
     def to_canvas(pt: tuple[float, float]) -> tuple[int, int]:
         return (round(pt[0] + offset[0]), round(pt[1] + offset[1]))
 
+    # `hip_px` is always the canvas pixel for `leg.hip` -- the same world point
+    # every other caller (sitting_idle_cycle's contact-point checks, etc.) has
+    # relied on since before this card. `hip_points`, when supplied, overrides
+    # the TWO leg hips' own roots; it never redefines what `leg.hip` itself means,
+    # so `hip_px` must not switch to `resolved_hip_points["R"]` just because
+    # `hip_points` was passed (T-0436 FAIL verdict 2026-10-08T22:18:16Z: that
+    # switch silently shifted every overlay point in
+    # `gen_reference_pose_evidence_T0436.py` by +9.06px, since that script's own
+    # `to_canvas` is built on `hip_px` meaning the canvas pixel for world (0, 0)).
     hip_px = to_canvas(leg.hip)
     knee_r_px = to_canvas(knee_r)
     knee_l_px = to_canvas(knee_l)
