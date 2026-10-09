@@ -196,6 +196,18 @@ describe("supersededCheck -- HELD/SUPERSEDED directive marker, not the bare word
     expect(result.ok).toBe(true);
   });
 
+  // #445 changes-requested, P2: a ~~~-fenced worked example must be released exactly like the
+  // ```-fenced one above -- stripCodeSpans only stripped backtick fences, so a tilde-fenced quote
+  // of the marker still tripped the rule.
+  const QUOTED_EXAMPLE_BODY_TILDE =
+    "## Notes\n\nThe nightly vetter's HELD marker looks like this in practice:\n\n" +
+    "~~~\n## HELD\n~~~\n\nIt must only trip on a marker line, never on prose that discusses it.\n";
+
+  it("releases a body that only quotes the HELD marker inside a ~~~-fenced worked example", () => {
+    const result = supersededCheck(makeTask({ body: QUOTED_EXAMPLE_BODY_TILDE }));
+    expect(result.ok).toBe(true);
+  });
+
   // Real hold-directive shapes (T-0247's own comment shape, markdown headings, bold markers, with
   // trailing punctuation/markdown) must still trip it, in every case variant.
   it.each([
@@ -208,6 +220,23 @@ describe("supersededCheck -- HELD/SUPERSEDED directive marker, not the bare word
     const result = supersededCheck(makeTask({ body: `## Scope\n\n${markerLine}\n\nSee the replacement card instead.\n` }));
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/held/i);
+  });
+
+  // #445 changes-requested, P2: isDirectiveMarkerLine tested heading/bold/label as mutually
+  // exclusive alternatives against the raw line, so a COMBINED decoration -- a bold marker inside
+  // a heading, or inside a list bullet -- matched none of them and was silently released. Both
+  // shapes are plausible genuine-hold forms a human would actually write.
+  it.each([
+    "## **HELD**",
+    "### __SUPERSEDED__",
+    "- **HELD -- pending human review**",
+    "* **SUPERSEDED**: see T-0338",
+    "## HELD: pending",
+    "**HELD:**"
+  ])("still trips on the combined-decoration directive shape %j", (markerLine) => {
+    const result = supersededCheck(makeTask({ body: `## Scope\n\n${markerLine}\n\nSee the replacement card instead.\n` }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/held|superseded/i);
   });
 
   // SUPERSEDED gets the identical fix -- T-0338's real shape ("spec history", not a hold) must
