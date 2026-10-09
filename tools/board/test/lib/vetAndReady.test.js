@@ -116,13 +116,15 @@ describe("supersededCheck", () => {
     expect(result.ok).toBe(true);
   });
 
-  // T-0420: HELD and SUPERSEDED are no longer bare-word markers (see the dedicated describe block
-  // below) -- a bare, unmarked occurrence of either word on its own line is exactly the T-0413/
-  // T-0402 shape that must NOT trip any more. The remaining labels are untouched by this card and
-  // still trip on the bare word alone, same as before.
-  const BARE_WORD_MARKERS = SUPERSEDED_MARKERS.filter((label) => label !== "HELD" && label !== "SUPERSEDED");
-
-  it.each(BARE_WORD_MARKERS)("fails when the body contains the marker %s", (marker) => {
+  // #445 changes-requested (2nd round): this positive was narrowed to exclude HELD/SUPERSEDED in
+  // an earlier diagnosis round, on the theory that a bare, unmarked occurrence of either word on
+  // its own line is the T-0413/T-0402 shape. It is not -- T-0413 and T-0402 trip mid-sentence
+  // prose ("the list held 3 entries", "is held with a reason"), never a line whose entire trimmed
+  // content is just the marker word with blank lines around it. That shape (see the dedicated
+  // describe block below for the exact rule) is exactly how a human writes a bare hold line, and
+  // this positive -- present before T-0420 touched this file -- must stay green for every label,
+  // HELD and SUPERSEDED included.
+  it.each(SUPERSEDED_MARKERS)("fails when the body contains the marker %s", (marker) => {
     const result = supersededCheck(makeTask({ body: `## Scope\n\nOriginal plan.\n\n${marker}\n\nNew plan.\n` }));
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -220,6 +222,24 @@ describe("supersededCheck -- HELD/SUPERSEDED directive marker, not the bare word
     const result = supersededCheck(makeTask({ body: `## Scope\n\n${markerLine}\n\nSee the replacement card instead.\n` }));
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/held/i);
+  });
+
+  // #445 changes-requested (2nd round): an undecorated line -- no heading, no bold, no bullet --
+  // whose entire trimmed content IS the marker word (optionally with nothing else, or with a
+  // "--" label separator immediately after it) is still a directive, not prose. This is the exact
+  // shape the e2e fixture at "skips a card whose acceptance is superseded/held" uses, and the one
+  // this card's own in-progress fix had silently dropped. It is NOT the same shape as the
+  // line-leading-bare-word trap below -- there the word is immediately followed by MORE prose on
+  // the same line ("held entries were counted again"), which never matches here.
+  it.each([
+    "HELD",
+    "SUPERSEDED",
+    "HELD -- see T-0007 instead.",
+    "held -- see t-0007 instead."
+  ])("still trips on the undecorated bare-marker-line shape %j", (markerLine) => {
+    const result = supersededCheck(makeTask({ body: `## Scope\n\n${markerLine}\n\nSee the replacement card instead.\n` }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/held|superseded/i);
   });
 
   // #445 changes-requested, P2: isDirectiveMarkerLine tested heading/bold/label as mutually
@@ -461,7 +481,7 @@ describe("vetAndReady -- end to end selection", () => {
   });
 
   it("skips a card whose acceptance is superseded/held", async () => {
-    const tasks = [makeTask({ id: "T-0006", body: "## Scope\n\n**HELD -- see T-0007 instead.**\n" })];
+    const tasks = [makeTask({ id: "T-0006", body: "## Scope\n\nHELD -- see T-0007 instead.\n" })];
     const result = await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS });
     expect(result.readied).toEqual([]);
     const t6 = result.skipped.find((r) => r.id === "T-0006");
