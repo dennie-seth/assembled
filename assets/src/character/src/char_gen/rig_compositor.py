@@ -56,13 +56,28 @@ def scaled_parts(parts: dict[str, Image.Image], rig: dict) -> dict[str, Image.Im
     upper portion is occluded by the near leg in a side view, so its cut is SHORT even
     though the bone is not; `shoulder_L` is cut further down the arm than `shoulder_R`,
     so its cut is LONG. Either way, scaling the part restores the bone, and the
-    normalized pivot keeps the chain intact."""
+    normalized pivot keeps the chain intact.
+
+    An entry is either a plain number -- an ISOTROPIC scale applied to both axes
+    (`calf_L`'s `1.2929`, unchanged since fix round 4) -- or a `{"height": ...,
+    "width": ...}` object -- an ANISOTROPIC scale (T-0436 fix round 5, `shoulder_L`).
+    `measured_bone_lengths` only ever reads a part's HEIGHT (bone length runs along
+    the pivot axis, which is vertical for every part here), so an anisotropic entry's
+    `height` is what carries the length correction and `width` is free to differ
+    without moving the bone -- exactly the case `shoulder_L` needed: its raw cut's
+    WIDTH was being shrunk to 61% of the artist's own cut as a side effect of
+    correcting its bone length, not an intent (see `shoulder_L_anisotropic_note`
+    in `side_view_rig.json`)."""
     scales = rig["bone_length_fix"]["scaled"]
     out = dict(parts)
     for name, scale in scales.items():
         w, h = parts[name].size
+        if isinstance(scale, dict):
+            height_scale, width_scale = scale["height"], scale["width"]
+        else:
+            height_scale = width_scale = scale
         out[name] = parts[name].resize(
-            (round(w * scale), round(h * scale)), Image.Resampling.LANCZOS
+            (round(w * width_scale), round(h * height_scale)), Image.Resampling.LANCZOS
         )
     return out
 
