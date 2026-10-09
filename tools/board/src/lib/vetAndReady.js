@@ -51,6 +51,15 @@ export const READY_CAP = 4;
  * RE-SCOPED, STOP AND REPORT, and "This section governs" are deliberately left on the broader
  * `\b`/phrase match: none of the real cards found reusing those words as ordinary prose, and
  * narrowing a marker nothing has ever false-triggered on would only add risk for no fixed defect.
+ *
+ * #445 changes-requested, P2: the first cut of `isDirectiveMarkerLine` tested heading, bold, and
+ * label as three mutually exclusive alternatives against the raw line, so a COMBINED decoration
+ * -- a bold marker inside a heading ("## **HELD**") or inside a list bullet
+ * ("- **HELD -- pending human review**") -- matched none of them and was silently released, even
+ * though both are plausible shapes a human would write for a genuine hold. `isDirectiveMarkerLine`
+ * now normalises a line's leading bullet/heading/emphasis decoration off before deciding, so any
+ * combination of those is recognised, while the bare-word-in-prose negative (no decoration at
+ * all) is unchanged -- see that function's own doc comment for the exact rule.
  */
 const SUPERSEDED_MARKER_RULES = [
   { label: "HELD", test: (body) => isDirectiveMarkerLine(body, "held") },
@@ -64,37 +73,70 @@ const SUPERSEDED_MARKER_RULES = [
 /**
  * Removes fenced code blocks and inline code spans before line-scanning for a marker (T-0420).
  * A body that only *quotes* a marker as a worked example -- this very module's own doc comment
- * shape, or a card documenting the rule -- must never trip on the quote. Order matters: triple
- * backticks are stripped first so a fence's own backtick-fence lines can't be mistaken for inline
- * code spans by the second pass.
+ * shape, or a card documenting the rule -- must never trip on the quote. Order matters: both
+ * fence styles are stripped first so a fence's own delimiter lines can't be mistaken for inline
+ * code spans by the final pass.
+ *
+ * #445 changes-requested, P2: `~~~`-fenced blocks are a second fence style Markdown allows and
+ * this repo's own cards use interchangeably with backticks -- stripped the same way, before the
+ * inline-code pass, for the identical reason.
  */
 function stripCodeSpans(body) {
-  return body.replace(/```[\s\S]*?```/g, "\n").replace(/`[^`\n]*`/g, "");
+  return body
+    .replace(/```[\s\S]*?```/g, "\n")
+    .replace(/~~~[\s\S]*?~~~/g, "\n")
+    .replace(/`[^`\n]*`/g, "");
 }
 
 /**
- * Is `word` written, anywhere in `body`, as a marker LINE rather than used in prose? Three shapes
- * count, each anchored to the start of a (trimmed) line so a sentence that merely *begins* a line
- * with the word ("held entries were counted again", T-0338's "superseded by the dedicated-legs-
- * panel amendment") does not qualify -- that line-leading-bare-word shape is exactly the trap a
- * wrapped line recreates, and exactly what T-0413/T-0402 reproduce:
+ * Is `word` written, anywhere in `body`, as a marker LINE rather than used in prose? Each
+ * (trimmed) line is normalised by stripping, in order, a leading list bullet, then a leading
+ * heading prefix, then a leading emphasis marker -- remembering whether a heading and/or emphasis
+ * marker was actually present. What happens next depends on that:
  *
- *   - a heading:            `## HELD`, `### held`
- *   - a bold marker:        `**HELD ...**`, `**HELD --**`
- *   - a line-leading label: `HELD: ...`
+ *   - heading and/or emphasis present: the word now leading the (further-stripped) line counts --
+ *     `## HELD`, `**HELD ...**`, and a COMBINED decoration like `## **HELD**` or
+ *     `- **HELD -- pending human review**` (#445 changes-requested, P2: the original version
+ *     tested heading/bold/label as mutually exclusive branches against the raw line, so a bold
+ *     marker inside a heading or inside a list bullet matched none of them and was silently
+ *     released) all count.
+ *   - neither present: only the line-leading label form `WORD:` counts. This is deliberate, not
+ *     an oversight -- a bare list-bulleted sentence that happens to start with the word
+ *     ("- held 3 entries again") still has no heading/emphasis decoration and must NOT count, for
+ *     the same reason a bare prose line must not: "held entries were counted again" (plain), or
+ *     "- held entries were counted again" (bulleted plain), are exactly the line-leading-bare-
+ *     word trap T-0413/T-0402 reproduce. Bullet-stripping exists only so a bulleted *decorated*
+ *     line (bold/heading) can still be recognised, not to loosen the bare-word case.
+ *
+ * The word-boundary check after stripping uses a negative lookahead for a following letter,
+ * rather than `\b`, so a trailing decoration that is itself a word character under `\b`'s rules
+ * (underscore, as in `__SUPERSEDED__`) doesn't suppress the match -- `HELD` followed by `**`,
+ * `__`, `:`, or end-of-line all count as the word ending there; `HELDS` does not.
  *
  * Case-insensitive throughout -- this narrows *where* the marker counts, never *which case* it is
  * written in (Codex's #396 case-insensitivity fix stays intact).
  */
 function isDirectiveMarkerLine(body, word) {
-  const headingRe = new RegExp(`^#{1,6}\\s*${word}\\b`, "i");
-  const boldRe = new RegExp(`^\\*\\*${word}\\b`, "i");
+  const bareWordRe = new RegExp(`^${word}(?![a-zA-Z])`, "i");
   const labelRe = new RegExp(`^${word}\\s*:`, "i");
+  const bulletRe = /^(?:[-*+]|\d+[.)])\s+/;
+  const headingRe = /^#{1,6}\s*/;
+  const emphasisRe = /^(?:\*\*|__|\*|_)/;
+
   return stripCodeSpans(body ?? "")
     .split(/\r?\n/)
     .some((rawLine) => {
-      const line = rawLine.trim();
-      return headingRe.test(line) || boldRe.test(line) || labelRe.test(line);
+      let line = rawLine.trim().replace(bulletRe, "");
+
+      const headingMatch = headingRe.exec(line);
+      const sawHeading = headingMatch !== null;
+      if (sawHeading) line = line.slice(headingMatch[0].length);
+
+      const emphasisMatch = emphasisRe.exec(line);
+      const sawEmphasis = emphasisMatch !== null;
+      if (sawEmphasis) line = line.slice(emphasisMatch[0].length);
+
+      return sawHeading || sawEmphasis ? bareWordRe.test(line) : labelRe.test(line);
     });
 }
 
