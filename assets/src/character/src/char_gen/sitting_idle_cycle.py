@@ -115,9 +115,9 @@ ANKLE_X_BACK = -85.0
 #: across the belly. Because `side_view_rig.json` puts the near leg frontmost by
 #: default (`thigh_R` z=2, in front of the torso's z=5), the box painted OVER the
 #: torso, reading as an unidentified slab. Neither the part nor the shared rig is
-#: touched -- this pose alone draws `thigh_R` behind the torso (z=3.5, below), which
-#: hides the surplus box where it crosses the body while the real thigh still reads
-#: in front of the far leg.
+#: touched -- this pose alone draws `thigh_R` with its z overridden to 3.5 (below,
+#: `CROUCH_Z_OVERRIDE`), which hides the surplus box where it crosses the body while
+#: the real thigh still reads in front of the far leg.
 CROUCH_Z_OVERRIDE = {"thigh_R": 3.5, "thigh_L": 3.6}
 #: Round 5 adds `thigh_L`. Widening the stance to @DennieSeth's marked-up geometry
 #: swings the trailing thigh's crop -- also a near-rectangle (bbox fill 0.87 --
