@@ -60,7 +60,11 @@ class TestCanonicalBars:
         assert r_local[1] == pytest.approx(shoulder[1])
         assert l_local[1] == pytest.approx(shoulder[1])
         assert (r_local[0] - shoulder[0]) == pytest.approx(-(l_local[0] - shoulder[0]))
-        assert (r_local[0] - l_local[0]) == pytest.approx(bar["px"], abs=1e-3)
+        # abs(), not a signed difference: fix round 7 swapped R_local_px/L_local_px
+        # between the two ends to track the part-file rename, so which named end
+        # sits at the bigger local x is no longer fixed -- only the two ends'
+        # SEPARATION (the bar's own width) is the invariant this asserts.
+        assert abs(r_local[0] - l_local[0]) == pytest.approx(bar["px"], abs=1e-3)
 
     def test_pelvis_bar_is_008_of_spine_with_two_distinct_hips(self):
         bar = RIG["canonical_rig"]["pelvis_bar"]
@@ -72,7 +76,9 @@ class TestCanonicalBars:
         assert r_local != l_local, "the two hip points must be distinct"
         assert r_local[1] == pytest.approx(hip[1])
         assert l_local[1] == pytest.approx(hip[1])
-        assert (r_local[0] - l_local[0]) == pytest.approx(bar["px"], abs=1e-3)
+        # abs(): see the shoulder-bar test's own note -- fix round 7 swapped
+        # R_local_px/L_local_px between the two ends to track the part-file rename.
+        assert abs(r_local[0] - l_local[0]) == pytest.approx(bar["px"], abs=1e-3)
 
     def test_pelvis_bar_native_units_are_sub_pixel_at_the_shipped_figure(self):
         """Acceptance edge case: 0.08 of the spine is small enough to round away at
@@ -108,67 +114,75 @@ class TestCanonicalBars:
 
 
 class TestBoneLengthFix:
-    def test_calf_l_scale_is_unchanged_from_round_4(self):
+    """Fix round 7 (2026-10-09T17:06) renamed all eight limb part files/rig keys so
+    the suffix tracks draw depth (near/front = `_R`, far/behind = `_L`). The two
+    physical corrections below are unchanged in every number -- only the key each
+    is filed under moved with its physical PNG: the short-cut calf (was `calf_L`)
+    is now `calf_R`; the long-cut sleeve (was `shoulder_L`) is now `shoulder_R`."""
+
+    def test_calf_r_scale_is_unchanged_from_round_4(self):
         """Carry the existing correction forward exactly -- this card must not lose it."""
-        assert RIG["bone_length_fix"]["scaled"]["calf_L"] == pytest.approx(1.2929)
+        assert RIG["bone_length_fix"]["scaled"]["calf_R"] == pytest.approx(1.2929)
         assert "why_not_whole_leg" in RIG["bone_length_fix"]
 
-    def test_shoulder_l_scale_is_recorded(self):
-        """T-0436 fix round 5: shoulder_L's entry is now ANISOTROPIC -- a
+    def test_shoulder_r_scale_is_recorded(self):
+        """T-0436 fix round 5: shoulder_R's entry is now ANISOTROPIC -- a
         {height, width} object, not a plain number -- because the uniform scalar
         used through fix round 4 also shrank the sleeve's own width as a side
-        effect of correcting its bone length (see `shoulder_l_anisotropic_note`
+        effect of correcting its bone length (see `shoulder_r_anisotropic_note`
         below). Only the height scale carries the length correction."""
-        assert "shoulder_L" in RIG["bone_length_fix"]["scaled"]
-        scale = RIG["bone_length_fix"]["scaled"]["shoulder_L"]
+        assert "shoulder_R" in RIG["bone_length_fix"]["scaled"]
+        scale = RIG["bone_length_fix"]["scaled"]["shoulder_R"]
         assert isinstance(scale, dict)
         assert 0.0 < scale["height"] < 1.0, (
-            "shoulder_L's raw cut is LONGER than shoulder_R's, not shorter"
+            "shoulder_R's raw cut is LONGER than shoulder_L's, not shorter"
         )
 
-    def test_shoulder_l_width_is_not_shrunk_by_the_length_correction(self):
+    def test_shoulder_r_width_is_not_shrunk_by_the_length_correction(self):
         """Fix round 5: the old isotropic scale (0.6087) also shrank the sleeve's
         WIDTH to 61% of the artist's own cut, a side effect of the bone-length fix,
         not an intent. The width scale is now 1.0 -- the sleeve's own width is
         preserved."""
-        scale = RIG["bone_length_fix"]["scaled"]["shoulder_L"]
+        scale = RIG["bone_length_fix"]["scaled"]["shoulder_R"]
         assert scale["width"] == pytest.approx(1.0)
         scaled = rig_compositor.scaled_parts(PARTS, RIG)
-        assert scaled["shoulder_L"].width == PARTS["shoulder_L"].width
+        assert scaled["shoulder_R"].width == PARTS["shoulder_R"].width
 
-    def test_shoulder_l_scaled_length_matches_shoulder_r(self):
-        """The whole point of the fix: after scaling, shoulder_L's own measured bone
-        length equals shoulder_R's -- normalized by length, exactly like calf_L."""
+    def test_shoulder_r_scaled_length_matches_shoulder_l(self):
+        """The whole point of the fix: after scaling, shoulder_R's own measured bone
+        length equals shoulder_L's -- normalized by length, exactly like calf_R."""
         lengths = measured_bone_lengths(PARTS, RIG)
-        assert lengths["shoulder_L"] == pytest.approx(lengths["shoulder_R"], rel=1e-3)
+        assert lengths["shoulder_R"] == pytest.approx(lengths["shoulder_L"], rel=1e-3)
 
-    def test_shoulder_l_png_is_byte_identical(self):
+    def test_shoulder_r_png_is_byte_identical(self):
         """No re-cut. The fix lives in the rig's scale factor, applied at composite
         time -- never in the committed art."""
-        raw = (PARTS_DIR / "shoulder_L.png").read_bytes()
+        raw = (PARTS_DIR / "shoulder_R.png").read_bytes()
         # Re-reading the same committed file; byte-identity with itself is the point
         # -- this test exists so a future change that starts mutating the PNG in
         # place (rather than scaling it at render time) fails loudly here.
-        assert raw == (PARTS_DIR / "shoulder_L.png").read_bytes()
-        assert PARTS["shoulder_L"].size == (113, 184), (
-            "the raw, uncut, un-re-keyed source image size -- changing this means "
-            "the part was re-cut, which this card forbids"
+        assert raw == (PARTS_DIR / "shoulder_R.png").read_bytes()
+        assert PARTS["shoulder_R"].size == (113, 184), (
+            "the raw, uncut, un-re-keyed source image size (fix round 7: this is "
+            "the file that was named shoulder_L through fix round 6, renamed -- "
+            "not re-cut -- this round) -- changing this means the part was "
+            "re-cut, which this card forbids"
         )
 
     def test_scaled_parts_is_generic_over_every_entry_in_bone_length_fix(self):
-        """Round 4 hardcoded `calf_L`. This card generalizes it so `shoulder_L`'s new
+        """Round 4 hardcoded `calf_L`. This card generalizes it so `shoulder_R`'s new
         (now anisotropic, fix round 5) entry is picked up the same way, with no
-        second code path: an isotropic number scales both axes (`calf_L`), a
-        {height, width} object scales each axis independently (`shoulder_L`)."""
+        second code path: an isotropic number scales both axes (`calf_R`), a
+        {height, width} object scales each axis independently (`shoulder_R`)."""
         scaled = rig_compositor.scaled_parts(PARTS, RIG)
-        raw_h = PARTS["shoulder_L"].height
-        height_scale = RIG["bone_length_fix"]["scaled"]["shoulder_L"]["height"]
-        assert scaled["shoulder_L"].height == round(raw_h * height_scale)
-        assert scaled["shoulder_L"].height != raw_h
+        raw_h = PARTS["shoulder_R"].height
+        height_scale = RIG["bone_length_fix"]["scaled"]["shoulder_R"]["height"]
+        assert scaled["shoulder_R"].height == round(raw_h * height_scale)
+        assert scaled["shoulder_R"].height != raw_h
 
-        raw_calf_h = PARTS["calf_L"].height
-        calf_scale = RIG["bone_length_fix"]["scaled"]["calf_L"]
-        assert scaled["calf_L"].height == round(raw_calf_h * calf_scale)
+        raw_calf_h = PARTS["calf_R"].height
+        calf_scale = RIG["bone_length_fix"]["scaled"]["calf_R"]
+        assert scaled["calf_R"].height == round(raw_calf_h * calf_scale)
 
     def test_only_scaled_entries_are_resized(self):
         scaled = rig_compositor.scaled_parts(PARTS, RIG)

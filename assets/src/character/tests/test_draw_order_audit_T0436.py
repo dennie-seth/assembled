@@ -122,13 +122,16 @@ class TestAgainstTheRig:
         assert violations == [], f"{len(violations)} of {len(pairs)} pairs disagree: {violations}"
 
     def test_near_arm_contests_and_wins_against_the_torso(self):
-        """Fix round 6's Option B layering (`_L` drawn in front -- the near
-        side now) puts `shoulder_L` ahead of `torso` in the paint order; this
-        confirms that order holds on a pair that actually overlaps in this pose
-        (the posed arms genuinely cross the torso silhouette), not just by
-        reading z numbers. Per-side arm ANGLES did not swap with the layering --
-        `shoulder_L` still poses at `SHOULDER_DEG_L` (-56.4deg, trailing back)
-        -- only which side draws in front changed."""
+        """Fix round 6's Option B layering drew the near side in front; fix round 7
+        then swapped the L/R suffix on all eight limb parts so the name tracks
+        draw depth directly -- near/front is `_R` again, so it is now `shoulder_R`
+        ahead of `torso` in the paint order. This confirms that order holds on a
+        pair that actually overlaps in this pose (the posed arms genuinely cross
+        the torso silhouette), not just by reading z numbers. Per-side arm ANGLES
+        did not swap with fix round 6's layering change, but DID move with fix
+        round 7's rename (tracking their own physical arm) -- `shoulder_R` now
+        poses at `SHOULDER_DEG_R` (-56.4deg, trailing back), the same physical
+        angle as fix round 6's `shoulder_L`."""
         placements = self._placements()
         offset, canvas_size = canvas_geometry(placements)
         masks = part_alpha_masks(placements, canvas_size, offset)
@@ -136,7 +139,36 @@ class TestAgainstTheRig:
             frozenset((p["lower_z_part"], p["higher_z_part"])): p
             for p in contested_pairs(placements, masks)
         }
-        pair = pairs[frozenset(("shoulder_L", "torso"))]
+        pair = pairs[frozenset(("shoulder_R", "torso"))]
         assert pair["contested_px"] > 0
-        assert pair["lower_z_part"] == "shoulder_L"
+        assert pair["lower_z_part"] == "shoulder_R"
         assert pair["higher_z_wins"] == 0
+
+
+class TestSuffixAgreesWithRealizedDrawDepth:
+    """Fix round 7's own acceptance criterion: the labels must be verified against
+    draw DEPTH, not against filenames. A check that a rendered part matches the
+    file of the same name is circular -- it passes regardless of whether the file
+    is named correctly, which is the defect this round exists to fix. This class
+    instead derives, independently of any name, which of each limb pair actually
+    WINS the paint-loop replay (i.e. is nearer/frontmost, per
+    `realized_draw_rank` -- the same last-writer replay
+    `TestAgainstTheRig` already uses, not a re-read of the rig's own z numbers),
+    and only THEN asserts that the winning part's name ends `_R` and the losing
+    (farther/behind) part's name ends `_L`."""
+
+    LIMB_PAIRS = ("shoulder", "forearm", "thigh", "calf")
+
+    def test_each_limb_pairs_r_suffix_wins_the_realized_depth_contest(self):
+        placements = refpose.build_reference_placements()
+        ranks = realized_draw_rank(placements)
+        for limb in self.LIMB_PAIRS:
+            rank_r = ranks[f"{limb}_R"]
+            rank_l = ranks[f"{limb}_L"]
+            assert rank_r > rank_l, (
+                f"{limb}_R (rank {rank_r}) must be painted AFTER (i.e. win the "
+                f"occlusion contest against, i.e. sit nearer/in front of) "
+                f"{limb}_L (rank {rank_l}) -- near/front limbs are named `_R`, "
+                f"far/behind limbs `_L`, independent of which PNG each name "
+                f"happens to load"
+            )

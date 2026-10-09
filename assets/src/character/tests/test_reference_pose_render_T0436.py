@@ -60,18 +60,20 @@ def visible_pixel_count(all_placements: list[rig_compositor.Placement], part_nam
 
 
 class TestFarArmVisibility:
-    """Fix round 6 (Option B, @DennieSeth 2026-10-09T16:43) swapped the near/far
-    layering wholesale -- `_R` is the far arm now, not `_L` -- so this class tests
-    `shoulder_R`/`forearm_R`, matching where the rig's own
+    """Fix round 7 (2026-10-09T17:06) swapped the L/R suffix on all eight limb
+    parts so the name tracks draw depth -- `_L` is the far arm now, not `_R`
+    (fix round 6's Option B put the far side on `_R`; this round renamed the
+    files/rig keys so far = `_L` again) -- so this class tests
+    `shoulder_L`/`forearm_L`, matching where the rig's own
     `canonical_rig.lateral_offset_axis.demonstration_values` now keys the far-arm
     lateral offset."""
 
     def test_far_arm_is_visible_in_the_reference_pose_render(self):
         placements = refpose.build_reference_placements()
-        shoulder_r_px = visible_pixel_count(placements, "shoulder_R")
-        forearm_r_px = visible_pixel_count(placements, "forearm_R")
-        assert shoulder_r_px > 0, "shoulder_R must render a non-zero number of visible pixels"
-        assert forearm_r_px > 0, "forearm_R must render a non-zero number of visible pixels"
+        shoulder_l_px = visible_pixel_count(placements, "shoulder_L")
+        forearm_l_px = visible_pixel_count(placements, "forearm_L")
+        assert shoulder_l_px > 0, "shoulder_L must render a non-zero number of visible pixels"
+        assert forearm_l_px > 0, "forearm_L must render a non-zero number of visible pixels"
 
     def test_far_arm_is_more_visible_with_the_lateral_offset_than_without(self):
         """The contrast the card requires: the two-point shoulder attach alone
@@ -79,25 +81,31 @@ class TestFarArmVisibility:
         offset is. Re-sorting (z) never did this; this proves POSITION changed."""
         with_offset = refpose.build_reference_placements()
         without_offset = refpose.build_reference_placements(lateral_offset_frac={})
-        with_px = visible_pixel_count(with_offset, "shoulder_R")
-        without_px = visible_pixel_count(without_offset, "shoulder_R")
+        with_px = visible_pixel_count(with_offset, "shoulder_L")
+        without_px = visible_pixel_count(without_offset, "shoulder_L")
         assert with_px > without_px
 
 
 class TestTwoPointAttachInTheReferencePose:
+    """abs(dx), not a signed difference: fix round 7 swapped
+    `shoulder_bar`/`pelvis_bar`'s `R_local_px`/`L_local_px` between the two ends to
+    track the part-file rename, so which named end sits at the bigger local x is
+    no longer fixed -- only the two ends' SEPARATION (the bar's own width) is the
+    invariant these assert."""
+
     def test_shoulder_ends_are_the_canonical_bar_apart(self):
         placements = {p.name: p for p in refpose.build_reference_placements(lateral_offset_frac={})}
         rig = rig_compositor.load_rig()
         expected = rig["canonical_rig"]["shoulder_bar"]["px"]
         dx = placements["shoulder_R"].target_xy[0] - placements["shoulder_L"].target_xy[0]
-        assert dx == pytest.approx(expected, abs=1.0)
+        assert abs(dx) == pytest.approx(expected, abs=1.0)
 
     def test_hip_ends_are_the_canonical_bar_apart(self):
         placements = {p.name: p for p in refpose.build_reference_placements(lateral_offset_frac={})}
         rig = rig_compositor.load_rig()
         expected = rig["canonical_rig"]["pelvis_bar"]["px"]
         dx = placements["thigh_R"].target_xy[0] - placements["thigh_L"].target_xy[0]
-        assert dx == pytest.approx(expected, abs=1.0)
+        assert abs(dx) == pytest.approx(expected, abs=1.0)
 
 
 class TestHipPxMatchesWorldOrigin:
@@ -155,10 +163,14 @@ class TestPerSideArmAnglesFromTheReference:
     pair that gave both arms the same droop."""
 
     def test_arm_angle_constants_match_the_measured_reference(self):
-        assert refpose.SHOULDER_DEG_R == pytest.approx(44.3)
-        assert refpose.ELBOW_DEG_R == pytest.approx(40.7)
-        assert refpose.SHOULDER_DEG_L == pytest.approx(-56.4)
-        assert refpose.ELBOW_DEG_L == pytest.approx(33.2)
+        """Fix round 7 swapped the L/R suffix on all eight limb parts (near/front =
+        `_R`, far/behind = `_L`); the near arm trails back (`_R`) and the far arm
+        reaches forward (`_L`) -- the same two physical angles fix round 4 measured,
+        now keyed to the opposite constant name."""
+        assert refpose.SHOULDER_DEG_R == pytest.approx(-56.4)
+        assert refpose.ELBOW_DEG_R == pytest.approx(33.2)
+        assert refpose.SHOULDER_DEG_L == pytest.approx(44.3)
+        assert refpose.ELBOW_DEG_L == pytest.approx(40.7)
 
     def test_upper_pose_gives_each_arm_its_own_angle(self):
         pose = refpose.upper_pose(0.0, 100.0)
