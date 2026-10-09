@@ -100,13 +100,18 @@ function stripCodeSpans(body) {
  *     tested heading/bold/label as mutually exclusive branches against the raw line, so a bold
  *     marker inside a heading or inside a list bullet matched none of them and was silently
  *     released) all count.
- *   - neither present: only the line-leading label form `WORD:` counts. This is deliberate, not
- *     an oversight -- a bare list-bulleted sentence that happens to start with the word
- *     ("- held 3 entries again") still has no heading/emphasis decoration and must NOT count, for
- *     the same reason a bare prose line must not: "held entries were counted again" (plain), or
- *     "- held entries were counted again" (bulleted plain), are exactly the line-leading-bare-
- *     word trap T-0413/T-0402 reproduce. Bullet-stripping exists only so a bulleted *decorated*
- *     line (bold/heading) can still be recognised, not to loosen the bare-word case.
+ *   - neither present: the line still counts if the word is immediately followed by a `WORD:`
+ *     label colon, a `WORD --` label dash, or nothing else at all (the word IS the entire
+ *     trimmed line -- `HELD` alone with blank lines around it, exactly as T-0247's own undecorated
+ *     hold line and this module's own pre-T-0420 test fixture write it). It does NOT count the
+ *     moment the word is followed by further prose instead of a label separator or end-of-line:
+ *     "held 3 entries again" (plain) and "- held entries were counted again" (bulleted plain) are
+ *     exactly the line-leading-bare-word trap T-0413/T-0402 reproduce, and neither the colon, the
+ *     dash, nor end-of-line follows the word there. Bullet-stripping exists only so a bulleted
+ *     *decorated or labelled* line can still be recognised, not to loosen the bare-prose case.
+ *     (#445 changes-requested, 2nd round: an earlier cut of this rule required a heading/bold/
+ *     label in every undecorated case, which silently stopped matching a bare `HELD` line on its
+ *     own -- a real shape this module's own tests had covered before T-0420 touched this file.)
  *
  * The word-boundary check after stripping uses a negative lookahead for a following letter,
  * rather than `\b`, so a trailing decoration that is itself a word character under `\b`'s rules
@@ -118,7 +123,7 @@ function stripCodeSpans(body) {
  */
 function isDirectiveMarkerLine(body, word) {
   const bareWordRe = new RegExp(`^${word}(?![a-zA-Z])`, "i");
-  const labelRe = new RegExp(`^${word}\\s*:`, "i");
+  const labelRe = new RegExp(`^${word}(?:\\s*:|\\s*--|$)`, "i");
   const bulletRe = /^(?:[-*+]|\d+[.)])\s+/;
   const headingRe = /^#{1,6}\s*/;
   const emphasisRe = /^(?:\*\*|__|\*|_)/;
