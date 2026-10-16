@@ -116,6 +116,14 @@ describe("supersededCheck", () => {
     expect(result.ok).toBe(true);
   });
 
+  // #445 changes-requested (2nd round): this positive was narrowed to exclude HELD/SUPERSEDED in
+  // an earlier diagnosis round, on the theory that a bare, unmarked occurrence of either word on
+  // its own line is the T-0413/T-0402 shape. It is not -- T-0413 and T-0402 trip mid-sentence
+  // prose ("the list held 3 entries", "is held with a reason"), never a line whose entire trimmed
+  // content is just the marker word with blank lines around it. That shape (see the dedicated
+  // describe block below for the exact rule) is exactly how a human writes a bare hold line, and
+  // this positive -- present before T-0420 touched this file -- must stay green for every label,
+  // HELD and SUPERSEDED included.
   it.each(SUPERSEDED_MARKERS)("fails when the body contains the marker %s", (marker) => {
     const result = supersededCheck(makeTask({ body: `## Scope\n\nOriginal plan.\n\n${marker}\n\nNew plan.\n` }));
     expect(result.ok).toBe(false);
@@ -125,14 +133,16 @@ describe("supersededCheck", () => {
   // Codex review 2026-09-18, finding 1: case-sensitive `body.includes()` over a fixed-case list
   // let `## Held`, lowercase `held`, and `Stop-and-report:` slip through and get readied. Every
   // variant below is one Codex actually reproduced or that the fix-round AC names explicitly.
+  //
+  // T-0420: the bare-mid-sentence "held"/"superseded" variants that used to live in this list
+  // were removed -- they are exactly the ordinary-English-word shape this card stops matching.
+  // "## Held\n..." stays: it's a heading, i.e. a directive, not prose.
   it.each([
     ["## Held\nDo not ready this card until a human decision.", /held/i],
-    ["lowercase held mid-sentence: the fix is being held for review.", /held/i],
     ["Stop-and-report: acceptance already satisfied by the replacement.", /stop.and.report/i],
     ["stop and report -- do not proceed.", /stop.and.report/i],
     ["## Finding\nStop-and-report: acceptance already satisfied by the replacement.", /finding/i],
     ["rescoped by the follow-up card, see T-0400.", /re-?scoped/i],
-    ["superseded by T-0400.", /superseded/i],
     ["this section governs the rest of the card.", /this section governs/i]
   ])("recognises the real-world marker variant %j case-insensitively", (body, expectedReasonPattern) => {
     const result = supersededCheck(makeTask({ body }));
@@ -148,6 +158,156 @@ describe("supersededCheck", () => {
   it("still passes a body that merely mentions an unrelated word containing a marker as a substring", () => {
     // "upheld"/"withheld" must not false-trigger the HELD marker -- \bheld\b is word-bounded.
     const result = supersededCheck(makeTask({ body: "## Acceptance\n\nThe API contract is upheld across releases.\n" }));
+    expect(result.ok).toBe(true);
+  });
+});
+
+/**
+ * T-0420: `\bheld\b`/`\bsuperseded\b` match the ordinary English word, not just a hold/supersede
+ * DIRECTIVE -- a card is skipped forever if its body happens to use either word in prose. Two real
+ * cards (T-0413, T-0402) were trapped by this every single night. HELD and SUPERSEDED now only
+ * trip when the word appears as a MARKER LINE (a heading, a bold marker, or a line-leading
+ * "WORD:" label), the same discipline `approvalGate.js`'s APPROVAL_MARKERS and `roundCap.js`'s
+ * RESCOPE_MARKERS already apply to a comment's first line -- adapted here to "any marker-shaped
+ * line in the body", since a hold/supersede directive isn't always the body's first line.
+ */
+describe("supersededCheck -- HELD/SUPERSEDED directive marker, not the bare word (T-0420)", () => {
+  // The three regression fixtures: real triggering sentences from T-0413 and T-0402, reproduced
+  // verbatim (minus their card-specific numbers), plus a body that only *quotes* the marker as a
+  // worked example. All three must be released -- supersededCheck must return ok:true for each.
+  const T0413_SENTENCE =
+    "Reconciling it (PR #420) found the list held 3 entries while the host had 14.";
+  const T0402_SENTENCE =
+    "An estimate larger than the remaining budget is held with a reason naming the window.";
+  const QUOTED_EXAMPLE_BODY =
+    "## Notes\n\nThe nightly vetter's HELD marker looks like this in practice:\n\n" +
+    "```\n## HELD\n```\n\nIt must only trip on a marker line, never on prose that discusses it.\n";
+
+  it("releases T-0413 -- 'the list held 3 entries' is prose, not a hold directive", () => {
+    const result = supersededCheck(makeTask({ body: `## Acceptance\n\n- [ ] ${T0413_SENTENCE}\n` }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("releases T-0402 -- 'is held with a reason' is prose, not a hold directive", () => {
+    const result = supersededCheck(makeTask({ body: `## Acceptance\n\n- [ ] ${T0402_SENTENCE}\n` }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("releases a body that only quotes the HELD marker as a worked example", () => {
+    const result = supersededCheck(makeTask({ body: QUOTED_EXAMPLE_BODY }));
+    expect(result.ok).toBe(true);
+  });
+
+  // #445 changes-requested, P2: a ~~~-fenced worked example must be released exactly like the
+  // ```-fenced one above -- stripCodeSpans only stripped backtick fences, so a tilde-fenced quote
+  // of the marker still tripped the rule.
+  const QUOTED_EXAMPLE_BODY_TILDE =
+    "## Notes\n\nThe nightly vetter's HELD marker looks like this in practice:\n\n" +
+    "~~~\n## HELD\n~~~\n\nIt must only trip on a marker line, never on prose that discusses it.\n";
+
+  it("releases a body that only quotes the HELD marker inside a ~~~-fenced worked example", () => {
+    const result = supersededCheck(makeTask({ body: QUOTED_EXAMPLE_BODY_TILDE }));
+    expect(result.ok).toBe(true);
+  });
+
+  // Real hold-directive shapes (T-0247's own comment shape, markdown headings, bold markers, with
+  // trailing punctuation/markdown) must still trip it, in every case variant.
+  it.each([
+    "**HELD 2026-08-29 per @DennieSeth -- waiting on the art-direction decision.**",
+    "## HELD",
+    "## held",
+    "**HELD --**",
+    "## HELD (2026-08-29)"
+  ])("still trips on the genuine hold-directive shape %j", (markerLine) => {
+    const result = supersededCheck(makeTask({ body: `## Scope\n\n${markerLine}\n\nSee the replacement card instead.\n` }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/held/i);
+  });
+
+  // #445 changes-requested (2nd round): an undecorated line -- no heading, no bold, no bullet --
+  // whose entire trimmed content IS the marker word (optionally with nothing else, or with a
+  // "--" label separator immediately after it) is still a directive, not prose. This is the exact
+  // shape the e2e fixture at "skips a card whose acceptance is superseded/held" uses, and the one
+  // this card's own in-progress fix had silently dropped. It is NOT the same shape as the
+  // line-leading-bare-word trap below -- there the word is immediately followed by MORE prose on
+  // the same line ("held entries were counted again"), which never matches here.
+  it.each([
+    "HELD",
+    "SUPERSEDED",
+    "HELD -- see T-0007 instead.",
+    "held -- see t-0007 instead."
+  ])("still trips on the undecorated bare-marker-line shape %j", (markerLine) => {
+    const result = supersededCheck(makeTask({ body: `## Scope\n\n${markerLine}\n\nSee the replacement card instead.\n` }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/held|superseded/i);
+  });
+
+  // #445 changes-requested, P2: isDirectiveMarkerLine tested heading/bold/label as mutually
+  // exclusive alternatives against the raw line, so a COMBINED decoration -- a bold marker inside
+  // a heading, or inside a list bullet -- matched none of them and was silently released. Both
+  // shapes are plausible genuine-hold forms a human would actually write.
+  it.each([
+    "## **HELD**",
+    "### __SUPERSEDED__",
+    "- **HELD -- pending human review**",
+    "* **SUPERSEDED**: see T-0338",
+    "## HELD: pending",
+    "**HELD:**"
+  ])("still trips on the combined-decoration directive shape %j", (markerLine) => {
+    const result = supersededCheck(makeTask({ body: `## Scope\n\n${markerLine}\n\nSee the replacement card instead.\n` }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/held|superseded/i);
+  });
+
+  // SUPERSEDED gets the identical fix -- T-0338's real shape ("spec history", not a hold) must
+  // not trip, while a genuine SUPERSEDED directive line still does.
+  it("releases T-0338's real shape -- describing a spec section as superseded is not a hold directive", () => {
+    const body = "## Scope\n\nThis replaces the limb-reference approach, superseded by the dedicated-legs-panel amendment.\n";
+    const result = supersededCheck(makeTask({ body }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("still trips on a genuine SUPERSEDED directive line", () => {
+    const result = supersededCheck(makeTask({ body: "## Scope\n\n## SUPERSEDED\n\nSee T-0400 instead.\n" }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/superseded/i);
+  });
+
+  // Edge case: a line-leading bare word, with no heading/bold/colon marking, is not a directive --
+  // including the exact trap a wrapped line recreates (the word starts the line, nothing else).
+  it.each([
+    ["held entries were counted again after the reconciliation.", /* word */ "held"],
+    ["superseded by the dedicated-legs-panel amendment.", /* word */ "superseded"]
+  ])("does not trip on a line-leading bare word with no marker shape: %j", (body) => {
+    const result = supersededCheck(makeTask({ body: `## Acceptance\n\n${body}\n` }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("still fails when a body has both a genuine HELD directive and the ordinary word elsewhere", () => {
+    const body =
+      "## Scope\n\n## HELD\n\nSee the replacement card.\n\n" +
+      "## Acceptance\n\n- [ ] The reconciliation found the list held 3 entries.\n";
+    const result = supersededCheck(makeTask({ body }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/held/i);
+  });
+
+  it("releases a body that quotes the marker only as inline code", () => {
+    const body = "## Notes\n\nA hold directive is written as a line-leading `HELD:` label.\n";
+    const result = supersededCheck(makeTask({ body }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not crash and finds no marker on an empty or missing body", () => {
+    expect(supersededCheck(makeTask({ body: "" })).ok).toBe(true);
+    expect(supersededCheck(makeTask({ body: undefined })).ok).toBe(true);
+  });
+
+  // Comments are explicitly out of scope: this check only ever reads task.body.
+  it("ignores a marker that only appears in a comment, not the body -- this check never reads comments", () => {
+    const result = supersededCheck(
+      makeTask({ body: "## Acceptance\n\n- [ ] Ship it\n", comments: [{ text: "## HELD" }] })
+    );
     expect(result.ok).toBe(true);
   });
 });
@@ -326,6 +486,22 @@ describe("vetAndReady -- end to end selection", () => {
     expect(result.readied).toEqual([]);
     const t6 = result.skipped.find((r) => r.id === "T-0006");
     expect(t6.rule).toMatch(/superseded/);
+  });
+
+  // T-0420: the regression this card fixes -- a card whose body merely uses "held"/"superseded"
+  // as ordinary English prose must be readied, not skipped forever as "superseded".
+  it("readies a card whose body merely uses 'held' as an ordinary word, not a hold directive", async () => {
+    const tasks = [
+      makeTask({
+        id: "T-0007",
+        body:
+          "## Acceptance\n\n- [ ] Reconciling it found the list held 3 entries while the host had 14.\n" +
+          "- [ ] Update `src/lib/doTheThing.js` to do the thing.\n"
+      })
+    ];
+    const result = await vetAndReady({ tasks, gitLogGrep: NO_GIT_HITS });
+    expect(result.readied.map((r) => r.id)).toEqual(["T-0007"]);
+    expect(result.skipped).toEqual([]);
   });
 
   it("in a dependent pair, readies only the head and skips the dependent", async () => {
