@@ -265,14 +265,14 @@ predicted_remaining_cost_upper_bound
   `units_not_comparable` on its own until a later re-fit accumulates enough evidence — a real,
   cited gap in the evidence, not an unbuilt mechanism.
 - A healthy reading in one window never masks an exhausted other: `evaluateAdmission` combines
-  both windows, and an actual measured `false` (or any hold reason OTHER than
-  `units_not_comparable`) in either window still vetoes the aggregate unconditionally. **T-0402
-  round 2** carves out exactly one exception: `units_not_comparable` *on its own* — a documented
-  evidence gap (no usable conversion yet), never an active shortage — does not veto an admit from
-  the OTHER window when that window genuinely fits. Holding every launch forever purely because
-  one window's rate hasn't been fit yet would defeat this card's own purpose; see "Enforcement
-  flag" below for what this means in practice, and "How to enable safely" for how a human tells
-  the two cases apart.
+  both windows and is only "admitted" when *every* window admits. An earlier T-0402 attempt
+  carved out an exception for `units_not_comparable` on its own, on the theory that a documented
+  evidence gap is different from an active shortage — @DennieSeth's review of PR #449
+  (2026-10-16) rejected that: measured directly against the committed default, a fully-consumed
+  `seven_day` window (utilization 1.00) with no usable conversion still let the launch through
+  whenever `five_hour` happened to fit. A window whose capacity can't be compared with the
+  estimate is an unresolved unknown, not an absent window, so it stays a veto like any other
+  hold — see "Enforcement flag" below for what this means in practice today.
 
 ### 2026-09-12 design note (Codex review of #381)
 
@@ -315,17 +315,14 @@ external burn allowance.
   actually reserved, and regardless of `trigger` — this one guard is never overridable.
   **T-0402 derived and wired in a real, versioned USD-to-utilization conversion** — see
   `docs/usd-utilization-conversion.md` for the full citation. `five_hour` now gets a genuine
-  admit/hold from real recorded evidence; `seven_day`'s own evidence doesn't clear the
-  minimum-sample bar yet (one qualifying reset cycle exists in the real history, not the five
-  `MIN_SAMPLES_FOR_USABLE_CONVERSION` requires), so it honestly still holds
-  `units_not_comparable` on its own. **T-0402 round 2:** that gap, on its own, no longer holds
-  the aggregate — turning this flag on today genuinely admits a representative `auto` launch
-  whenever `five_hour` fits (proven end to end, no mocked formula, in
-  `wipGateAutoManualIntegration.test.js`'s T-0402 integration suite), and genuinely holds one
-  whenever `five_hour` doesn't fit or any OTHER window reports a non-units hold. `seven_day`'s
-  own `units_not_comparable` sub-decision still appears on `admission.windows.seven_day` for
-  every launch — surfaced, not hidden — until a later re-fit gives it real evidence too. See "How
-  to enable safely" below for how a human reads that surfaced gap day to day.
+  admit/hold from real recorded evidence, proven end to end (no mocked formula) in
+  `wipGateAutoManualIntegration.test.js`'s T-0402 integration suite; `seven_day`'s own evidence
+  doesn't clear the minimum-sample bar yet (one qualifying reset cycle exists in the real
+  history, not the five `MIN_SAMPLES_FOR_USABLE_CONVERSION` requires), so it honestly still holds
+  `units_not_comparable` on its own. Because `evaluateAdmission` only ever admits when EVERY
+  window admits, turning this flag on **today** still holds every real `auto` launch overall, on
+  `seven_day`'s own separate, legitimate gap, not a fabricated one. See "How to enable safely"
+  below for what changes once `seven_day` clears that bar too.
 - **The boundary never falls through to an unconditional launch under the flag (fix round 2 finding
   4).** `decide()` is bounded at `cardLaunch.js` itself (on top of `buildLaunchDecide`'s own
   internal bound), so a throwing or never-settling decide resolves to `advisory: null` — an
@@ -413,51 +410,41 @@ window, while a human can still launch a heavier card manually.
   change required) accumulates enough evidence. A conversion is never a hard-coded guess — both
   windows' numbers are fitted from, and gated on, actually recorded usage-ledger spend and
   `rate_limit_event` utilization readings, with an explicit minimum-sample-count +
-  maximum-spread threshold below which a window is not used. **T-0402 round 2:** `seven_day`'s
-  own `units_not_comparable` result does not, by itself, veto the aggregate — see the
-  "Enforcement flag" bullet above and `evaluateAdmission`'s own docstring for exactly which hold
-  reasons still do.
+  maximum-spread threshold below which a window is not used.
 - **Turning enforcement on**, once ready: set `WIP_GATE_ENFORCEMENT_ENABLED=1` (or `true`/`on`/`yes`)
-  on the board process. A representative `auto` launch now genuinely admits when `five_hour` fits
-  its derived budget, and genuinely holds when it doesn't (or when any OTHER window reports a
-  non-units hold) — `seven_day`'s own `units_not_comparable` gap is surfaced on
-  `admission.windows.seven_day` but no longer refuses an otherwise-fitting launch by itself. That
-  gap narrows on its own once a later re-fit gives `seven_day` real evidence too (see "How to
-  enable safely" below) — no code change required either way. Manual (Run button) launches are
+  on the board process. Because `evaluateAdmission` only admits when EVERY window admits, and
+  `seven_day` still holds `units_not_comparable` (above), every real `auto` launch will still be
+  refused overall today — on `seven_day`'s own gap, not a fabricated one — until a re-fit makes
+  `seven_day` usable too (see "How to enable safely" below). Manual (Run button) launches are
   unaffected by the capacity-fit limit either way, but still subject to the overrun stop and every
   other existing guard. This card does not flip the flag on the live board; that remains
   @DennieSeth's call, informed by T-0370's predicted-vs-actual advisory evidence.
 
 ## How to enable safely
 
-Turning `WIP_GATE_ENFORCEMENT_ENABLED=1` on for real will start admitting/refusing `auto` launches
-against `five_hour`'s real derived budget right away — unlike before T-0402 round 2, this is not
-gated on `seven_day` ever becoming usable. `seven_day` remains a known, visible blind spot (its own
-`units_not_comparable` sub-decision never masks the fact that this gate cannot yet detect a real
-weekly shortage) until a later re-fit gives it enough evidence — see
-`docs/usd-utilization-conversion.md`'s "How to re-fit". Before flipping it on the live board:
+Once `seven_day` has enough evidence to be usable too (re-run
+`deriveUsdUtilizationConversionFromRuns` against the live `tasks/.runs/`, review the result, and
+replace `DEFAULT_USD_UTILIZATION_CONVERSION` — see `docs/usd-utilization-conversion.md`'s "How to
+re-fit"), turning `WIP_GATE_ENFORCEMENT_ENABLED=1` on for real will start refusing `auto` launches
+that don't fit. Before flipping it on the live board:
 
 - **Watch for.** `autoLaunchPoller.js`'s per-tick log lines name every `capacityFitHold` refusal
   and which window(s) it named — a healthy rollout looks like occasional, explicable holds near
-  genuinely high `five_hour` utilization, not every tick refusing. `advisoryLogger.js`'s recorded
-  decisions (`*.advisory.json` under `tasks/.runs/`) carry the full per-window breakdown for
-  anything that needs a closer look after the fact. Because `seven_day` is a documented blind
-  spot rather than an active check, also keep an eye on `seven_day`'s own measured `utilization`
-  (visible on every recorded decision's `telemetryReadings.seven_day`, independent of the
-  admission formula) for a human-watched sanity check until it gets a real conversion.
+  genuinely high utilization, not every tick refusing. `advisoryLogger.js`'s recorded decisions
+  (`*.advisory.json` under `tasks/.runs/`) carry the full per-window breakdown for anything that
+  needs a closer look after the fact. Until `seven_day` has its own usable conversion, expect
+  every real `auto` launch to hold on `windows.seven_day.holdReason === "units_not_comparable"`
+  — that is this gate correctly refusing to admit against an unmeasurable budget, not a bug to
+  route around; `five_hour`'s own sub-decision on the same recorded breakdown is still a genuine
+  `admitted: true/false` and is the signal to watch for whether the derived rate itself looks
+  sane day to day.
 - **A real capacity hold vs. a units problem, at a glance.** `holdReason: "units_not_comparable"`
   on a window means its OWN conversion wasn't usable at decision time (a withheld/unusable rate,
   or the window's own reading itself unmeasured) — this is a units/evidence problem, not the gate
-  doing its job, and (T-0402 round 2) does not by itself hold the aggregate `admission.admitted`.
-  Any other hold reason (an explicit `admitted: false`, `no_measured_window_reading`,
+  doing its job. Any other hold reason (an explicit `admitted: false`, `no_measured_window_reading`,
   `estimate_unknown`, `reserved_cost_unknown`, `oversized_estimate_never_fits`) is the gate
   correctly comparing a real estimate against a real budget and refusing because it doesn't fit —
-  exactly the capacity-fit limit this card set exists to add, and it still holds the aggregate
-  regardless of what any other window says. So: `admission.admitted === true` with
-  `windows.seven_day.holdReason === "units_not_comparable"` means `five_hour` genuinely fit and
-  `seven_day` is simply an unmeasured dimension, not a second vote of confidence; `admission.admitted
-  === false` or `=== null` means some window (comparable or not) is either an active shortage or a
-  real unknown that isn't just the units gap.
+  exactly the capacity-fit limit this card set exists to add.
 - **Roll back.** Unset `WIP_GATE_ENFORCEMENT_ENABLED` (or set it to any value outside
   `admissionDecision.js`'s `ENABLE_VALUES`) and restart the board process guardedly — the same
   startup-recovery path (`reconcileReservationsOnStartup`) that already releases any lease an
@@ -548,11 +535,12 @@ is deferred to a later card.
 
 - Derives and ships a USD-to-window-utilization conversion rate for `five_hour` (T-0402 — see
   `docs/usd-utilization-conversion.md`); `seven_day` honestly still lacks enough recorded evidence
-  to be usable. Turning enforcement on today DOES genuinely admit/hold a real `auto` launch
-  against `five_hour`'s derived budget (T-0402 round 2's non-veto fix for
-  `units_not_comparable`) — it does not re-fit `seven_day`'s own rate, which remains a documented
-  blind spot (see "Enforcement flag"/"How to enable safely") until a later card accumulates
-  enough evidence for it.
+  to be usable, so turning enforcement on today still holds every real `auto` launch overall — on
+  `seven_day`'s own separate gap, not a fabricated one (see "Enforcement flag"/"How to enable
+  safely"). An earlier draft of this card let `five_hour`'s own genuine fit admit the aggregate
+  despite that gap; @DennieSeth's review of PR #449 rejected that (a window that can't be
+  compared is an unresolved unknown, not an absent one) and this card restores the strict
+  all-windows-must-admit guard instead of papering over the gap.
 - Does not change the live board's configuration or systemd drop-ins, and does not enable
   `WIP_GATE_ENFORCEMENT_ENABLED` anywhere live.
 - Does not weaken or replace `usageLimitDetector.js`'s existing actual-rejection checks.

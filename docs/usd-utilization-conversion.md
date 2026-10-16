@@ -99,18 +99,16 @@ are evaluated, and now converted, completely independently (`admissionDecision.j
 `evaluateAdmission` narrows `unitConversion` per window kind precisely so one window's evidence
 can never be borrowed by the other). Until a later re-fit accumulates enough `seven_day` reset
 cycles with a second reading, `seven_day` keeps holding `units_not_comparable`, on its own --
-visible on every decision's `admission.windows.seven_day`.
-
-**T-0402 round 2** (reviewer FAIL on acceptance criterion 3): the first submission's
-`evaluateAdmission` admitted only when EVERY window admitted, which meant a real `auto` launch
-under enforcement was refused overall on `seven_day`'s hold regardless of how comfortably
-`five_hour` fit -- reproducing, under a different name, the exact "every launch holds" problem
-this card exists to fix. `UNITS_NOT_COMPARABLE` alone -- a documented evidence gap, never an
-active shortage -- no longer vetoes the aggregate when another window genuinely admits; every
-other hold reason, and any actual measured `false`, still vetoes exactly as before. A real `auto`
-launch now genuinely admits when `five_hour` fits, with `seven_day`'s own gap surfaced but
-non-blocking -- proven directly in `wipGateAutoManualIntegration.test.js`'s T-0402 integration
-test, through the real, unmocked pipeline.
+visible on every decision's `admission.windows.seven_day` -- and because `evaluateAdmission` only
+admits when EVERY window admits, a real `auto` launch under enforcement will still be refused
+overall on `seven_day`'s own, separately honest hold -- proven directly in
+`wipGateAutoManualIntegration.test.js`'s T-0402 integration test, through the real, unmocked
+pipeline. A draft of this card briefly tried treating `UNITS_NOT_COMPARABLE` alone as a non-veto
+so `five_hour`'s own fit could admit the aggregate anyway; @DennieSeth's review of PR #449
+rejected that after measuring it against the committed default (a fully-consumed `seven_day`
+window with no conversion still let the launch through). A window that can't be compared with
+the estimate is an unresolved unknown, not an absent window, so that carve-out was reverted and
+the aggregate stays strict.
 
 ## How to re-fit
 
