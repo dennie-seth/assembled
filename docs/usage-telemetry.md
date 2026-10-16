@@ -661,23 +661,39 @@ all. The worst case (a fully idle board, every tick stale) is 48 minimal single-
 invocations/day; this is deliberately not reduced further, since the whole point is a reading at
 every decision point, not a sampled one. This session cannot measure the exact dollar cost of one
 such preflight exchange (no `claude` CLI invocation grant here -- see below), so the bound above is
-stated as a request-count ceiling, not a dollar figure; whoever enables `USAGE_PROBE_ENABLED` in
-production should treat "up to 48 minimal preflight exchanges/day" as the number to weigh, not an
-assumed-negligible cost.
+stated as a request-count ceiling, not a dollar figure. This cost is only ever incurred once a
+human has already set `AUTO_LAUNCH_ENABLED` (the poller does not tick at all otherwise, see
+below) -- "up to 48 minimal preflight exchanges/day" is the number whoever flips that flag in
+production should weigh, not an assumed-negligible cost.
 
-**Not wired in as a default.** `createAutoLaunchPoller`'s `usageProbeFn` constructor option
-defaults to `null` unless `USAGE_PROBE_ENABLED` is set (`usageProbeEnabledFromEnv()` in
-`autoLaunchPoller.js`), the same "deploying the code must not be what switches it on" posture
-`AUTO_LAUNCH_ENABLED` itself already has. Two reasons, not one: it spends real usage on a cadence
-once enabled (above), and -- just as load-bearing -- no persona in this runner (implementer or
-reviewer) holds a grant to invoke `claude` directly, so `spawnUsageProbe`'s actual child-process
-spawn/kill path has never been exercised against a live CLI in any session that could have written
-or reviewed this card. It is tested exactly the way `claudeCliRunner.js`'s own spawn-based runner
-already is -- an injected `spawnFn`, never a live invocation -- and the "end to end" demonstration
-below substitutes an injected `usageProbeFn` for the same reason. A human turning
-`USAGE_PROBE_ENABLED` on in production is the point at which this gets its first live exercise;
-until then, shipping it default-off is what keeps that gap honest instead of papering over it with
-an unverified claim.
+**Wired in by default, once auto-launch itself is running.** `createAutoLaunchPoller`'s
+`usageProbeFn` constructor option defaults to `defaultUsageProbeFn` unless `USAGE_PROBE_DISABLED`
+is set (`usageProbeDisabledFromEnv()` in `autoLaunchPoller.js`) -- the OPPOSITE default from the
+first round of this card. The first round gated the probe behind its own separate opt-in
+(`USAGE_PROBE_ENABLED`, default off), reasoning by analogy to `AUTO_LAUNCH_ENABLED`'s "deploying
+the code must not be what switches it on" posture. On review (FAIL, 2026-10-16T13:56:39.202Z,
+criterion 1) that reasoning doesn't hold: `AUTO_LAUNCH_ENABLED` is already the real "a human must
+opt in before anything spends" gate here -- `usageProbeFn` is never even consulted unless
+`tick()` is already running, which requires a human to have set it. A SECOND opt-in behind that
+one does not add any additional safety; it just reproduces, by default, the exact 48-hour-stale
+bug this card exists to fix for anyone who flips `AUTO_LAUNCH_ENABLED` without separately knowing
+to flip `USAGE_PROBE_ENABLED` too -- which is what the live board's own history did. The
+window-aware comparison `tick()` already logs on every tick regardless of configuration (T-0367/
+T-0369, "evidence-collection only by default") specifically so the difference could be judged
+before enforcement is ever turned on; a probe that is itself opt-in defeats that purpose by
+leaving the evidence permanently uninformative.
+
+No persona in this runner (implementer or reviewer) holds a grant to invoke `claude` directly, so
+`spawnUsageProbe`'s actual child-process spawn/kill path has never been exercised against a live
+CLI in any session that could have written or reviewed this card -- that remains true under
+either default. It is tested exactly the way `claudeCliRunner.js`'s own spawn-based runner already
+is: an injected `spawnFn` (`usageProbe.test.js`), and the "end to end" demonstration below mocks
+only the OS-level `node:child_process.spawn` call, exercising every other line of the real default
+path (`createAutoLaunchPoller` -> `readUsageTelemetry` -> `readWindowUsage` -> `withFreshProbe` ->
+`defaultUsageProbeFn` -> `spawnUsageProbe`) unmodified. A human turning `AUTO_LAUNCH_ENABLED` on in
+production is still the point at which `spawnUsageProbe` gets its first live exercise against a
+real `claude` process; a human who wants the old scan-only behavior once auto-launch is already on
+sets `USAGE_PROBE_DISABLED=1` explicitly.
 
 ### `seven_day`: resolved from evidence -- not reliably obtainable this way
 
@@ -720,14 +736,17 @@ stops being the thing standing between the live board and a fresh reading once a
 
 ### Edge cases
 
-- **Idle board, no probe wired in (today's live-board default).** After an hour of idleness the
-  gate sees exactly what it saw in the 48-hour log excerpt above: `five_hour=unknown(stale)
-  seven_day=unknown(unavailable)`. Still true after this card, by design, until `USAGE_PROBE_ENABLED`
-  is set -- this card does not change default production behavior, only what is available once a
-  human turns the probe on.
-- **Idle board, probe wired in.** The scan result is stale/unavailable (same as above), so
-  `withFreshProbe` tries the probe every tick; a successful probe reading is `measured`/`estimated`
-  with `ageMs: 0`, independent of how long the board has been idle.
+- **Idle board, default configuration (`AUTO_LAUNCH_ENABLED` set, `USAGE_PROBE_DISABLED` unset).**
+  After an hour of idleness the scan result is stale/unavailable (same as the 48-hour log excerpt
+  above), so `withFreshProbe` tries the probe every tick; a successful probe reading is
+  `measured`/`estimated` with `ageMs: 0`, independent of how long the board has been idle. This is
+  the default once this card lands -- see "Demonstrated end to end" below for the real log line.
+- **Idle board, `USAGE_PROBE_DISABLED=1`.** The gate sees exactly what it saw in the 48-hour log
+  excerpt above: `five_hour=unknown(stale) seven_day=unknown(unavailable)` -- the explicit opt-out
+  reproduces the pre-T-0438 behavior exactly, with nothing else changed.
+- **`AUTO_LAUNCH_ENABLED` unset (the poller's own default).** `tick()` never runs at all
+  (`effectivelyEnabled` is `false`), so `usageProbeFn`'s own default is moot -- nothing spends
+  anything until a human opts into auto-launch in the first place.
 - **A window that has reset since the last reading.** Unchanged: `classifyReading`'s existing
   `resetElapsed` handling applies identically to a probe-obtained reading (see "a probe reading
   still honors an elapsed reset window" in `usageTelemetryFreshness.test.js`) -- a probe reading
@@ -748,19 +767,40 @@ stops being the thing standing between the live board and a fresh reading once a
 
 ### Demonstrated end to end
 
-Run against a real (empty, simulating the idle live board) `runsDir`, through the unmodified
-`createAutoLaunchPoller`/`tick()` code path -- the only substitution is `usageProbeFn` itself,
-standing in for a live `claude` CLI call for the reason given above:
+**Round 1 evidence (superseded).** The first round of this card demonstrated the probe only with
+`usageProbeFn` itself injected as a double standing in for the live `claude` CLI call -- it proved
+the wiring *works*, but since the default was `null` unless `USAGE_PROBE_ENABLED` was explicitly
+set, it never proved the BRANCH HEAD's own default behavior changed. Reviewer FAIL
+(2026-10-16T13:56:39.202Z, criterion 1) correctly called this out: on the branch head as shipped,
+`five_hour` was still `unknown(stale)` at decision time, by default.
+
+**Round 2 evidence (current).** `usageProbeDefaultWiring.test.js` mocks ONLY the OS-level
+`node:child_process.spawn` call -- not `usageProbeFn`, not `readUsageTelemetryFn` -- and drives
+`createAutoLaunchPoller` with `usageProbeFn` *omitted entirely*, i.e. its own real default. Every
+other line of the real path runs unmodified: `tick()` -> `readUsageTelemetry` ->
+`readWindowUsage` (real filesystem scan of an empty `runsDir`, same as an idle live board) ->
+`withFreshProbe` -> `defaultUsageProbeFn` -> `spawnUsageProbe` -> the (mocked) `spawn("claude",
+["-p", "--output-format", "stream-json", "--verbose"], ...)` call -> a fed-in `rate_limit_event`
+line on the fake child's stdout. The poller's own logged line, captured directly from that test
+run (`npx vitest run test/runner/usageProbeDefaultWiring.test.js`, branch head):
 
 ```
-=== WITHOUT the probe (today's live-board behavior, reproduced) ===
-assembled-board: auto-launch: usage gate comparison -- legacy(newest-event)=unknown window-aware=[five_hour=unknown(unavailable) seven_day=unknown(unavailable)]
-
-=== WITH the probe wired in (fake spawn standing in for the live claude CLI) ===
-assembled-board: auto-launch: usage gate comparison -- legacy(newest-event)=unknown window-aware=[five_hour=ok(0.41) seven_day=unknown(unavailable)]
+assembled-board: auto-launch: usage gate comparison -- legacy(newest-event)=unknown window-aware=[five_hour=ok(0.37) seven_day=unknown(unavailable)]
 ```
 
-`five_hour` goes from `unknown(unavailable)` to a real, non-null `ok(0.41)` the moment a probe is
-wired in -- `seven_day` stays honestly unknown, per the evidence above. See
+`five_hour` is `ok(0.37)` -- a real, non-null utilization -- with NOTHING overridden except the
+OS-level spawn call itself, which is the one piece no persona in this runner holds a grant to
+exercise live (see above). The reading's own `ageMs` is `0` by construction (`withFreshProbe`
+stamps `observedAtMs: now`), so it is always within `DEFAULT_MAX_STALENESS_MS.five_hour` (15
+minutes) regardless of how long the poller has been idle; see "The bound and the cadence,
+reconciled" below for why that makes the bound irrelevant to this decision rather than requiring
+it to be widened. `seven_day` stays honestly `unknown(unavailable)`, per the evidence above --
+unchanged, since `PROBEABLE_WINDOW_KINDS` never includes it.
+
+The same test file also pins the explicit opt-out: with `USAGE_PROBE_DISABLED=1` set, `spawn` is
+never called and the gate reproduces the exact pre-T-0438 all-unknown line. See
 `usageTelemetryFreshness.test.js`'s "createAutoLaunchPoller -- decision-time probe wiring,
-demonstrated end to end" suite for the same assertion pinned as a regression test.
+demonstrated end to end" suite for the lower-level wiring assertions (probe called with the right
+arguments, bound widened correctly, etc.) with an injected `usageProbeFn` double -- useful for
+pinning those specific mechanics, but `usageProbeDefaultWiring.test.js` is the one that proves the
+BRANCH HEAD's own default, unmodified, produces this line.
