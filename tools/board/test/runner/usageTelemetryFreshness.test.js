@@ -305,8 +305,8 @@ describe("createAutoLaunchPoller -- decision-time probe wiring, demonstrated end
     return { poller, logger };
   }
 
-  it("without a probe, the real reader reproduces the live board's own all-unknown log line", async () => {
-    const { poller, logger } = makeRealPoller({ usageProbeFn: undefined });
+  it("with the probe explicitly disabled (usageProbeFn: null), the real reader reproduces the live board's own all-unknown log line", async () => {
+    const { poller, logger } = makeRealPoller({ usageProbeFn: null });
 
     await poller.tick();
 
