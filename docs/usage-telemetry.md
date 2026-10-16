@@ -595,3 +595,172 @@ See `boardServer.test.js`'s "usage-ledger drain on shutdown" suite and `server/i
 tokens/outcome/`complete` flag by the time `close()` resolves; a drain held open past its bound
 still lets `close()` finish within that bound; a rejecting drain never throws out of `close()`; and
 both signal handlers call `close()` then exit, including when `close()` itself rejects.
+
+## Decision-time freshness (T-0438)
+
+T-0367/T-0369/T-0370/T-0379 built the reader and the admission formula; neither gave the gate
+anything fresh to read. 48 hours of live poller logs showed both windows `unknown` on every tick:
+
+```
+auto-launch: usage gate comparison -- legacy(newest-event)=0
+  window-aware=[five_hour=unknown(stale) seven_day=unknown(unavailable)]
+```
+
+Telemetry only ever arrives as a byproduct of a real card run (the `claude` CLI's own
+`rate_limit_event`, emitted during a run and stamped with `receivedAtMs` by `runOrchestrator.js`'s
+`_runPhase`). On an idle board, or one ticking every `AUTO_LAUNCH_INTERVAL_MS` (30 minutes on the
+live board) with no card having run recently, there is nothing fresher than whatever the last real
+run happened to leave behind -- and that can be minutes, hours, or (crossing an overnight gap) most
+of a day old. The two windows fail for two different reasons, addressed separately below.
+
+### Why widening `MAX_STALENESS_MS` does not work
+
+The acceptance bar for this card requires evidence, not a wider constant asserted to be safe.
+Checking the actual gaps between runs on this board's own `tasks/.runs/*.jsonl` (484 `five_hour`-
+bearing logs as of 2026-10-16) shows runs clustering every 30 minutes to a few hours while the
+poller is busy, then overnight/idle gaps of many hours to a full day (e.g. a `five_hour` reading in
+`T-0269-2026-10-07T12-08-42-472Z.jsonl` and the next one in `T-0268-2026-10-08T12-02-21-827Z.jsonl`
+-- essentially 24 hours apart). No constant this card could truthfully widen `five_hour`'s 15-minute
+bound to would cover that gap without also covering the "a lot could have changed, including usage
+from outside this board" case the bound exists to catch -- the 48 hours of real `unknown(stale)`
+log lines already prove the actual gaps exceed anything a wider-but-still-honest bound could claim.
+Widening is rejected on this evidence, not on principle alone.
+
+### `five_hour`: a decision-time probe, not a wider bound
+
+`usageTelemetry.js`'s `readWindowUsage`/`readUsageTelemetry` accept an optional `probeFn`. When the
+log-scan reading for a window in `PROBEABLE_WINDOW_KINDS` (`five_hour` only -- see below) is not
+already fresh (`measured`/`estimated`), `probeFn({windowKind, now})` is tried once; a successful
+result (`{rateLimitInfo}` whose `rateLimitType` matches the requested window) is classified through
+the exact same `classifyReading` every scanned reading goes through, with `timingTrusted: true` and
+`observedAtMs: now` -- the caller received this reading at this instant, so there is nothing to
+distrust about its age the way a historical log record can be untimed. Omitting `probeFn` (the
+default everywhere this card does not explicitly wire one in) reproduces the exact pre-T-0438
+scan-only behavior; a probe that throws, resolves with nothing usable, or reports the wrong
+`rateLimitType` leaves the scan's own (possibly `stale`/`unavailable`) classification standing --
+fail-safe, same contract as the rest of this module.
+
+The real mechanism (`usageProbe.js`'s `spawnUsageProbe`/`defaultUsageProbeFn`) is a minimal
+`claude -p --output-format stream-json --verbose` invocation -- no `--allowedTools`, no
+`--settings`, no `--model`, no card body -- killed the instant its first `rate_limit_event` line
+arrives on stdout. That event arrives BEFORE the costly part of a real turn: this card's own run
+log, `tasks/.runs/T-0438-2026-10-16T13-25-15-109Z.jsonl`, shows the `rate_limit_event` at line 1 and
+the first `assistant` event (33,544 `cache_creation_input_tokens`) at line 4 -- the CLI reports this
+reading as part of its own preflight, before it spends on the system-prompt/tool-definition cache
+creation a real card run incurs. Killing the child the moment the event is seen bounds the probe's
+cost to whatever that preflight exchange alone costs, independent of what model or tool list a real
+invocation would have used.
+
+**Cost, stated, not assumed.** The probe is charged against the same `five_hour` window it
+measures (the edge case "a probe that itself consumes the window it measures" in this card's
+acceptance criteria) -- it is a real, if minimal, request. It runs at most once per poller tick
+(`AUTO_LAUNCH_INTERVAL_MS`, 30 minutes on the live board = up to 48/day), and only when the scan
+result is not already fresh, so a board where real cards are already running every few minutes
+pays nothing extra -- the scan stays fresh on its own and `withFreshProbe` never calls `probeFn` at
+all. The worst case (a fully idle board, every tick stale) is 48 minimal single-exchange CLI
+invocations/day; this is deliberately not reduced further, since the whole point is a reading at
+every decision point, not a sampled one. This session cannot measure the exact dollar cost of one
+such preflight exchange (no `claude` CLI invocation grant here -- see below), so the bound above is
+stated as a request-count ceiling, not a dollar figure; whoever enables `USAGE_PROBE_ENABLED` in
+production should treat "up to 48 minimal preflight exchanges/day" as the number to weigh, not an
+assumed-negligible cost.
+
+**Not wired in as a default.** `createAutoLaunchPoller`'s `usageProbeFn` constructor option
+defaults to `null` unless `USAGE_PROBE_ENABLED` is set (`usageProbeEnabledFromEnv()` in
+`autoLaunchPoller.js`), the same "deploying the code must not be what switches it on" posture
+`AUTO_LAUNCH_ENABLED` itself already has. Two reasons, not one: it spends real usage on a cadence
+once enabled (above), and -- just as load-bearing -- no persona in this runner (implementer or
+reviewer) holds a grant to invoke `claude` directly, so `spawnUsageProbe`'s actual child-process
+spawn/kill path has never been exercised against a live CLI in any session that could have written
+or reviewed this card. It is tested exactly the way `claudeCliRunner.js`'s own spawn-based runner
+already is -- an injected `spawnFn`, never a live invocation -- and the "end to end" demonstration
+below substitutes an injected `usageProbeFn` for the same reason. A human turning
+`USAGE_PROBE_ENABLED` on in production is the point at which this gets its first live exercise;
+until then, shipping it default-off is what keeps that gap honest instead of papering over it with
+an unverified claim.
+
+### `seven_day`: resolved from evidence -- not reliably obtainable this way
+
+No `seven_day` `rate_limit_event` appears anywhere in `tasks/.runs/*.jsonl` after
+`T-0403-2026-09-23T06-11-11-963Z.jsonl`. Checked directly in this session (`grep -l` over every
+`*.jsonl` in `tasks/.runs/`, 2026-10-16): 150 files carry a `seven_day` reading, none newer than
+2026-09-23, while 484 files carry a `five_hour` reading with the newest being this very card's own
+run log (`T-0438-2026-10-16T13-25-15-109Z.jsonl`). That is 23+ days and hundreds of intervening runs
+with zero weekly readings, while `five_hour` fires on essentially every run in that same stretch.
+The CLI evidently does not emit a weekly reading on an ordinary turn in this operating setup (it did
+twice, historically -- `T-0221-2026-08-23T12-26-17-498Z.jsonl:724` and
+`T-0367-2026-09-11T22-06-33-812Z.jsonl:1`, both cited earlier in this document -- but not since).
+
+Given that, probing for `seven_day` the same way as `five_hour` would spend a real request with no
+realistic chance of producing the reading it's looking for -- this is not a staleness problem a
+probe (or a wider bound) can fix, it is "this setup's CLI does not produce this signal on demand".
+`PROBEABLE_WINDOW_KINDS` therefore names `five_hour` only; `seven_day` is deliberately left on the
+existing scan-only path. Its existing fail-safe behavior is already the right answer for a window
+that cannot be measured: `unavailable` -> `utilization: null` -> `evaluateWindowAwareUsageGate`
+reports `blocked: null` for it, which the gate never treats as a block (and, just as importantly,
+never treats as "fine to launch on" either) -- a window that cannot be measured stays honestly
+unknown, forever, until the CLI starts emitting the signal again on its own. No code change was
+needed here; the finding is the fix.
+
+### The bound and the cadence, reconciled
+
+`DEFAULT_MAX_STALENESS_MS.five_hour` (15 minutes) is unchanged by this card, and stays correct for
+what it was always measuring: how old a *scanned* log reading can be before its timing can no longer
+be trusted, calibrated against real inter-event gaps during an active session (see the "Per-window
+record" table above). It was never truthful against the *decision* cadence (`AUTO_LAUNCH_INTERVAL_MS`,
+30 minutes on the live board, let alone a longer idle gap), and this card does not pretend otherwise.
+
+What makes the bound irrelevant to the DECISION, not what widens it: when `usageProbeFn` is wired
+in, a reading obtained via the probe always has `observedAtMs: now` and `ageMs: 0` by construction
+(`withFreshProbe` stamps it at the instant it's received, exactly like the probe's own caller
+receiving it just now) -- so it is always within bound, regardless of how long the poller has gone
+since the last real run's scan-sourced reading. The 15-minute bound keeps meaning exactly what it
+always meant for the scan path (used whenever probing is off, fails, or isn't wired in); it simply
+stops being the thing standing between the live board and a fresh reading once a probe is enabled.
+
+### Edge cases
+
+- **Idle board, no probe wired in (today's live-board default).** After an hour of idleness the
+  gate sees exactly what it saw in the 48-hour log excerpt above: `five_hour=unknown(stale)
+  seven_day=unknown(unavailable)`. Still true after this card, by design, until `USAGE_PROBE_ENABLED`
+  is set -- this card does not change default production behavior, only what is available once a
+  human turns the probe on.
+- **Idle board, probe wired in.** The scan result is stale/unavailable (same as above), so
+  `withFreshProbe` tries the probe every tick; a successful probe reading is `measured`/`estimated`
+  with `ageMs: 0`, independent of how long the board has been idle.
+- **A window that has reset since the last reading.** Unchanged: `classifyReading`'s existing
+  `resetElapsed` handling applies identically to a probe-obtained reading (see "a probe reading
+  still honors an elapsed reset window" in `usageTelemetryFreshness.test.js`) -- a probe reading
+  with `resetsAt` already in the past reads `estimated`/`0`, never the old window's stale pressure.
+- **A log with no receive timestamp.** Unaffected -- this path only concerns the scan, not the
+  probe; `usageTelemetry.js:205`'s existing conservative handling is untouched.
+- **The CLI changing its payload.** `withFreshProbe` reuses `classifyReading`, so a probe reading
+  that happens to carry a real numeric `utilization` is still preferred over the status-only
+  estimate, exactly as the scan path already does.
+- **A probe that itself consumes the window it measures.** Addressed under "Cost" above: the probe
+  is one real, minimal request, charged against the same window, run at most once per tick and only
+  when needed.
+- **Making the gate more permissive to "make it work."** Not done: `withFreshProbe` can only
+  replace a reading with a fresher one of the *same* window via `classifyReading`'s existing rules
+  (status-only is never `measured`, stale/unavailable still withholds `utilization`, an unmatched
+  `rateLimitType` is discarded) -- there is no new path by which `null` becomes a number other than
+  an honestly obtained one, and no change to what `stale`/`unavailable` mean.
+
+### Demonstrated end to end
+
+Run against a real (empty, simulating the idle live board) `runsDir`, through the unmodified
+`createAutoLaunchPoller`/`tick()` code path -- the only substitution is `usageProbeFn` itself,
+standing in for a live `claude` CLI call for the reason given above:
+
+```
+=== WITHOUT the probe (today's live-board behavior, reproduced) ===
+assembled-board: auto-launch: usage gate comparison -- legacy(newest-event)=unknown window-aware=[five_hour=unknown(unavailable) seven_day=unknown(unavailable)]
+
+=== WITH the probe wired in (fake spawn standing in for the live claude CLI) ===
+assembled-board: auto-launch: usage gate comparison -- legacy(newest-event)=unknown window-aware=[five_hour=ok(0.41) seven_day=unknown(unavailable)]
+```
+
+`five_hour` goes from `unknown(unavailable)` to a real, non-null `ok(0.41)` the moment a probe is
+wired in -- `seven_day` stays honestly unknown, per the evidence above. See
+`usageTelemetryFreshness.test.js`'s "createAutoLaunchPoller -- decision-time probe wiring,
+demonstrated end to end" suite for the same assertion pinned as a regression test.
