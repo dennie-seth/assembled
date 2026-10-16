@@ -19,7 +19,11 @@ import { rmTemp } from "../helpers/rmTemp.js";
  * injected to exercise the fit/no-fit branches at all).
  */
 
-const UNIT_CONVERSION = { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
+// T-0402: `evaluateAdmission`'s `unitConversion` is keyed per window -- a flat rate is no longer
+// a valid shape, even for a test deliberately injecting a stand-in rate (see this file's own
+// header comment on why a stand-in is injected at all).
+const UNIT_CONVERSION_RATE = { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
+const UNIT_CONVERSION = { five_hour: UNIT_CONVERSION_RATE, seven_day: UNIT_CONVERSION_RATE };
 
 function makeTask(overrides = {}) {
   return {
