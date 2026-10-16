@@ -42,7 +42,9 @@ describe("deriveRateSamplesForWindow -- one rate sample per completed reset cycl
     const ledgerEntries = [ledgerEntry({ recordedAtMs: 1500, costUsd: 4 })];
     const samples = deriveRateSamplesForWindow({ readings, ledgerEntries });
     expect(samples).toHaveLength(1);
-    expect(samples[0]).toMatchObject({ dUtil: 0.2, dUsd: 4, rate: 20 });
+    expect(samples[0].dUtil).toBeCloseTo(0.2);
+    expect(samples[0].dUsd).toBe(4);
+    expect(samples[0].rate).toBeCloseTo(20);
   });
 
   it("ignores a cycle with only one reading -- no increase to measure against", () => {
