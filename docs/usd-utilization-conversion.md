@@ -98,11 +98,19 @@ window with a real conversion does not retroactively make `seven_day` comparable
 are evaluated, and now converted, completely independently (`admissionDecision.js`'s
 `evaluateAdmission` narrows `unitConversion` per window kind precisely so one window's evidence
 can never be borrowed by the other). Until a later re-fit accumulates enough `seven_day` reset
-cycles with a second reading, `seven_day` keeps holding `units_not_comparable`, and because
-`evaluateAdmission` only admits when EVERY window admits, a real `auto` launch under enforcement
-will still be refused overall on `seven_day`'s own, separately honest hold -- proven directly in
-`wipGateAutoManualIntegration.test.js`'s T-0402 integration test, through the real, unmocked
-pipeline.
+cycles with a second reading, `seven_day` keeps holding `units_not_comparable`, on its own --
+visible on every decision's `admission.windows.seven_day`.
+
+**T-0402 round 2** (reviewer FAIL on acceptance criterion 3): the first submission's
+`evaluateAdmission` admitted only when EVERY window admitted, which meant a real `auto` launch
+under enforcement was refused overall on `seven_day`'s hold regardless of how comfortably
+`five_hour` fit -- reproducing, under a different name, the exact "every launch holds" problem
+this card exists to fix. `UNITS_NOT_COMPARABLE` alone -- a documented evidence gap, never an
+active shortage -- no longer vetoes the aggregate when another window genuinely admits; every
+other hold reason, and any actual measured `false`, still vetoes exactly as before. A real `auto`
+launch now genuinely admits when `five_hour` fits, with `seven_day`'s own gap surfaced but
+non-blocking -- proven directly in `wipGateAutoManualIntegration.test.js`'s T-0402 integration
+test, through the real, unmocked pipeline.
 
 ## How to re-fit
 
