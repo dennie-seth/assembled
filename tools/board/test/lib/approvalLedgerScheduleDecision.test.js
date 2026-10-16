@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   decideLedgerExport,
   simulateWorstCaseAgeHours,
+  worstCaseAgeForOutage,
   DEFAULT_REFRESH_THRESHOLD_HOURS
 } from "../../src/lib/approvalLedgerScheduleDecision.js";
 
@@ -108,7 +109,7 @@ describe("simulateWorstCaseAgeHours", () => {
     expect(commitCount).toBeGreaterThan(0);
   });
 
-  it("two consecutive missed runs still stay under the 24h gate -- Persistent=true only needs to catch up by the next tick, not instantly", () => {
+  it("two consecutive missed runs CAN still stay under 24h at one alignment -- but this offset is not the worst case (see worstCaseAgeForOutage below)", () => {
     const { maxAgeHours } = simulateWorstCaseAgeHours({
       intervalHours: 4,
       refreshThresholdHours: 12,
@@ -119,46 +120,15 @@ describe("simulateWorstCaseAgeHours", () => {
     expect(maxAgeHours).toBeLessThan(24);
   });
 
-  it("names the actual limit of this design: enough consecutive missed runs breaks the under-24h bound", () => {
-    // Four consecutive missed runs = a 16h outage with no catch-up in between. This is the
-    // honest edge of "refresh-before-it-bites": the policy bounds staleness against the
-    // SCHEDULE, not against the box being off for most of a day. A box down that long already
-    // shows up as silence across every other timer in this ops suite (board-db-backup,
-    // board-integrity-check, etc.), not just this one -- see the card's own tradeoff note.
-    const { maxAgeHours } = simulateWorstCaseAgeHours({
-      intervalHours: 4,
-      refreshThresholdHours: 12,
-      totalHours: 240,
-      missedRunTicks: new Set([3, 4, 5, 6]) // hours 12, 16, 20, 24 all silently skipped
-    });
-    expect(maxAgeHours).toBe(28);
-    expect(maxAgeHours).toBeGreaterThan(24);
-  });
-
-  it("pins the real edge: three consecutive missed runs already exhausts the margin to the 24h gate, not four", () => {
-    // A prior round's README claimed the design survives three consecutive misses and only
-    // breaks at four. That undercounts: a gap positioned where the run that WOULD have forced a
-    // refresh is itself missed (ticks 3-5, the same alignment the specs above already use) drives
-    // the worst case to exactly 24h -- the gate's own BOARD_APPROVAL_LEDGER_STALE_HOURS threshold,
-    // with zero hours of margin left, not comfortably under it. This is the gap "straddling the
-    // gate boundary" the fix-round asked this suite to pin, rather than just restating one
-    // convenient offset.
-    const { maxAgeHours } = simulateWorstCaseAgeHours({
-      intervalHours: 4,
-      refreshThresholdHours: 12,
-      totalHours: 240,
-      missedRunTicks: new Set([3, 4, 5]) // hours 12, 16, 20 all silently skipped
-    });
-    expect(maxAgeHours).toBe(24);
-  });
-
-  it("a gap positioned right after a publish is the SAFE case -- position, not just gap length, determines the margin", () => {
-    // Same gap length (3 consecutive misses) as the spec above, but positioned immediately after
-    // the natural first refresh (which lands at hour 16 in this schedule) instead of over the run
-    // that would have forced one. The slack already built into the refresh cadence absorbs this
-    // gap entirely -- worst case never rises above the steady-state 16h high-water mark. Proves
-    // the arithmetic depends on WHERE an outage falls relative to the schedule, not only how long
-    // it lasts, so a single offset can't stand in for "the" worst case.
+  it("a gap positioned right after a publish is a SAFE case -- position, not just gap length, determines the margin", () => {
+    // Three consecutive misses, positioned immediately after the natural first refresh (which
+    // lands at hour 16 in this schedule) instead of over the run that would have forced one. The
+    // slack already built into the refresh cadence absorbs this gap entirely -- worst case never
+    // rises above the steady-state 16h high-water mark, even though the SAME gap length at a
+    // different offset reaches 28h (see worstCaseAgeForOutage below). Proves the arithmetic
+    // depends on WHERE an outage falls relative to the schedule, not only how long it lasts, so a
+    // single hand-picked offset can never stand in for "the" worst case -- which is exactly why
+    // the specs below search every offset instead of asserting one.
     const { maxAgeHours } = simulateWorstCaseAgeHours({
       intervalHours: 4,
       refreshThresholdHours: 12,
@@ -167,5 +137,49 @@ describe("simulateWorstCaseAgeHours", () => {
     });
     expect(maxAgeHours).toBe(16);
     expect(maxAgeHours).toBeLessThan(24);
+  });
+});
+
+describe("worstCaseAgeForOutage", () => {
+  /**
+   * A prior fix-round hand-picked three example offsets (missedRunTicks: {3,4}, {3,4,5,6},
+   * {3,4,5}) and concluded from them that three consecutive misses was "the real edge" and two
+   * always stayed safely under 24h. Both conclusions were wrong, and picking examples by hand is
+   * exactly how that happened: ticks {3,4} (two misses starting at hour 12) lands at 20h, but
+   * ticks {4,5} (two misses starting at hour 16) lands at 24h -- the SAME miss count, a different
+   * offset, and 4 hours worse. `worstCaseAgeForOutage` is the durable fix the card's fix-round
+   * asked for: instead of asserting one offset, it searches every possible offset within a full
+   * steady-state cycle and returns the worst one, so "the worst case for N consecutive misses" is
+   * a value a test actually proves, not one a comment infers from three examples.
+   */
+  it("0 misses (on-schedule steady state): worst case is 16h", () => {
+    expect(worstCaseAgeForOutage({ intervalHours: 4, refreshThresholdHours: 12, missCount: 0 })).toBe(16);
+  });
+
+  it("1 consecutive miss: worst case is 20h, still under the 24h gate", () => {
+    const age = worstCaseAgeForOutage({ intervalHours: 4, refreshThresholdHours: 12, missCount: 1 });
+    expect(age).toBe(20);
+    expect(age).toBeLessThan(24);
+  });
+
+  it("2 consecutive misses: worst case is EXACTLY 24h -- the gate's own threshold, with zero hours of margin", () => {
+    // 24 > 24 is false, so checkApprovalProvenanceDrift.js's strict `ageHours > LEDGER_STALE_HOURS`
+    // does not fire at this exact value -- but there is no slack left at all: the committed ledger
+    // sits precisely on the gate's own line, not comfortably under it, after an outage as short as
+    // two missed 4-hourly runs (8 hours). See ops/README.md for why real-world timer jitter
+    // (RandomizedDelaySec/AccuracySec on board-ledger-export.timer) erases even that.
+    const age = worstCaseAgeForOutage({ intervalHours: 4, refreshThresholdHours: 12, missCount: 2 });
+    expect(age).toBe(24);
+  });
+
+  it("3 consecutive misses: worst case is 28h, which DOES exceed the 24h gate", () => {
+    const age = worstCaseAgeForOutage({ intervalHours: 4, refreshThresholdHours: 12, missCount: 3 });
+    expect(age).toBe(28);
+    expect(age).toBeGreaterThan(24);
+  });
+
+  it("4 consecutive misses: worst case is 32h -- the +4h-per-extra-miss pattern holds beyond the 2-miss edge, not just at one more hand-picked point", () => {
+    const age = worstCaseAgeForOutage({ intervalHours: 4, refreshThresholdHours: 12, missCount: 4 });
+    expect(age).toBe(32);
   });
 });
