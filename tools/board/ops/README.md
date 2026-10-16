@@ -592,42 +592,68 @@ either. That's the price of the guarantee below.
 
 ### Proof it refreshes before the gate bites
 
-The same module's `simulateWorstCaseAgeHours` is the worked timeline the
-card's acceptance criteria ask for, not a comment asserting it:
+The same module's `simulateWorstCaseAgeHours` and `worstCaseAgeForOutage`
+are the worked timeline the card's acceptance criteria ask for, not a
+comment asserting it. **A previous round of this section picked three
+example outage offsets by hand (two misses starting at hour 12, three
+misses starting at hour 12, four misses starting at hour 12) and inferred
+from those three points that three consecutive misses was "the real edge"
+and two was always safe. Both conclusions were wrong**, because a
+different offset for the SAME miss count gives a different, worse answer
+-- picking examples is exactly what produced the error. `worstCaseAgeForOutage`
+fixes that by searching every possible offset within a full steady-state
+cycle instead of trusting one. The true worst case, by miss count (interval
+4h, threshold 12h):
 
-- **Normal operation** (interval 4h, threshold 12h, no run ever missed):
-  worst-case ledger age never exceeds `threshold + interval` = 16h,
-  comfortably under the gate's 24h. Spec: "never lets the ledger's age
+| consecutive misses | worst-case ledger age | vs. the 24h gate |
+|---|---|---|
+| 0 (on schedule) | 16h | comfortably under |
+| 1 | 20h | under |
+| 2 | **24h** | **exactly the gate's own threshold -- zero margin** |
+| 3 | 28h | exceeds it |
+| 4 | 32h | exceeds it |
+
+- **Normal operation, no run ever missed**: worst-case ledger age never
+  exceeds `threshold + interval` = 16h. Spec: "never lets the ledger's age
   exceed threshold + interval over a long quiet period, on schedule."
-- **One scheduled run silently missed** (the box was off for one tick):
-  worst case rises to 20h -- still under 24h. Spec: "stays under the 24h
-  gate even when a single scheduled run is missed entirely."
-- **Two consecutive missed runs**: worst case is 20h -- `Persistent=true`
-  only needs to catch the schedule up by the NEXT tick, not instantly, so
-  two misses in a row still land inside the bound. Spec: "two consecutive
-  missed runs still stay under the 24h gate."
-- **The real edge, pinned rather than rounded up**: **three** consecutive
-  missed runs (a 12h+ outage), positioned where the run that would have
-  forced a refresh is itself one of the misses, already drives the worst
-  case to exactly 24h -- the gate's own `BOARD_APPROVAL_LEDGER_STALE_HOURS`
-  threshold, with zero hours of margin left, not "comfortably under" it.
-  Spec: "pins the real edge: three consecutive missed runs already exhausts
-  the margin to the 24h gate, not four." (An earlier round of this doc
-  named four as the breaking point; that undercounted by one tick -- see
-  below for why position, not just count, is what moves this number.)
-  **Four** consecutive missed runs clearly exceeds it, at 28h. Spec: "names
-  the actual limit of this design." An outage that long already means
-  every OTHER timer in this ops suite (`board-db-backup`,
-  `board-integrity-check`, `board-assets-sync`) has been silent for the
-  same stretch -- this job's own skip/run log is one more place that shows
-  it, not the only place an operator would notice.
-- **Position matters as much as count**: the same three-consecutive-miss
-  gap positioned right after a publish instead -- e.g. starting the tick
-  after the schedule's natural first refresh -- never rises above the
-  steady-state 16h high-water mark, because the cadence's own slack
-  absorbs it. Spec: "a gap positioned right after a publish is the SAFE
-  case." The 24h figure above is the worst alignment across the schedule,
-  not every outage of that length.
+- **One scheduled run silently missed**: worst case is 20h, still under
+  24h regardless of where in the schedule it falls. Spec: "1 consecutive
+  miss: worst case is 20h, still under the 24h gate."
+- **Two consecutive missed runs is the real edge, not three.** The worst
+  alignment -- an outage that starts right after the one tick that sits
+  exactly AT `refreshThresholdHours` (age `== 12`, which `decideLedgerExport`
+  treats as still fresh under its strict `>` comparison, wasting that run's
+  chance to force a refresh before the outage begins) -- drives the age to
+  **exactly 24h**: the gate's own `BOARD_APPROVAL_LEDGER_STALE_HOURS`, with
+  zero hours of margin left. `24 > 24` is false, so `checkApprovalProvenanceDrift.js`
+  does not fire at that exact value, but there is nothing held in reserve.
+  An 8-hour outage (two missed 4-hourly runs) is already enough to reach
+  it. Spec: "2 consecutive misses: worst case is EXACTLY 24h."
+- **Three consecutive missed runs clearly exceeds the gate**, at 28h, and
+  the pattern continues (+4h per additional consecutive miss: 32h at four).
+  Specs: "3 consecutive misses: worst case is 28h" / "4 consecutive misses:
+  worst case is 32h." An outage that long already means every OTHER timer
+  in this ops suite (`board-db-backup`, `board-integrity-check`,
+  `board-assets-sync`) has been silent for the same stretch -- this job's
+  own skip/run log is one more place that shows it, not the only place an
+  operator would notice.
+- **Position matters as much as count**: a three-consecutive-miss gap
+  positioned right after a publish instead of over the hour-12 tick never
+  rises above the steady-state 16h high-water mark -- the SAME gap length
+  that reaches 28h at the worst offset. Spec: "a gap positioned right after
+  a publish is a SAFE case." The table above is the worst alignment across
+  the schedule, not every outage of that length.
+- **The 24h figure at two misses has no room for real-world jitter.**
+  `board-ledger-export.timer` runs with `AccuracySec=1min` and
+  `RandomizedDelaySec=120` (see the unit file) -- every tick can legitimately
+  fire a little late, and a run that is still mid-export or mid-push when
+  the next tick's window opens pushes the effective recovery later still.
+  None of that is modeled in the hour-granularity simulation above. A
+  two-miss outage landing at the worst offset is a theoretical dead-even
+  tie with the gate; in practice, jitter on the recovering run is as likely
+  to push the committed ledger's age fractionally past 24h as not. Treat
+  "2 consecutive misses" as the practical edge, not "safely under," and
+  "3 consecutive misses" as a confirmed, comfortable failure.
 
 ### No partial writes
 
@@ -775,15 +801,22 @@ The card's acceptance asks for early warning as the ledger approaches the
 threshold, OR a stated reason that's unnecessary given the chosen fix.
 Chosen: **unnecessary, for two reasons.**
 
-First, structurally: under normal operation (fewer than three consecutive
-missed 4-hourly runs, or a longer run of misses that doesn't land on the
-schedule's worst alignment -- see "Proof it refreshes before the gate
-bites" above), the committed ledger cannot reach anywhere near the 24h gate
-at all, so a once-a-day 03:20 check (`board-integrity-check.py`'s own
-cadence) reporting "age approaching threshold" would almost never fire,
-and on the rare day a 12h+ outage made it fire, every other timer in this
-same suite would already be silent for the same stretch -- that silence is
-the earlier, broader signal.
+First, structurally: under normal operation (no outage, or an outage of
+only one missed 4-hourly run), the committed ledger stays at 16-20h,
+comfortably under the 24h gate -- see "Proof it refreshes before the gate
+bites" above. The margin is narrower than an earlier round of this doc
+claimed, though: an outage of just **two** consecutive missed runs,
+landing at the worst offset, already reaches 24h exactly (practically, the
+edge, once timer jitter is accounted for -- see above), not three. So a
+once-a-day 03:20 check (`board-integrity-check.py`'s own cadence) reporting
+"age approaching threshold" would catch a wider range of real outages than
+previously documented, and is correspondingly less "almost never fires"
+than this section used to claim. What still holds: by the time an outage
+is long and badly-aligned enough to actually breach the gate, every other
+timer in this same ops suite (`board-db-backup`, `board-integrity-check`,
+`board-assets-sync`) has been silent for the same stretch -- that silence
+is itself an earlier, broader signal than a bespoke ledger-age check in
+one Python script would add.
 
 Second, practically: this job's own per-run log (`latest.log`/`history.log`,
 written every 4 hours regardless of outcome) already reports the ledger's
