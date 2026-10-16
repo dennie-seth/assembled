@@ -9,6 +9,7 @@ import {
   autoLaunchEnabledFromEnv,
   autoLaunchIntervalMsFromEnv,
   autoLaunchUsageMaxFromEnv,
+  usageProbeDisabledFromEnv,
   DEFAULT_AUTO_LAUNCH_INTERVAL_MS,
   DEFAULT_AUTO_LAUNCH_USAGE_MAX
 } from "../../src/runner/autoLaunchPoller.js";
@@ -117,6 +118,30 @@ describe("autoLaunchEnabledFromEnv", () => {
   it.each(["0", "false", "off", "no", "", "maybe"])("stays false for %s", (value) => {
     process.env.AUTO_LAUNCH_ENABLED = value;
     expect(autoLaunchEnabledFromEnv()).toBe(false);
+  });
+});
+
+describe("usageProbeDisabledFromEnv", () => {
+  const original = process.env.USAGE_PROBE_DISABLED;
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.USAGE_PROBE_DISABLED;
+    else process.env.USAGE_PROBE_DISABLED = original;
+  });
+
+  it("defaults to false (the probe is ON) when unset -- AUTO_LAUNCH_ENABLED is the real spend gate", () => {
+    delete process.env.USAGE_PROBE_DISABLED;
+    expect(usageProbeDisabledFromEnv()).toBe(false);
+  });
+
+  it.each(["1", "true", "on", "yes", "TRUE", "On"])("is true (opts out) when set to %s", (value) => {
+    process.env.USAGE_PROBE_DISABLED = value;
+    expect(usageProbeDisabledFromEnv()).toBe(true);
+  });
+
+  it.each(["0", "false", "off", "no", "", "maybe"])("stays false for %s", (value) => {
+    process.env.USAGE_PROBE_DISABLED = value;
+    expect(usageProbeDisabledFromEnv()).toBe(false);
   });
 });
 
@@ -410,6 +435,17 @@ describe("createAutoLaunchPoller — gate 4/5: eligibility and launch", () => {
       intervalMs: 1000,
       usageMax: 0.8,
       readUsage: async () => ({ utilization: 0, status: "allowed", reason: "status=allowed" }),
+      // T-0438 fix round 5 (reviewer, 2026-10-16T17:47:30.356Z): this test cares about the
+      // dependency guard, not telemetry -- but omitting `readUsageTelemetryFn` left
+      // `usageProbeFn` at its own real default (`defaultUsageProbeFn`), so `tick()` actually
+      // spawned a live `claude` CLI process on every run of this file (measured ~5.3s in
+      // isolation vs ~6ms for an equivalent telemetry-stubbed test, and >10s -- a real suite
+      // timeout -- under full-suite parallel load). Stubbed the same way `makePoller`'s own
+      // default already is, so no probe is ever reached.
+      readUsageTelemetryFn: async () => ({
+        five_hour: { windowKind: "five_hour", classification: "measured", utilization: 0, resetElapsed: false },
+        seven_day: { windowKind: "seven_day", classification: "measured", utilization: 0, resetElapsed: false }
+      }),
       logger
     });
 
@@ -830,7 +866,12 @@ describe("createAutoLaunchPoller — window-aware usage comparison (WIP gate T-D
     try {
       const { poller, launchFn } = makeTelemetryPoller({
         readUsageTelemetryFn: vi.fn(() => new Promise(() => {})),
-        usage: { utilization: 0.1, status: "allowed", logPath: "/runs/x.jsonl", reason: "status=allowed utilization=0.1" }
+        usage: { utilization: 0.1, status: "allowed", logPath: "/runs/x.jsonl", reason: "status=allowed utilization=0.1" },
+        // T-0438: with the default (probe-enabled) usageProbeFn, this bound widens to
+        // DEFAULT_PROBE_BOUND_MS (20s) -- see usageTelemetryFreshness.test.js's own "widens the
+        // telemetry read's own bound" test for that. This test pins the ORIGINAL 8s fallback the
+        // bare scan path still uses, so it explicitly opts out of the probe default.
+        usageProbeFn: null
       });
 
       const tickPromise = poller.tick();

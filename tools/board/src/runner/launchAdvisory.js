@@ -232,6 +232,12 @@ export function buildLaunchDecide({
   timeoutMs = DEFAULT_ADVISORY_TIMEOUT_MS,
   logger = console,
   now = () => new Date(),
+  // T-0438 fix round 4: a `readUsageTelemetry()`-shaped reading the caller already obtained this
+  // same launch decision (the auto-launch poller's own decision-time probe, see
+  // autoLaunchPoller.js's `tick()`) -- threaded straight to `decideLaunchAdvisoryFn`, which
+  // re-validates it for age/reset rather than trusting it blindly. `null` (the default) preserves
+  // the original behavior exactly: a fresh scan via `readUsageTelemetryFn`.
+  telemetryReadingsHint = null,
   readUsageTelemetryFn = readUsageTelemetry,
   listCardUsageEntriesFn = listCardUsageEntries,
   listActiveReservationsFn = listActiveReservations,
@@ -251,7 +257,8 @@ export function buildLaunchDecide({
       coverageTarget,
       fitDate,
       listCardUsageEntriesFn,
-      readUsageTelemetryFn
+      readUsageTelemetryFn,
+      telemetryReadingsHint
     });
 
     const reviewEstimate = estimateCostFn({ type: "review", observations: [], coverageTarget });

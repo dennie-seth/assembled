@@ -1,6 +1,7 @@
 import { launchCardRun, CardLaunchError, LAUNCH_TRIGGERS } from "./cardLaunch.js";
 import { readUsageSnapshot } from "./usageWindow.js";
 import { readUsageTelemetry, WINDOW_KINDS, READING_STATUS } from "./usageTelemetry.js";
+import { defaultUsageProbeFn } from "./usageProbe.js";
 import { admissionEnforcementEnabledFromEnv } from "./admissionDecision.js";
 import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
 import { appendNote } from "./runOrchestrator.js";
@@ -76,6 +77,33 @@ export function autoLaunchIntervalMsFromEnv() {
 export function autoLaunchUsageMaxFromEnv() {
   const raw = Number(process.env.AUTO_LAUNCH_USAGE_MAX);
   return Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : DEFAULT_AUTO_LAUNCH_USAGE_MAX;
+}
+
+/**
+ * T-0438: how long the telemetry read is allowed to take when a decision-time probe is wired in.
+ * A probe spawns a real process and waits on its first event -- comfortably more than
+ * `DEFAULT_BOUND_MS` (8s), which was sized for a pure log scan. Still a firm bound, same
+ * fail-safe contract as the rest of this module: a probe (or the whole telemetry read) that
+ * exceeds it degrades to the "window-aware usage comparison unavailable" branch, never hangs a
+ * tick (T-0370, Codex finding 3).
+ */
+export const DEFAULT_PROBE_BOUND_MS = 20_000;
+
+/**
+ * USAGE_PROBE_DISABLED env var: default **OFF**, i.e. the probe is ON by default -- unlike
+ * `autoLaunchEnabledFromEnv`, which is the actual "deploying the code must not start spending"
+ * gate here. That gate already covers the real spend decision: `usageProbeFn` is only ever
+ * consulted from inside `tick()`, which never runs unless a human has already set
+ * `AUTO_LAUNCH_ENABLED` (see `effectivelyEnabled`). Once a human has made that choice, the
+ * window-aware usage comparison `tick()` logs on every tick (T-0367/T-0369) is evidence this
+ * card exists to make non-null -- gating the probe behind a SECOND, separate opt-in would
+ * silently reproduce exactly the 48-hour-stale bug this card was filed to fix: a human who
+ * remembered to flip `AUTO_LAUNCH_ENABLED` but not a second flag nobody told them about. A human
+ * who wants the pre-T-0438 scan-only behavior once auto-launch is already on sets
+ * `USAGE_PROBE_DISABLED=1` explicitly. Accepts 1/true/on/yes, case-insensitive.
+ */
+export function usageProbeDisabledFromEnv() {
+  return ENABLE_VALUES.has((process.env.USAGE_PROBE_DISABLED ?? "").toLowerCase());
 }
 
 function priorityRank(task) {
@@ -223,6 +251,8 @@ export function createAutoLaunchPoller({
   usageMax = autoLaunchUsageMaxFromEnv(),
   readUsage = readUsageSnapshot,
   readUsageTelemetryFn = readUsageTelemetry,
+  usageProbeFn = usageProbeDisabledFromEnv() ? null : defaultUsageProbeFn,
+  probeBoundMs = DEFAULT_PROBE_BOUND_MS,
   enforcementEnabled = admissionEnforcementEnabledFromEnv(),
   drainModeEnabled = drainModeEnabledFromEnv(),
   drainConfig = DEFAULT_DRAIN_CONFIG,
@@ -322,8 +352,8 @@ export function createAutoLaunchPoller({
     // judged from evidence before anyone flips WIP_GATE_ENFORCEMENT_ENABLED. Bounded (T-0370 fix
     // round, Codex finding 3: a hung reader must never stall a tick) and failure-isolated: a
     // telemetry read failure or timeout here can never affect the legacy gate's own decision.
-    const telemetryReadings = await withTimeout(() => readUsageTelemetryFn({ runsDir, now: now() }), {
-      timeoutMs: DEFAULT_BOUND_MS,
+    const telemetryReadings = await withTimeout(() => readUsageTelemetryFn({ runsDir, now: now(), probeFn: usageProbeFn }), {
+      timeoutMs: usageProbeFn ? probeBoundMs : DEFAULT_BOUND_MS,
       fallback: () => null,
       logger,
       label: `${LOG_PREFIX}: readUsageTelemetry`
@@ -448,7 +478,21 @@ export function createAutoLaunchPoller({
     const passedOver = [];
     for (const candidate of candidates) {
       try {
-        const launched = await launchFn({ orchestrator, id: candidate.id, logger, trigger: LAUNCH_TRIGGERS.AUTO });
+        // T-0438 fix round 4: the comparison log just above reads telemetry WITH the
+        // decision-time probe wired in (`usageProbeFn`) -- without threading that same reading
+        // through, `launchFn` -> `launchCardRun` -> `buildLaunchDecide` would scan again with NO
+        // probe, so the admission formula (once enforcement is ever turned on) would still see
+        // the old stale/unavailable data this card exists to fix. `telemetryReadings` is `null`
+        // only when the bounded read above itself timed out/failed -- in that case there is
+        // nothing to hand down, and `launchCardRun`'s own default (a fresh, probe-less scan)
+        // applies, unchanged from before this fix.
+        const launched = await launchFn({
+          orchestrator,
+          id: candidate.id,
+          logger,
+          trigger: LAUNCH_TRIGGERS.AUTO,
+          telemetryReadingsHint: telemetryReadings
+        });
         logger.log(`${LOG_PREFIX}: launched ${candidate.id} (${candidate.priority ?? "no priority"})`);
         if (drainModeEnabled) {
           // FIX ROUND 2 finding 1: a successful launch ends this card's wait -- clear the

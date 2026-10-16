@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { READING_STATUS, readUsageTelemetry } from "./usageTelemetry.js";
+import { READING_STATUS, readUsageTelemetry, revalidateTelemetryReadingsAt } from "./usageTelemetry.js";
 import { UsageLedgerReadIndeterminateError, listCardUsageEntries } from "./usageLedger.js";
 import { DEFAULT_COVERAGE_TARGET, observationFromAttemptEntry, estimateCost, indeterminateEstimate } from "./costEstimator.js";
 
@@ -40,6 +40,17 @@ export function buildTelemetryFreshness(telemetryReadings) {
  * gets an explicit `classification: "indeterminate"` estimate (never `estimateCost([])`, which
  * would read as a confident zero-cost/no-history result) and a `reason` that names the read as
  * indeterminate, so the persisted record shows *why* the prediction is unreliable.
+ *
+ * T-0438 fix round 4: `telemetryReadingsHint`, when given, is a `readUsageTelemetry()`-shaped
+ * result some earlier step in THIS SAME launch decision already obtained (the auto-launch
+ * poller's own decision-time probe read, threaded through `buildLaunchDecide` ->
+ * `launchCardRun`). Using it instead of scanning again means the launch decision sees the exact
+ * reading the poller's probe paid for, rather than a second, probe-less scan that -- on the idle
+ * board this card exists to fix -- would find nothing newer than what was already stale.
+ * `revalidateTelemetryReadingsAtFn` re-checks the hint's own age/reset AT THIS LATER CALL (never
+ * blindly trusting a timestamp from earlier in the tick) -- see usageTelemetry.js's
+ * `revalidateReadingAt`. Omitting the hint (the default, and every pre-T-0438 caller) reproduces
+ * the exact original behavior: a fresh scan via `readUsageTelemetryFn`.
  */
 export async function decideLaunchAdvisory({
   runsDir,
@@ -49,9 +60,13 @@ export async function decideLaunchAdvisory({
   fitDate = null,
   now = Date.now(),
   listCardUsageEntriesFn = listCardUsageEntries,
-  readUsageTelemetryFn = readUsageTelemetry
+  readUsageTelemetryFn = readUsageTelemetry,
+  telemetryReadingsHint = null,
+  revalidateTelemetryReadingsAtFn = revalidateTelemetryReadingsAt
 }) {
-  const telemetryReadings = await readUsageTelemetryFn({ runsDir, now });
+  const telemetryReadings = telemetryReadingsHint
+    ? revalidateTelemetryReadingsAtFn({ readings: telemetryReadingsHint, now })
+    : await readUsageTelemetryFn({ runsDir, now });
 
   let entries;
   try {
