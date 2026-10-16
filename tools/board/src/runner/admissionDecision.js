@@ -140,11 +140,12 @@ export function evaluateWindowAdmission({ windowKind, reading, estimate, reserve
 }
 
 /**
- * Evaluates every window (`WINDOW_KINDS`, currently `five_hour`/`seven_day`) independently and
- * combines them: admitted only when EVERY window admits, so a healthy window can never mask an
- * exhausted or unreadable one (spec §4). `config` is the `loadAdmissionConfigFromEnv`-shaped
- * object (per-window `externalBurnAllowance`/`uncertaintyReserve`); this function narrows it to
- * each window's own flat values before calling `evaluateWindowAdmission`.
+ * Evaluates every window (`WINDOW_KINDS`, currently `five_hour`/`seven_day`) independently, then
+ * combines them (spec §4's "a healthy window can never mask an exhausted or unreadable one",
+ * still true below -- see the T-0402 round 2 carve-out). `config` is the
+ * `loadAdmissionConfigFromEnv`-shaped object (per-window `externalBurnAllowance`/
+ * `uncertaintyReserve`); this function narrows it to each window's own flat values before calling
+ * `evaluateWindowAdmission`.
  *
  * `unitConversion` (T-0402) is likewise keyed per window -- `{five_hour, seven_day}`, each either
  * a `usdUtilizationConversion.js`-shaped conversion or `null` -- NEVER one flat rate shared across
@@ -153,6 +154,26 @@ export function evaluateWindowAdmission({ windowKind, reading, estimate, reserve
  * clear the minimum-evidence bar while the other doesn't; narrowing per window here is what lets
  * a window with a usable derived rate get a genuine admit/hold while a window with none (or
  * one too noisy to trust) still, correctly, holds `UNITS_NOT_COMPARABLE` on its own.
+ *
+ * T-0402 round 2 (reviewer FAIL on acceptance criterion 3): the ORIGINAL combination here --
+ * admitted only when literally every window admits -- made the aggregate verdict stuck at `null`
+ * for every real auto launch, through the real default conversion, forever: `seven_day`'s real
+ * recorded history has exactly one reset-cycle sample, nowhere near
+ * `MIN_SAMPLES_FOR_USABLE_CONVERSION`, so it can never be anything but `UNITS_NOT_COMPARABLE`
+ * until a later re-fit accumulates more evidence (not a code change -- see
+ * `usdUtilizationConversion.js`). Holding every launch forever over a single window's documented
+ * EVIDENCE GAP would reproduce the exact problem this card exists to fix, under a different name.
+ * So `UNITS_NOT_COMPARABLE` specifically is treated as a non-veto: it never masks a GENUINE
+ * admit from a window that DOES have comparable evidence, and it never hides itself either -- it
+ * still appears, unchanged, on that window's own `windows[windowKind]` entry for a human (or
+ * `docs/wip-gate-admission.md`'s runbook) to see. This is deliberately narrower than "any
+ * unknown hold doesn't veto": every OTHER hold reason
+ * (`NO_MEASURED_READING`/`ESTIMATE_UNKNOWN`/`RESERVED_COST_UNKNOWN`) represents genuinely missing
+ * REQUIRED data for that launch, not a known, versioned coverage gap, and still vetoes exactly as
+ * before. An actual measured `false` in ANY window (comparable or not) still vetoes unconditionally
+ * -- the non-veto only ever softens "we don't know yet", never "no". And when NO window has a
+ * usable conversion at all, the aggregate still falls back to the original fail-safe (`null`,
+ * never a fabricated admit) -- unchanged from before this card shipped any conversion.
  */
 export function evaluateAdmission({ telemetryReadings, estimate, reservedUnspentCostUsd = 0, config, unitConversion = null }) {
   const windows = {};
@@ -172,7 +193,15 @@ export function evaluateAdmission({ telemetryReadings, estimate, reservedUnspent
   }
 
   const decisions = Object.values(windows);
-  const admitted = decisions.every((d) => d.admitted === true) ? true : decisions.some((d) => d.admitted === false) ? false : null;
+  const anyFalse = decisions.some((d) => d.admitted === false);
+  const anyNonUnitsHold = decisions.some((d) => d.admitted === null && d.holdReason !== HOLD_REASON.UNITS_NOT_COMPARABLE);
+  const anyTrue = decisions.some((d) => d.admitted === true);
+
+  // A real, measured shortage always wins. Otherwise, any hold reason OTHER than the documented
+  // units-evidence gap is still an unresolved unknown and still holds the aggregate. Otherwise,
+  // admitted only once at least one window actually said yes -- never true purely because every
+  // window happened to be UNITS_NOT_COMPARABLE (that is the original, unchanged fail-safe).
+  const admitted = anyFalse ? false : anyNonUnitsHold ? null : anyTrue ? true : null;
 
   return { admitted, windows };
 }
