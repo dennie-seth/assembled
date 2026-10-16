@@ -336,7 +336,7 @@ describe("evaluateAdmission -- T-0402: a per-window unitConversion, never a shar
     uncertaintyReserve: { five_hour: 0.05, seven_day: 0.05 }
   };
 
-  it("T-0402 round 2: a window with its own usable conversion gets a genuine admit while a window with no evidence yet is a surfaced gap, not a veto", () => {
+  it("T-0402 fix round (human CHANGES REQUESTED on #449): a window's own UNITS_NOT_COMPARABLE gap still vetoes the aggregate, even when the OTHER window genuinely fits", () => {
     const result = evaluateAdmission({
       telemetryReadings: {
         five_hour: reading({ windowKind: "five_hour", utilization: 0.1 }),
@@ -350,17 +350,38 @@ describe("evaluateAdmission -- T-0402: a per-window unitConversion, never a shar
     expect(result.windows.five_hour.holdReason).not.toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
     expect(result.windows.five_hour.admitted).toBe(true);
     expect(result.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
-    // T-0402 round 2 (reviewer FAIL on criterion 3): `UNITS_NOT_COMPARABLE` on its own is a
-    // documented EVIDENCE GAP, not an active shortage -- unlike every other hold reason, it never
-    // vetoes an otherwise-genuine admit from a window that DOES have comparable evidence. Holding
-    // every real auto launch forever just because one window (seven_day) has too little history
-    // to fit a rate yet would defeat this entire card's purpose -- see
-    // docs/wip-gate-admission.md's "how to enable safely" runbook for how a human distinguishes
-    // this surfaced gap (still visible right here on `windows.seven_day`) from a real hold.
-    expect(result.admitted).toBe(true);
+    // T-0402 fix round: a round-2 attempt treated `UNITS_NOT_COMPARABLE` as a non-veto so this
+    // case returned `admitted: true`. @DennieSeth's #449 review (2026-10-16T17:12) rejected that:
+    // a window whose capacity CANNOT be compared with the estimate is an unresolved unknown, not
+    // an absent window -- the aggregate must stay the documented fail-safe (`null`), exactly as
+    // it did before any conversion existed, until `seven_day` itself clears the evidence bar.
+    expect(result.admitted).toBeNull();
   });
 
-  it("T-0402 round 2: the units-not-comparable non-veto never overrides an actual measured shortage in the OTHER window", () => {
+  it("T-0402 fix round: a fully-exhausted weekly window with no usable conversion must never let a fitting five_hour window admit the aggregate -- the exact scenario from #449's review", () => {
+    // @DennieSeth's review measured this precise pair directly against the committed default:
+    // five_hour utilization 0.10 (fits), seven_day utilization 1.00 (fully consumed), a known
+    // $0.50 estimate, no reservations -- and found the round-2 code returned aggregate
+    // `admitted: true` anyway, because `seven_day`'s only reported problem was
+    // `UNITS_NOT_COMPARABLE`. A fully consumed window must never be waved through just because it
+    // also happens to lack a conversion.
+    const result = evaluateAdmission({
+      telemetryReadings: {
+        five_hour: reading({ windowKind: "five_hour", utilization: 0.1 }),
+        seven_day: reading({ windowKind: "seven_day", utilization: 1 })
+      },
+      estimate: estimate({ value: 0.5 }),
+      reservedUnspentCostUsd: 0,
+      config: nestedConfig,
+      unitConversion: { five_hour: { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" }, seven_day: null }
+    });
+    expect(result.windows.five_hour.admitted).toBe(true);
+    expect(result.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    expect(result.admitted).not.toBe(true);
+    expect(result.admitted).toBeNull();
+  });
+
+  it("T-0402 fix round: the restored guard never overrides an actual measured shortage in the OTHER window either -- a real `false` still vetoes", () => {
     const result = evaluateAdmission({
       telemetryReadings: {
         five_hour: reading({ windowKind: "five_hour", utilization: 0.99 }),
@@ -373,13 +394,11 @@ describe("evaluateAdmission -- T-0402: a per-window unitConversion, never a shar
     });
     expect(result.windows.five_hour.admitted).toBe(false);
     expect(result.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
-    // five_hour's own genuine `false` still vetoes the aggregate -- the non-veto rule only ever
-    // applies to a window whose ONLY issue is UNITS_NOT_COMPARABLE, never to a window that
-    // actually said no.
+    // A real measured `false` always wins over a `null`, regardless of hold reason.
     expect(result.admitted).toBe(false);
   });
 
-  it("T-0402 round 2: when NO window has a usable conversion, the aggregate stays the original fail-safe (null), unchanged from before this card", () => {
+  it("when NO window has a usable conversion, the aggregate stays the original fail-safe (null), unchanged from before this card", () => {
     const result = evaluateAdmission({
       telemetryReadings: {
         five_hour: reading({ windowKind: "five_hour", utilization: 0.1 }),
