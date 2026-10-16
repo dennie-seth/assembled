@@ -387,10 +387,36 @@ describe("T-0402 integration: the REAL default committed conversion, through the
     await expect(launchPromise).rejects.toThrow(/WIP gate hold/);
 
     expect(captured.admission.windows.five_hour.holdReason).not.toBe("units_not_comparable");
-    expect(typeof captured.admission.windows.five_hour.admitted).toBe("boolean");
+    expect(captured.admission.windows.five_hour.admitted).toBe(true);
     // Honest, documented gap (docs/usd-utilization-conversion.md): seven_day's real recorded
     // evidence doesn't clear the minimum-sample bar yet, so it still holds -- never a fabricated
     // rate forced through to make this look more finished than the evidence supports.
     expect(captured.admission.windows.seven_day.holdReason).toBe("units_not_comparable");
+  });
+
+  it("the other direction: a near-exhausted 5-hour window genuinely HOLDS against the real derived budget, naming five_hour", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ id: "T-0001", agent: "infra" })], { runsDir });
+    const readUsageTelemetryFn = telemetry({ fiveHourUtilization: 0.95, sevenDayUtilization: 0.1 });
+    let captured = null;
+    const launchPromise = launchCardRun({
+      orchestrator,
+      id: "T-0001",
+      trigger: LAUNCH_TRIGGERS.AUTO,
+      logger: makeLogger(),
+      enforcementEnabledFn: () => true,
+      buildLaunchDecideFn: (args) => {
+        const decide = realBuildLaunchDecide({ ...args, readUsageTelemetryFn });
+        return async () => {
+          captured = await decide();
+          return captured;
+        };
+      }
+    });
+
+    await expect(launchPromise).rejects.toThrow(/WIP gate hold/);
+
+    expect(captured.admission.windows.five_hour.holdReason).not.toBe("units_not_comparable");
+    expect(captured.admission.windows.five_hour.admitted).toBe(false);
+    expect(captured.admission.windows.five_hour.budget).toBe(0);
   });
 });
