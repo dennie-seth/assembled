@@ -464,8 +464,11 @@ published order.** §4 restates this result alongside the regenerated evidence.
 
 `rig_compositor.UpperPose` gained one shared `shoulder_deg`/`elbow_deg` pair, used
 by both arms, from its original authoring. That is sufficient for a hanging rest
-pose but cannot express the reference's near arm reaching forward while the far arm
-trails back — two different angles. Fix round 4 adds four fields, all defaulting to
+pose but cannot express the reference's near arm trailing back while the far arm
+reaches forward — two different angles. (Fix round 12: corrected to match the
+committed near/far mapping below — the near arm is `_R`/trails back, the far arm
+is `_L`/reaches forward, per the table's own "Naming note" a few lines down.)
+Fix round 4 adds four fields, all defaulting to
 `None`:
 
 ```
@@ -1129,8 +1132,9 @@ description of what each file shows and how it is produced, which is unchanged;
 the pixel numbers inside them are fix round 6's (§3g), not fix round 5's:
 
 - `docs/assets/evidence/T-0436/reference_pose_render.png` (1071×1023) — the
-  composited pose: the near arm reaching forward and the far arm trailing back
-  (§3e), the far shoulder now genuinely overlapping the torso instead of reading
+  composited pose: the near arm trailing back and the far arm reaching forward
+  (§3e — this is the POSE, not the layer order; see the next clause for that),
+  the far shoulder now genuinely overlapping the torso instead of reading
   as detached (§3f/§3g), and the committed Option B layer order (§3g/§3h — under
   the committed, post-fix-round-7 naming, the near (`_R`) arm and leg group draws
   in front of the torso, the far (`_L`) group trails behind it).
@@ -1440,3 +1444,55 @@ same disposition. This round's own diff was read in full (`git diff` over
 API keys, tokens, passwords, private-key blocks, or other secret-shaped strings —
 only corrected geometry numbers and side-keyed prose. No scan tool was run; this
 is a manual read, stated as such, for the same reason given above.
+
+**Fix round 12 (2026-10-16, two PR-review findings, both documented at the top of
+this section's own card comments): the evidence overlay's origin bug and one
+surviving pose-description inversion.** Same disposition — this round's own diff
+(`git diff` over `assets/src/character/gen_reference_pose_evidence_T0436.py`,
+`assets/src/character/src/char_gen/rig_compositor.py`,
+`docs/design/23-canonical-rig.md`, and the regenerated
+`docs/assets/evidence/T-0436/rig_vs_reference_overlay.png`) was read in full and
+contains no API keys, tokens, passwords, private-key blocks, or other
+secret-shaped strings — only a lateral-offset fix, two prose corrections, and a
+regenerated PNG. No scan tool was run; this is a manual read, stated as such, for
+the same reason given above.
+
+**Fix round 12 — what changed and why.**
+
+1. **The evidence overlay's "actual" shin was drawn from the wrong origin.**
+   `gen_reference_pose_evidence_T0436.py` built its orange/cyan debug shin from
+   the raw pelvis-bar `hip_L` point (`points["hip_L"]`), but the RENDERED
+   `thigh_L`/`calf_L` chain does not start there — `rig_compositor.build_placements`
+   applies the chain's lateral offset once, at the root, before solving the
+   knee/ankle (the same `lateral()` closure that pulls the far arm clear of the
+   torso). At the committed `thigh_L` offset (`+0.06` × the 221.0px torso width =
+   `+13.26px`), the overlay's debug chain was drawn 13.26 native px away from the
+   shin actually visible underneath it. Fixed by reading the offset from the same
+   `canonical_rig.lateral_offset_axis.demonstration_values` source
+   `refpose.default_lateral_offset_frac` already reads (not a hard-coded 13.26),
+   and applying it to `hip_L` before solving the chain — mirroring
+   `rig_compositor.render_frames`'s own `lateral_debug` closure, which exists for
+   exactly this reason (see its docstring). `docs/assets/evidence/T-0436/
+   rig_vs_reference_overlay.png` is regenerated from the corrected generator
+   (1071×1023, unchanged size); `reference_pose_render.png` is byte-identical to
+   before, since the underlying rendered geometry was never wrong — only the
+   overlay's own debug line was. The printed/captioned deviation figure
+   (`+0.63x spine` on the front shin, `calf_L`) is **unchanged** by this fix: it is
+   a pure bone-length ratio (`lengths["calf_L"] / spine`), not a position
+   measurement, so the wrong origin never touched that number — only where the
+   comparison line was DRAWN on the image.
+2. **One surviving copy of the pre-swap "near arm reaches forward" claim**, found
+   in two places neither covered by fix round 10's table-only correction to §3e:
+   this section's own un-dated intro prose (above the per-side-angle table, not
+   inside a round-dated block) and the evidence-file bullet at §4. Both inverted
+   near/far against the committed constants (`SHOULDER_DEG_R = -56.4` is the near,
+   trailing-back arm; `SHOULDER_DEG_L = +44.3` is the far, reaching-forward arm —
+   §3e's own corrected table already had this right). A third instance was found
+   in the SAME un-dated set, in code rather than docs:
+   `rig_compositor.UpperPose`'s own docstring, which generically described "a 3/4
+   reference pose where the near arm reaches forward and the far arm trails
+   back" — also inverted, also corrected. The §4 bullet describing the committed
+   Option B **layer order** ("the near (`_R`) ... draws in front ... the far
+   (`_L`) ... trails behind it") was already correct and is left untouched — that
+   sentence is about draw depth, a different axis from arm pose, and conflating
+   the two is exactly what produced the original defect.

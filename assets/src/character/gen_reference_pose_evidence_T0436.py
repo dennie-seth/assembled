@@ -75,6 +75,7 @@ def main() -> None:
 
     rig = rig_compositor.load_rig()
     parts = rig_compositor.load_parts()
+    scaled = rig_compositor.scaled_parts(parts, rig)
     lengths = rig_compositor.measured_bone_lengths(parts, rig)
     spine = rig["canonical_rig"]["spine_px"]
     points = refpose.canonical_world_points(rig, (0.0, 0.0))
@@ -110,8 +111,17 @@ def main() -> None:
     # (canonical_rig.leg_proportions.applied_to_active_rig == false).
     from char_gen.walk_cycle import distal_joint
 
+    # The rendered chain does not start at the raw pelvis-bar hip point: `build_
+    # placements` applies the chain's lateral offset ONCE, at the root (`thigh_L`
+    # here), before solving the knee/ankle -- the same `lateral()` closure that
+    # moves `shoulder_L`/`forearm_L` for the far arm (see its docstring in
+    # `rig_compositor.build_placements`). Fix round 12: mirror that here too --
+    # read the offset from the same `demonstration_values` source rather than
+    # hard-coding a pixel figure, so this stays correct if either changes.
     front_stance = refpose.leg_stance((0.0, 0.0), result.leg.ground_plane_y)
     hip_l_world = points["hip_L"]
+    offset_frac = refpose.default_lateral_offset_frac(rig).get("thigh_L", 0.0)
+    hip_l_world = (hip_l_world[0] + offset_frac * scaled["torso"].width, hip_l_world[1])
     thigh_deg = front_stance.thigh_deg_l
     knee_flexion = front_stance.knee_flexion_deg_l
     knee_world = distal_joint(hip_l_world, lengths["thigh_L"], thigh_deg)

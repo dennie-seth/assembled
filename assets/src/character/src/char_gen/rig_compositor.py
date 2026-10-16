@@ -114,8 +114,8 @@ class UpperPose:
     4) are per-side overrides, all defaulting to `None` -- a complete no-op for every
     pre-existing caller. `shoulder_deg`/`elbow_deg` remain the single pair every pose
     module before this round still sets, and both arms still use it when a side's own
-    override is absent. A 3/4 reference pose where the near arm reaches forward and
-    the far arm trails back cannot be expressed by one shared scalar -- this is the
+    override is absent. A 3/4 reference pose where the near arm trails back and
+    the far arm reaches forward cannot be expressed by one shared scalar -- this is the
     minimal, additive split that lets `reference_pose_T0436` pose each arm from its
     own measured angle without touching what `idle_cycle`/`sitting_idle_cycle` (which
     never set these fields) render."""
