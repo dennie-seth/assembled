@@ -11,10 +11,14 @@
  *
  * The chosen policy, "refresh-before-it-bites": commit when the cards changed, OR when the
  * currently committed ledger is already older than `refreshThresholdHours` -- a threshold well
- * under the gate's own `BOARD_APPROVAL_LEDGER_STALE_HOURS` (24h). This bounds the ledger's worst-
- * case age by `refreshThresholdHours + intervalHours` (see `simulateWorstCaseAgeHours`), at the
- * cost of a commit roughly every `refreshThresholdHours` during a totally quiet period --
- * bounded churn, not zero churn, and nowhere near "every run."
+ * under the gate's own `BOARD_APPROVAL_LEDGER_STALE_HOURS` (24h). On the normal schedule, with no
+ * run ever missed, this bounds the ledger's worst-case age by `refreshThresholdHours +
+ * intervalHours` (see `simulateWorstCaseAgeHours`), at the cost of a commit roughly every
+ * `refreshThresholdHours` during a totally quiet period -- bounded churn, not zero churn, and
+ * nowhere near "every run." An outage of consecutive missed runs erodes that bound further --
+ * `worstCaseAgeForOutage` searches every possible alignment of an N-miss outage against the
+ * schedule and returns the true worst case, rather than trusting one hand-picked offset (an
+ * earlier round did exactly that and got the wrong answer -- see that function's own docstring).
  */
 
 export const DEFAULT_REFRESH_THRESHOLD_HOURS = 12;
@@ -90,4 +94,55 @@ export function simulateWorstCaseAgeHours({
     }
   }
   return { maxAgeHours, commitCount, runCount };
+}
+
+/**
+ * The worst-case ledger age for an outage of `missCount` consecutive missed runs, searching
+ * EVERY possible alignment of that outage against the schedule rather than trusting one
+ * hand-picked offset. This exists because hand-picking was tried first and got it wrong: an
+ * earlier round asserted missedRunTicks `{3,4}` (two misses) tops out at 20h and `{3,4,5}` (three
+ * misses) is "the real edge" at exactly 24h -- but `{4,5}` (also two misses, started one tick
+ * later) reaches that same 24h, because starting the outage right after the tick that sits
+ * exactly AT the refresh threshold (age === refreshThresholdHours, which `decideLedgerExport`
+ * treats as still fresh, strict `>` not `>=`) wastes the one run that would otherwise have forced
+ * a refresh before the outage began. Three examples cannot rule out a worse fourth; searching the
+ * full cycle can.
+ *
+ * `searchTicks` only needs to cover one steady-state cycle (`refreshThresholdHours /
+ * intervalHours`, rounded up, plus one) for the search to see every distinct phase -- the
+ * schedule repeats after that -- but defaults wider so a caller never has to reason about cycle
+ * length to get a correct answer.
+ *
+ * @param {object} args
+ * @param {number} args.intervalHours
+ * @param {number} [args.refreshThresholdHours]
+ * @param {number} args.missCount - length of the consecutive-miss run to search over.
+ * @param {number} [args.totalHours] - simulated duration; must be long enough for the outage
+ *   (placed at the latest search offset) to fully resolve and for a steady state to establish
+ *   beforehand.
+ * @param {number} [args.searchTicks] - number of candidate outage-start ticks to try.
+ * @returns {number} the maximum `maxAgeHours` over every candidate start offset.
+ */
+export function worstCaseAgeForOutage({
+  intervalHours,
+  refreshThresholdHours = DEFAULT_REFRESH_THRESHOLD_HOURS,
+  missCount,
+  totalHours = 400,
+  searchTicks = 40
+}) {
+  let worst = -Infinity;
+  for (let start = 1; start <= searchTicks; start++) {
+    const missedRunTicks = new Set();
+    for (let offset = 0; offset < missCount; offset++) {
+      missedRunTicks.add(start + offset);
+    }
+    const { maxAgeHours } = simulateWorstCaseAgeHours({
+      intervalHours,
+      refreshThresholdHours,
+      totalHours,
+      missedRunTicks
+    });
+    worst = Math.max(worst, maxAgeHours);
+  }
+  return worst;
 }
