@@ -90,15 +90,20 @@ export function autoLaunchUsageMaxFromEnv() {
 export const DEFAULT_PROBE_BOUND_MS = 20_000;
 
 /**
- * USAGE_PROBE_ENABLED env var: default **OFF**, same posture as `autoLaunchEnabledFromEnv` --
- * `usageProbeFn`'s real implementation (`defaultUsageProbeFn`) spawns a live `claude` CLI process
- * and spends a small amount of real usage every time it runs (see usageProbe.js's docstring and
- * docs/usage-telemetry.md's cost accounting), so deploying this code must not be what starts
- * spending; a human turns it on deliberately once they've read that cost. Accepts
- * 1/true/on/yes, case-insensitive.
+ * USAGE_PROBE_DISABLED env var: default **OFF**, i.e. the probe is ON by default -- unlike
+ * `autoLaunchEnabledFromEnv`, which is the actual "deploying the code must not start spending"
+ * gate here. That gate already covers the real spend decision: `usageProbeFn` is only ever
+ * consulted from inside `tick()`, which never runs unless a human has already set
+ * `AUTO_LAUNCH_ENABLED` (see `effectivelyEnabled`). Once a human has made that choice, the
+ * window-aware usage comparison `tick()` logs on every tick (T-0367/T-0369) is evidence this
+ * card exists to make non-null -- gating the probe behind a SECOND, separate opt-in would
+ * silently reproduce exactly the 48-hour-stale bug this card was filed to fix: a human who
+ * remembered to flip `AUTO_LAUNCH_ENABLED` but not a second flag nobody told them about. A human
+ * who wants the pre-T-0438 scan-only behavior once auto-launch is already on sets
+ * `USAGE_PROBE_DISABLED=1` explicitly. Accepts 1/true/on/yes, case-insensitive.
  */
-export function usageProbeEnabledFromEnv() {
-  return ENABLE_VALUES.has((process.env.USAGE_PROBE_ENABLED ?? "").toLowerCase());
+export function usageProbeDisabledFromEnv() {
+  return ENABLE_VALUES.has((process.env.USAGE_PROBE_DISABLED ?? "").toLowerCase());
 }
 
 function priorityRank(task) {
@@ -246,7 +251,7 @@ export function createAutoLaunchPoller({
   usageMax = autoLaunchUsageMaxFromEnv(),
   readUsage = readUsageSnapshot,
   readUsageTelemetryFn = readUsageTelemetry,
-  usageProbeFn = usageProbeEnabledFromEnv() ? defaultUsageProbeFn : null,
+  usageProbeFn = usageProbeDisabledFromEnv() ? null : defaultUsageProbeFn,
   probeBoundMs = DEFAULT_PROBE_BOUND_MS,
   enforcementEnabled = admissionEnforcementEnabledFromEnv(),
   drainModeEnabled = drainModeEnabledFromEnv(),

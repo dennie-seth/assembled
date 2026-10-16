@@ -18,13 +18,16 @@ import { rateLimitInfoFromEvent } from "./usageLimitDetector.js";
  * card run. It is charged against the same five-hour window it measures (see docs/usage-telemetry.md
  * for the per-day bound this implies at the live board's `AUTO_LAUNCH_INTERVAL_MS` cadence).
  *
- * Not wired in as any default here: `createAutoLaunchPoller`'s own `usageProbeFn` constructor
- * option defaults to `null` (see autoLaunchPoller.js's `usageProbeEnabledFromEnv`), matching this
- * codebase's existing posture for anything that spends resources nobody explicitly asked for
- * (`AUTO_LAUNCH_ENABLED` itself defaults off for the same reason). Tested throughout via an
- * injected `spawnFn`, never a live `claude` invocation -- the same pattern `claudeCliRunner.js`'s
- * own test suite already uses for exactly this reason: no persona in this runner holds a grant to
- * invoke `claude` directly to verify a live spawn.
+ * Wired in as the default once auto-launch itself is running: `createAutoLaunchPoller`'s own
+ * `usageProbeFn` constructor option defaults to this function unless `USAGE_PROBE_DISABLED` is
+ * set (see autoLaunchPoller.js's `usageProbeDisabledFromEnv`). The actual "deploying the code
+ * must not start spending" gate is `AUTO_LAUNCH_ENABLED` -- `usageProbeFn` is never consulted
+ * unless a human already opted into that -- so this does not need its own separate default-off
+ * switch on top; see autoLaunchPoller.js's docstring for why a second opt-in would just reproduce
+ * this card's own bug. Tested throughout via an injected `spawnFn`, never a live `claude`
+ * invocation -- the same pattern `claudeCliRunner.js`'s own test suite already uses for exactly
+ * this reason: no persona in this runner holds a grant to invoke `claude` directly to verify a
+ * live spawn.
  */
 export const DEFAULT_PROBE_TIMEOUT_MS = 15_000;
 const DEFAULT_PROBE_KILL_ESCALATION_MS = 3_000;
