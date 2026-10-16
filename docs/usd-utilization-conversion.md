@@ -83,13 +83,26 @@ average away on its own.
 
 ### `seven_day` -- not usable, and this card does not invent a rate for it
 
-Only **one** reset cycle in the real history ever had a second measured reading before the window
-rolled over (`2026-09-12T23:47:01.296Z` → `2026-09-15T08:51:03.630Z`, 35 readings, 27 ledger
-entries, rate 376.50 USD/unit). Every other weekly reset cycle in the data has at most one
-measured reading before its own reset -- there is no second point to measure an increase against.
-One sample is nowhere near `MIN_SAMPLES_FOR_USABLE_CONVERSION` (5); `fitConversionFromSamples`
-marks it `usable: false` with that reason, and `resolveUnitConversionForAdmission` resolves
-`seven_day` to `null`.
+Only **one** reset cycle in the real history produced a usable rate sample
+(`2026-09-12T23:47:01.296Z` → `2026-09-15T08:51:03.630Z`, 35 readings, 27 ledger entries, rate
+376.50 USD/unit). An earlier draft of this note claimed every other weekly cycle had at most one
+measured reading, so there was no second point to measure an increase against -- the T-0402
+reviewer's 2026-10-16T18:39 VALIDATION pass found that claim contradicted by the recorded evidence:
+several later weekly cycles (readings spanning 2026-09-18 through 2026-09-23, sharing `resetsAt`
+values on the same 604800s weekly boundary) do have two or more measured readings. What actually
+drops them is `deriveRateSamplesForWindow`'s all-or-nothing censoring rule
+(`usdUtilizationConversion.js`: "A cycle is dropped ... when ... ANY ledger entry inside its
+interval is censored") -- if even one usage-ledger entry recorded during a candidate cycle's
+interval has `costUsd: null`, the whole cycle is discarded rather than approximated from a
+partial, artificially-low subtotal. The real history has enough censored ledger entries landing
+inside those later cycles' intervals that none of them survives to become a second sample -- a
+censoring-driven gap, not a reading-count gap. Loosening the censoring rule to recover those
+cycles anyway is exactly the "approximate the true spend from a known lower bound" shortcut
+`deriveRateSamplesForWindow`'s own docstring rejects: a rate derived that way would be
+systematically biased low, which is worse than honestly holding `units_not_comparable`. One sample
+is nowhere near `MIN_SAMPLES_FOR_USABLE_CONVERSION` (5); `fitConversionFromSamples` marks it
+`usable: false` with that reason, and `resolveUnitConversionForAdmission` resolves `seven_day` to
+`null`.
 
 **This is the card's explicit finding, not a gap the card papers over**: the task's own
 instructions are "do not invent a rate to make a test pass; if the recorded evidence cannot
@@ -98,7 +111,8 @@ window with a real conversion does not retroactively make `seven_day` comparable
 are evaluated, and now converted, completely independently (`admissionDecision.js`'s
 `evaluateAdmission` narrows `unitConversion` per window kind precisely so one window's evidence
 can never be borrowed by the other). Until a later re-fit accumulates enough `seven_day` reset
-cycles with a second reading, `seven_day` keeps holding `units_not_comparable`, on its own --
+cycles with uncensored spend data across their full interval (see above -- readings are not the
+scarce ingredient here, clean cost data is), `seven_day` keeps holding `units_not_comparable`, on its own --
 visible on every decision's `admission.windows.seven_day` -- and because `evaluateAdmission` only
 admits when EVERY window admits, a real `auto` launch under enforcement will still be refused
 overall on `seven_day`'s own, separately honest hold -- proven directly in
@@ -117,5 +131,6 @@ pipeline against whatever evidence exists at call time -- no code change require
 `fitDate` and a human review of the result before it replaces
 `DEFAULT_USD_UTILIZATION_CONVERSION`. Re-fit periodically (e.g. whenever
 `docs/wip-gate-admission.md`'s "how to enable safely" runbook calls for it) and especially once
-`seven_day` has accumulated more multi-reading reset cycles -- there is nothing today stopping it
-from becoming usable except sample count.
+`seven_day` has accumulated more reset cycles whose full interval's usage-ledger spend is
+uncensored -- that, not a shortage of multi-reading cycles, is what stands between it and clearing
+`MIN_SAMPLES_FOR_USABLE_CONVERSION`.
