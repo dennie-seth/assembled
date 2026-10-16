@@ -355,3 +355,42 @@ describe("T-0379 integration: a manual launch (not through the poller), through 
     }
   });
 });
+
+describe("T-0402 integration: the REAL default committed conversion, through the REAL launchCardRun -- no evaluateAdmissionFn/unitConversion override at all", () => {
+  it("a representative auto launch's five_hour window gets a genuine admit/hold against the derived budget, never units_not_comparable -- seven_day legitimately still holds (no usable evidence yet)", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ id: "T-0001", agent: "infra" })], { runsDir });
+    const readUsageTelemetryFn = telemetry({ fiveHourUtilization: 0.1, sevenDayUtilization: 0.1 });
+    let captured = null;
+    const launchPromise = launchCardRun({
+      orchestrator,
+      id: "T-0001",
+      trigger: LAUNCH_TRIGGERS.AUTO,
+      logger: makeLogger(),
+      enforcementEnabledFn: () => true,
+      // Deliberately the REAL buildLaunchDecide, stubbing ONLY the telemetry read (so the window
+      // readings are deterministic) -- admission, the unit conversion, and everything else go
+      // through cardLaunch.js's own real default wiring (loadUnitConversionFn ->
+      // resolveUnitConversionForAdmission -> DEFAULT_USD_UTILIZATION_CONVERSION).
+      buildLaunchDecideFn: (args) => {
+        const decide = realBuildLaunchDecide({ ...args, readUsageTelemetryFn });
+        return async () => {
+          captured = await decide();
+          return captured;
+        };
+      }
+    });
+
+    // seven_day's own, separately honest hold (below) still refuses this AUTO launch overall --
+    // evaluateAdmission only ever admits when EVERY window does. That refusal is the correct,
+    // expected behaviour; what this test actually proves is captured above: five_hour's OWN
+    // window decision is no longer units_not_comparable.
+    await expect(launchPromise).rejects.toThrow(/WIP gate hold/);
+
+    expect(captured.admission.windows.five_hour.holdReason).not.toBe("units_not_comparable");
+    expect(typeof captured.admission.windows.five_hour.admitted).toBe("boolean");
+    // Honest, documented gap (docs/usd-utilization-conversion.md): seven_day's real recorded
+    // evidence doesn't clear the minimum-sample bar yet, so it still holds -- never a fabricated
+    // rate forced through to make this look more finished than the evidence supports.
+    expect(captured.admission.windows.seven_day.holdReason).toBe("units_not_comparable");
+  });
+});
