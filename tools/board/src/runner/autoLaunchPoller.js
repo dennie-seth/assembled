@@ -1,6 +1,7 @@
 import { launchCardRun, CardLaunchError, LAUNCH_TRIGGERS } from "./cardLaunch.js";
 import { readUsageSnapshot } from "./usageWindow.js";
 import { readUsageTelemetry, WINDOW_KINDS, READING_STATUS } from "./usageTelemetry.js";
+import { defaultUsageProbeFn } from "./usageProbe.js";
 import { admissionEnforcementEnabledFromEnv } from "./admissionDecision.js";
 import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
 import { appendNote } from "./runOrchestrator.js";
@@ -76,6 +77,28 @@ export function autoLaunchIntervalMsFromEnv() {
 export function autoLaunchUsageMaxFromEnv() {
   const raw = Number(process.env.AUTO_LAUNCH_USAGE_MAX);
   return Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : DEFAULT_AUTO_LAUNCH_USAGE_MAX;
+}
+
+/**
+ * T-0438: how long the telemetry read is allowed to take when a decision-time probe is wired in.
+ * A probe spawns a real process and waits on its first event -- comfortably more than
+ * `DEFAULT_BOUND_MS` (8s), which was sized for a pure log scan. Still a firm bound, same
+ * fail-safe contract as the rest of this module: a probe (or the whole telemetry read) that
+ * exceeds it degrades to the "window-aware usage comparison unavailable" branch, never hangs a
+ * tick (T-0370, Codex finding 3).
+ */
+export const DEFAULT_PROBE_BOUND_MS = 20_000;
+
+/**
+ * USAGE_PROBE_ENABLED env var: default **OFF**, same posture as `autoLaunchEnabledFromEnv` --
+ * `usageProbeFn`'s real implementation (`defaultUsageProbeFn`) spawns a live `claude` CLI process
+ * and spends a small amount of real usage every time it runs (see usageProbe.js's docstring and
+ * docs/usage-telemetry.md's cost accounting), so deploying this code must not be what starts
+ * spending; a human turns it on deliberately once they've read that cost. Accepts
+ * 1/true/on/yes, case-insensitive.
+ */
+export function usageProbeEnabledFromEnv() {
+  return ENABLE_VALUES.has((process.env.USAGE_PROBE_ENABLED ?? "").toLowerCase());
 }
 
 function priorityRank(task) {
@@ -223,6 +246,8 @@ export function createAutoLaunchPoller({
   usageMax = autoLaunchUsageMaxFromEnv(),
   readUsage = readUsageSnapshot,
   readUsageTelemetryFn = readUsageTelemetry,
+  usageProbeFn = usageProbeEnabledFromEnv() ? defaultUsageProbeFn : null,
+  probeBoundMs = DEFAULT_PROBE_BOUND_MS,
   enforcementEnabled = admissionEnforcementEnabledFromEnv(),
   drainModeEnabled = drainModeEnabledFromEnv(),
   drainConfig = DEFAULT_DRAIN_CONFIG,
@@ -322,8 +347,8 @@ export function createAutoLaunchPoller({
     // judged from evidence before anyone flips WIP_GATE_ENFORCEMENT_ENABLED. Bounded (T-0370 fix
     // round, Codex finding 3: a hung reader must never stall a tick) and failure-isolated: a
     // telemetry read failure or timeout here can never affect the legacy gate's own decision.
-    const telemetryReadings = await withTimeout(() => readUsageTelemetryFn({ runsDir, now: now() }), {
-      timeoutMs: DEFAULT_BOUND_MS,
+    const telemetryReadings = await withTimeout(() => readUsageTelemetryFn({ runsDir, now: now(), probeFn: usageProbeFn }), {
+      timeoutMs: usageProbeFn ? probeBoundMs : DEFAULT_BOUND_MS,
       fallback: () => null,
       logger,
       label: `${LOG_PREFIX}: readUsageTelemetry`
