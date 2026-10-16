@@ -8,8 +8,8 @@ board's own task store, not files in this repo — look them up by ID in the boa
 
 Chat ran a read-only board logic audit on 2026-10-09 against source revision
 `692edb992f375d8db351ae9763472605762a8b45`. The report and its supporting snapshots
-(`tasks.json`, `poller.json`, `health.json`, `recent_verdicts.json`) are a committed artefact
-on the authoring host, at:
+(`tasks.json`, `poller.json`, `health.json`, `recent_verdicts.json`) are a saved local report
+on the authoring host, not under version control, at:
 
 ```
 F:\PetProjects\assembled\board_audit_2026-10-09\REPORT.md
@@ -18,7 +18,7 @@ F:\PetProjects\assembled\board_audit_2026-10-09\REPORT.md
 @DennieSeth agreed with all nine numbered items. This document does not restate the report —
 it is the index that tells a reader which child card carries each item, and why the three
 delivery slices are ordered the way they are. **The report is not copied into the repo** — it
-is a committed artefact at the path above, on the authoring host (not reachable from this
+is a saved local report at the path above, on the authoring host (not reachable from this
 repository's worktrees); don't restate its contents wholesale here. Each child card's own
 acceptance criteria are the specification for that card's scope (see "Doc drift" below).
 
@@ -79,12 +79,16 @@ Dropping any of these invites exactly the misreading the report warns about:
   not a defensible general failure rate, and it motivates *why* the audit happened, not a
   lifetime quality metric for the board. If this document (or any child card) quotes the 13/9
   split, the non-random caveat belongs in the same sentence.
-- **Concurrency is not the fix, and raising it is out of scope.** The response to a serial
-  auto-launch poller and a 30-minute average scheduling wait is event-driven wake-up (T-0454),
-  not more concurrent runs. T-0454's own scope note is explicit: increasing concurrency is
-  "explicitly not this card," and no rule may be bypassed to get there. Concurrency stays
-  deferred until measurement — not this audit — shows serial execution is actually the
-  dominant bottleneck.
+- **Concurrency is not the fix, and raising it is out of scope.** The audit observed that
+  auto-launch polls on a fixed 30-minute interval — that is the only figure actually measured.
+  That interval bounds the wait for a card to be picked up at *up to* about 30 minutes; roughly
+  15 minutes is the *expected* wait, and only under the audit's own assumption that completions
+  land uniformly across the interval. Neither the upper bound nor the assumption-bound
+  expectation is a measured average. The response to the serial poller is event-driven wake-up
+  (T-0454), not more concurrent runs. T-0454's own scope note is explicit: increasing
+  concurrency is "explicitly not this card," and no rule may be bypassed to get there.
+  Concurrency stays deferred until measurement — not this audit — shows serial execution is
+  actually the dominant bottleneck.
 - **The response to the FAIL concentration is to inspect the workflow it came from, not to tune
   the board to a lifetime percentage.** Ten of thirteen FAILs came from one card, T-0436. The
   correct reaction is to inspect what T-0436 was doing (an acceptance contract that moved
@@ -99,6 +103,7 @@ Dropping any of these invites exactly the misreading the report warns about:
   card over this index if they ever disagree.
 - **No child card depends on this one, and it must never gate one.** Every child card listed
   above has `depends_on: []`. This epic records the plan; it must never block a child's launch.
-- **The report itself is not copied into the repo.** It's a committed artefact at the path
-  above, on the authoring host (not reachable from this repository's worktrees). Link to it by
-  path and source revision; don't restate its contents wholesale here.
+- **The report itself is not copied into the repo.** It's a saved local report at the path
+  above, on the authoring host (not reachable from this repository's worktrees), not under
+  version control. Link to it by path and source revision; don't restate its contents
+  wholesale here.
