@@ -435,6 +435,17 @@ describe("createAutoLaunchPoller — gate 4/5: eligibility and launch", () => {
       intervalMs: 1000,
       usageMax: 0.8,
       readUsage: async () => ({ utilization: 0, status: "allowed", reason: "status=allowed" }),
+      // T-0438 fix round 5 (reviewer, 2026-10-16T17:47:30.356Z): this test cares about the
+      // dependency guard, not telemetry -- but omitting `readUsageTelemetryFn` left
+      // `usageProbeFn` at its own real default (`defaultUsageProbeFn`), so `tick()` actually
+      // spawned a live `claude` CLI process on every run of this file (measured ~5.3s in
+      // isolation vs ~6ms for an equivalent telemetry-stubbed test, and >10s -- a real suite
+      // timeout -- under full-suite parallel load). Stubbed the same way `makePoller`'s own
+      // default already is, so no probe is ever reached.
+      readUsageTelemetryFn: async () => ({
+        five_hour: { windowKind: "five_hour", classification: "measured", utilization: 0, resetElapsed: false },
+        seven_day: { windowKind: "seven_day", classification: "measured", utilization: 0, resetElapsed: false }
+      }),
       logger
     });
 

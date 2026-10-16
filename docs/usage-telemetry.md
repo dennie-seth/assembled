@@ -917,3 +917,48 @@ before this fix. A manual (Run-button) launch never threads a hint through
 (`launchCardRun`'s `telemetryReadingsHint` stays at its `null` default on that path), so the same
 test file also pins that this fix changes nothing there -- `spawn` is never called and the
 pre-existing probe-less scan behavior is reproduced exactly.
+
+### The test suite itself was spending real CLI invocations (fix round 5)
+
+**The defect (reviewer, 2026-10-16T17:47:30.356Z).** One test in `autoLaunchPoller.test.js`
+("does NOT start a card with an unmet dependency...") built `createAutoLaunchPoller` directly,
+bypassing the file's own `makePoller` helper, and supplied neither `readUsageTelemetryFn` nor
+`usageProbeFn`. Both default parameters then applied for real: `readUsageTelemetryFn` fell
+through to the real `readUsageTelemetry` (a harmless scan of a nonexistent `/runs`), which then
+called the real default `usageProbeFn` -- `defaultUsageProbeFn` -- which spawns an actual `claude`
+CLI child process and waits (bounded by `DEFAULT_PROBE_BOUND_MS`, 20s) for its first
+`rate_limit_event`. Measured directly: that one test took ~5.3s in isolation versus ~4ms for an
+otherwise-identical telemetry-stubbed test, and exceeded Vitest's 10s per-test timeout under
+full-suite parallel load -- a real, reviewer-observed flake, not a hypothetical one. Every
+`npx vitest run` of this file, including every one the implementer ran locally before committing,
+was quietly spawning a live `claude` session.
+
+**Why this also undermines the cost accounting above, not just the test's reliability.** The
+"Cost, stated from what was actually observed" section bounds production spend at "at most once
+per poller tick... up to 48/day", scoped to a running board with `AUTO_LAUNCH_ENABLED` set. That
+accounting said nothing about, and did not budget for, spend incurred by *running the test suite*
+-- which is a cost nobody intended, is not bounded by the poller's own interval at all (every test
+run pays it again), and would recur on every CI run and every local `npx vitest run` indefinitely
+had it gone unnoticed. Fixing the test closes this gap at the source rather than widening the
+stated bound to account for it: the test suite now spawns zero live `claude` processes (confirmed
+below), so the production-only "up to 48/day, only once `AUTO_LAUNCH_ENABLED` is set" accounting
+is what actually governs spend, with no silent test-time addition to it.
+
+**The fix.** Gave that one test the same `readUsageTelemetryFn` stub `makePoller`'s own default
+already uses (`autoLaunchPoller.test.js`, "does NOT start a card with an unmet dependency" test)
+-- a `measured`/`0`-utilization stub that never consults `probeFn` at all, so `defaultUsageProbeFn`
+is never reached regardless of what `usageProbeFn` resolves to. No production code changed; this
+was a test-setup defect, not a defect in `usageTelemetry.js`/`usageProbe.js`/`autoLaunchPoller.js`
+themselves. Checked every other direct (non-`makePoller`) `createAutoLaunchPoller` call site in the
+suite for the same gap (`wipGateAutoManualIntegration.test.js`, `usageProbeDefaultWiring.test.js`,
+`usageTelemetryDecisionCarryover.test.js`, `usageTelemetryFreshness.test.js`, and the
+restart-fixture helper later in `autoLaunchPoller.test.js` itself) -- every one of those already
+either stubs `readUsageTelemetryFn` or passes `usageProbeFn` explicitly (including explicitly
+`null`), or mocks the OS-level `node:child_process.spawn` call the way
+`usageProbeDefaultWiring.test.js`/`usageTelemetryDecisionCarryover.test.js` deliberately do to
+exercise the real default safely. This was the one gap.
+
+**Verified.** `npx vitest run test/runner/autoLaunchPoller.test.js -t "does NOT start a card with
+an unmet dependency"` dropped from ~5.85s wall to ~1.0s (test itself: ~4ms). Two consecutive full
+`npx vitest run` passes: 226 files / 4514 tests, no failures, no outlier durations
+(~16s wall each, both well under the 10s per-test timeout that previously tripped under load).
