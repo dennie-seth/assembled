@@ -145,6 +145,14 @@ export function evaluateWindowAdmission({ windowKind, reading, estimate, reserve
  * exhausted or unreadable one (spec §4). `config` is the `loadAdmissionConfigFromEnv`-shaped
  * object (per-window `externalBurnAllowance`/`uncertaintyReserve`); this function narrows it to
  * each window's own flat values before calling `evaluateWindowAdmission`.
+ *
+ * `unitConversion` (T-0402) is likewise keyed per window -- `{five_hour, seven_day}`, each either
+ * a `usdUtilizationConversion.js`-shaped conversion or `null` -- NEVER one flat rate shared across
+ * both. The two windows are different pools (different sizes, different reset cadence) and the
+ * real recorded evidence (`docs/usd-utilization-conversion.md`) already shows one window can
+ * clear the minimum-evidence bar while the other doesn't; narrowing per window here is what lets
+ * a window with a usable derived rate get a genuine admit/hold while a window with none (or
+ * one too noisy to trust) still, correctly, holds `UNITS_NOT_COMPARABLE` on its own.
  */
 export function evaluateAdmission({ telemetryReadings, estimate, reservedUnspentCostUsd = 0, config, unitConversion = null }) {
   const windows = {};
@@ -159,7 +167,7 @@ export function evaluateAdmission({ telemetryReadings, estimate, reservedUnspent
         externalBurnAllowance: config.externalBurnAllowance?.[windowKind],
         uncertaintyReserve: config.uncertaintyReserve?.[windowKind]
       },
-      unitConversion
+      unitConversion: unitConversion?.[windowKind] ?? null
     });
   }
 
