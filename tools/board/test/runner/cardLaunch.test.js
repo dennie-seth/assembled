@@ -601,7 +601,7 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     expect(await listActiveReservations({ runsDir })).toHaveLength(0);
   });
 
-  it("T-0379 Units: with a real MEASURED window reading but no shipped USD-to-utilization conversion, the real pipeline holds units_not_comparable, never a fabricated fit", async () => {
+  it("T-0379 Units: with a real MEASURED window reading but no conversion at all (neither window), the real pipeline holds units_not_comparable, never a fabricated fit", async () => {
     const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
     const readUsageTelemetryFn = async () => ({
       five_hour: { windowKind: "five_hour", classification: "measured", utilization: 0.1, resetElapsed: false },
@@ -609,7 +609,19 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     });
     const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, readUsageTelemetryFn });
 
-    const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
+    // T-0402 round 2: `loadUnitConversionFn` overridden to `null` for both windows -- cardLaunch.js's
+    // own DEFAULT now resolves a genuine, usable five_hour rate (DEFAULT_USD_UTILIZATION_CONVERSION),
+    // so this fail-safe (acceptance: "an absent or malformed conversion still falls back to
+    // units_not_comparable") needs its own absent conversion deliberately injected to prove the
+    // fail-safe still fires when NEITHER window has any evidence, rather than relying on evidence
+    // this card has since shipped a real rate for.
+    const rejection = launchCardRun({
+      orchestrator,
+      id: "T-0001",
+      enforcementEnabledFn: () => true,
+      buildLaunchDecideFn,
+      loadUnitConversionFn: () => ({ five_hour: null, seven_day: null })
+    });
     await expect(rejection).rejects.toMatchObject({
       name: "CardLaunchError",
       statusCode: 409,
@@ -617,6 +629,20 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
       message: expect.stringMatching(/units_not_comparable/)
     });
     expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("T-0402 round 2: with a real MEASURED window reading and the REAL default conversion, five_hour's genuine fit admits the launch despite seven_day's own documented units gap", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    const readUsageTelemetryFn = async () => ({
+      five_hour: { windowKind: "five_hour", classification: "measured", utilization: 0.1, resetElapsed: false },
+      seven_day: { windowKind: "seven_day", classification: "measured", utilization: 0.1, resetElapsed: false }
+    });
+    const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, readUsageTelemetryFn });
+
+    // Deliberately NO loadUnitConversionFn override -- this exercises cardLaunch.js's own real
+    // default (resolveUnitConversionForAdmission -> DEFAULT_USD_UTILIZATION_CONVERSION).
+    await launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
+    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
   });
 
   it("T-0370 (Codex finding 2): under enforcement, an active overrun stop refuses a brand-new admission", async () => {

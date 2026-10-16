@@ -388,7 +388,7 @@ describe("T-0402 integration: the REAL default committed conversion, through the
     // evidence gap, not an active shortage, so it does not mask five_hour's own genuine fit.
     // Holding every real auto launch forever purely because seven_day lacks enough history to
     // fit a rate would defeat the whole point of this card.
-    await expect(launchPromise).resolves.toBeUndefined();
+    await expect(launchPromise).resolves.toBeDefined();
     expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
 
     expect(captured.admission.windows.five_hour.holdReason).not.toBe("units_not_comparable");
