@@ -8,6 +8,7 @@ import { listActiveReservations } from "../../src/runner/launchReservation.js";
 import { buildLaunchDecide as realBuildLaunchDecide } from "../../src/runner/launchAdvisory.js";
 import { recordAdvisoryDecision as realRecordAdvisoryDecision, AdvisoryDecisionMissingError } from "../../src/runner/advisoryLogger.js";
 import { HOLD_REASON } from "../../src/runner/admissionDecision.js";
+import { resolveUnitConversionForAdmission } from "../../src/runner/usdUtilizationConversion.js";
 import { rmTemp } from "../helpers/rmTemp.js";
 
 function makeTask(overrides = {}) {
@@ -506,6 +507,29 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     });
     await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
     expect(passedMaxAttempts).toBe(5);
+  });
+
+  it("T-0402: passes the real, resolved DEFAULT_USD_UTILIZATION_CONVERSION through to buildLaunchDecideFn by default", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    let passedUnitConversion = null;
+    const buildLaunchDecideFn = vi.fn((args) => {
+      passedUnitConversion = args.unitConversion;
+      return async () => ({ estimate: { value: null, unit: "usd" }, telemetryReadings: {}, reason: "stub", admission: null });
+    });
+    await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+    expect(passedUnitConversion).toEqual(resolveUnitConversionForAdmission());
+  });
+
+  it("T-0402: an injected loadUnitConversionFn overrides the default, same as loadAdmissionConfigFromEnvFn does for admissionConfig", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    const customConversion = { five_hour: { usdPerUtilizationUnit: 42, sampleCount: 20, fitDate: "2026-09-01", version: "v1" }, seven_day: null };
+    let passedUnitConversion = null;
+    const buildLaunchDecideFn = vi.fn((args) => {
+      passedUnitConversion = args.unitConversion;
+      return async () => ({ estimate: { value: null, unit: "usd" }, telemetryReadings: {}, reason: "stub", admission: null });
+    });
+    await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, loadUnitConversionFn: () => customConversion });
+    expect(passedUnitConversion).toEqual(customConversion);
   });
 
   it("two simultaneous controlled launches (different cards) cannot reserve the same remaining capacity -- each gets its own lease, and the sum reflects both", async () => {
