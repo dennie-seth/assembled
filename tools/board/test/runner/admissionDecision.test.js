@@ -336,7 +336,7 @@ describe("evaluateAdmission -- T-0402: a per-window unitConversion, never a shar
     uncertaintyReserve: { five_hour: 0.05, seven_day: 0.05 }
   };
 
-  it("a window with its own usable conversion gets a genuine admit/hold while a window with none stays units_not_comparable", () => {
+  it("T-0402 round 2: a window with its own usable conversion gets a genuine admit while a window with no evidence yet is a surfaced gap, not a veto", () => {
     const result = evaluateAdmission({
       telemetryReadings: {
         five_hour: reading({ windowKind: "five_hour", utilization: 0.1 }),
@@ -348,10 +348,50 @@ describe("evaluateAdmission -- T-0402: a per-window unitConversion, never a shar
       unitConversion: { five_hour: { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" }, seven_day: null }
     });
     expect(result.windows.five_hour.holdReason).not.toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
-    expect(typeof result.windows.five_hour.admitted).toBe("boolean");
+    expect(result.windows.five_hour.admitted).toBe(true);
     expect(result.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
-    // five_hour alone being comparable never fakes the aggregate verdict -- an indeterminate
-    // other window still makes the combined decision indeterminate, not a false admit.
+    // T-0402 round 2 (reviewer FAIL on criterion 3): `UNITS_NOT_COMPARABLE` on its own is a
+    // documented EVIDENCE GAP, not an active shortage -- unlike every other hold reason, it never
+    // vetoes an otherwise-genuine admit from a window that DOES have comparable evidence. Holding
+    // every real auto launch forever just because one window (seven_day) has too little history
+    // to fit a rate yet would defeat this entire card's purpose -- see
+    // docs/wip-gate-admission.md's "how to enable safely" runbook for how a human distinguishes
+    // this surfaced gap (still visible right here on `windows.seven_day`) from a real hold.
+    expect(result.admitted).toBe(true);
+  });
+
+  it("T-0402 round 2: the units-not-comparable non-veto never overrides an actual measured shortage in the OTHER window", () => {
+    const result = evaluateAdmission({
+      telemetryReadings: {
+        five_hour: reading({ windowKind: "five_hour", utilization: 0.99 }),
+        seven_day: reading({ windowKind: "seven_day", utilization: 0.1 })
+      },
+      estimate: estimate({ value: 1 }),
+      reservedUnspentCostUsd: 0,
+      config: nestedConfig,
+      unitConversion: { five_hour: { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" }, seven_day: null }
+    });
+    expect(result.windows.five_hour.admitted).toBe(false);
+    expect(result.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    // five_hour's own genuine `false` still vetoes the aggregate -- the non-veto rule only ever
+    // applies to a window whose ONLY issue is UNITS_NOT_COMPARABLE, never to a window that
+    // actually said no.
+    expect(result.admitted).toBe(false);
+  });
+
+  it("T-0402 round 2: when NO window has a usable conversion, the aggregate stays the original fail-safe (null), unchanged from before this card", () => {
+    const result = evaluateAdmission({
+      telemetryReadings: {
+        five_hour: reading({ windowKind: "five_hour", utilization: 0.1 }),
+        seven_day: reading({ windowKind: "seven_day", utilization: 0.1 })
+      },
+      estimate: estimate({ value: 1 }),
+      reservedUnspentCostUsd: 0,
+      config: nestedConfig,
+      unitConversion: { five_hour: null, seven_day: null }
+    });
+    expect(result.windows.five_hour.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    expect(result.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
     expect(result.admitted).toBeNull();
   });
 
