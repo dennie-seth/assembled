@@ -478,7 +478,21 @@ export function createAutoLaunchPoller({
     const passedOver = [];
     for (const candidate of candidates) {
       try {
-        const launched = await launchFn({ orchestrator, id: candidate.id, logger, trigger: LAUNCH_TRIGGERS.AUTO });
+        // T-0438 fix round 4: the comparison log just above reads telemetry WITH the
+        // decision-time probe wired in (`usageProbeFn`) -- without threading that same reading
+        // through, `launchFn` -> `launchCardRun` -> `buildLaunchDecide` would scan again with NO
+        // probe, so the admission formula (once enforcement is ever turned on) would still see
+        // the old stale/unavailable data this card exists to fix. `telemetryReadings` is `null`
+        // only when the bounded read above itself timed out/failed -- in that case there is
+        // nothing to hand down, and `launchCardRun`'s own default (a fresh, probe-less scan)
+        // applies, unchanged from before this fix.
+        const launched = await launchFn({
+          orchestrator,
+          id: candidate.id,
+          logger,
+          trigger: LAUNCH_TRIGGERS.AUTO,
+          telemetryReadingsHint: telemetryReadings
+        });
         logger.log(`${LOG_PREFIX}: launched ${candidate.id} (${candidate.priority ?? "no priority"})`);
         if (drainModeEnabled) {
           // FIX ROUND 2 finding 1: a successful launch ends this card's wait -- clear the

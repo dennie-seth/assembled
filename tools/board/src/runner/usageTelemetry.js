@@ -392,3 +392,63 @@ export async function readUsageTelemetry({ runsDir, now = Date.now(), maxStalene
   }
   return readings;
 }
+
+/**
+ * T-0438 fix round 4 (reviewer, 2026-10-16T17:12:25.400Z): "the fresh reading never reaches the
+ * launch decision." `autoLaunchPoller.js`'s `tick()` reads telemetry with the decision-time probe
+ * for its own `usage gate comparison` log line, but a real launch decision happens strictly LATER
+ * in the same tick -- `store.list()`, the idle gate, and `launchAdvisory.js`'s admission/
+ * reservation critical section all await real I/O first. A reading classified fresh AT THE SCAN
+ * can have aged past its own bound, or its window reset, by the time something actually consumes
+ * it. Carrying the already-obtained reading forward (see `decideLaunchAdvisory`'s
+ * `telemetryReadingsHint` in advisoryLogger.js) without re-checking it at the new point in time
+ * would trust a timestamp that is no longer current -- so this re-applies the exact same
+ * staleness/reset rules `classifyReading` already enforces, but evaluated against `now` as of
+ * THIS later call. Only ever downgrades a reading toward stale/unavailable, never upgrades one --
+ * the same one-directional "unknown/stale capacity is never silently read as current" rule every
+ * other check in this module already follows.
+ */
+export function revalidateReadingAt({ reading, now }) {
+  if (!reading || reading.classification === READING_STATUS.UNAVAILABLE) return reading;
+
+  // The window has rolled over since this reading was taken -- it describes a window that no
+  // longer exists, so its utilization must never be carried forward as though it still described
+  // the current one (acceptance edge case: "a reading taken before a reset describes a window
+  // that no longer exists"). A reading already flagged `resetElapsed` at scan time already
+  // accounted for this; only a reset that happens BETWEEN the scan and this later check is new.
+  if (!reading.resetElapsed && typeof reading.resetsAtMs === "number" && now >= reading.resetsAtMs) {
+    return unavailableReading(
+      reading.windowKind,
+      `window reset at ${reading.resetsAtIso} since this reading was observed -- no longer current at consumption time`,
+      reading.maxStalenessMs
+    );
+  }
+
+  if (typeof reading.observedAtMs !== "number") {
+    // No trustworthy observation instant to check age against to begin with (an untimed
+    // historical scan record, already classified conservatively) -- nothing new to revalidate.
+    return reading;
+  }
+
+  const ageMs = Math.max(0, now - reading.observedAtMs);
+  if (reading.classification !== READING_STATUS.STALE && ageMs > reading.maxStalenessMs) {
+    return {
+      ...reading,
+      classification: READING_STATUS.STALE,
+      utilization: null,
+      ageMs,
+      reason: `stale by the time of consumption (age ${ageMs}ms > max ${reading.maxStalenessMs}ms since observed at ${new Date(reading.observedAtMs).toISOString()})`
+    };
+  }
+
+  return { ...reading, ageMs };
+}
+
+/** Applies `revalidateReadingAt` to every window in a `readUsageTelemetry()`-shaped result. */
+export function revalidateTelemetryReadingsAt({ readings, now }) {
+  const result = {};
+  for (const windowKind of WINDOW_KINDS) {
+    result[windowKind] = revalidateReadingAt({ reading: readings?.[windowKind] ?? null, now });
+  }
+  return result;
+}

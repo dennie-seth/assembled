@@ -8,15 +8,22 @@ import { rateLimitInfoFromEvent } from "./usageLimitDetector.js";
  * of whether any real card run has happened recently enough to have refreshed the log-scan
  * reading on its own.
  *
- * Cost, stated from evidence, not assumed: `tasks/.runs/T-0438-*.jsonl` (this card's own run log)
- * shows the `rate_limit_event` arriving at line 1, BEFORE the first `assistant` turn's own
- * cache-creation cost (33,544 `cache_creation_input_tokens` at line 4) -- the CLI reports this
- * reading as part of its own preflight, before it spends on the turn itself. `spawnUsageProbe`
- * kills the child the instant it sees that event, so its cost is bounded to whatever that
- * preflight exchange alone costs -- there is no card body, no tool list, no system prompt on this
+ * Cost, stated from what was actually observed, not assumed: `tasks/.runs/T-0438-*.jsonl` (this
+ * card's own run log) shows the `rate_limit_event` arriving at line 1, BEFORE the first
+ * `assistant` turn's own cache-creation cost (33,544 `cache_creation_input_tokens` at line 4) --
+ * so killing the child the instant that event arrives (`spawnUsageProbe` does exactly that) avoids
+ * whatever a real turn's own system-prompt/tool-definition cache creation would have cost. That
+ * ordering does NOT by itself prove the preflight exchange up to the event is free (reviewer
+ * finding, 2026-10-16T17:12:25.400Z's "also" item: arrival before an assistant message doesn't
+ * prove zero inference or establish a dollar ceiling) -- the CLI could still perform some
+ * inference before ever emitting `rate_limit_event`, and this session has no grant to invoke
+ * `claude` directly and measure a single preflight exchange in isolation to check. What is
+ * actually established: no card body, no tool list, and no system prompt are supplied to this
  * invocation (`buildProbeArgs` carries neither `--allowedTools` nor `--settings`), unlike a real
- * card run. It is charged against the same five-hour window it measures (see docs/usage-telemetry.md
- * for the per-day bound this implies at the live board's `AUTO_LAUNCH_INTERVAL_MS` cadence).
+ * card run -- so the preflight is strictly cheaper than a real card run's own first turn, not a
+ * measured dollar figure or a proven zero. It is charged against the same five-hour window it
+ * measures (see docs/usage-telemetry.md for the per-day request-count ceiling this implies at the
+ * live board's `AUTO_LAUNCH_INTERVAL_MS` cadence).
  *
  * Wired in as the default once auto-launch itself is running: `createAutoLaunchPoller`'s own
  * `usageProbeFn` constructor option defaults to this function unless `USAGE_PROBE_DISABLED` is

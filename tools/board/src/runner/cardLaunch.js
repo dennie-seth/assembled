@@ -186,6 +186,13 @@ export async function launchCardRun({
   // Only the Run button (and any other deliberate, operator-initiated launch) should ever pass
   // `LAUNCH_TRIGGERS.MANUAL`.
   trigger = LAUNCH_TRIGGERS.AUTO,
+  // T-0438 fix round 4: a `readUsageTelemetry()`-shaped reading the caller already obtained for
+  // THIS SAME launch decision (the auto-launch poller's own decision-time probe read, done once
+  // per tick for its `usage gate comparison` log line -- see autoLaunchPoller.js's `tick()`) --
+  // threaded through to `buildLaunchDecideFn` so the admission formula sees it too, instead of a
+  // second, probe-less scan. `null` (the default, and every caller that never threads one
+  // through, e.g. the Run button) reproduces the original behavior exactly.
+  telemetryReadingsHint = null,
   ensureExecutionIdFn = ensureExecutionId,
   randomUUIDFn = randomUUID,
   buildLaunchDecideFn = buildLaunchDecide,
@@ -341,7 +348,8 @@ export async function launchCardRun({
         owner: `cardLaunch:${id}`,
         maxAttempts: effectiveMaxAttempts(task),
         admissionConfig: loadAdmissionConfigFromEnvFn({ logger }),
-        logger
+        logger,
+        telemetryReadingsHint
       });
 
       // T-0370 fix round (Codex finding 2): the shared admission decision is only AUTHORITATIVE
