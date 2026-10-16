@@ -631,7 +631,7 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     expect(orchestrator.runCard).not.toHaveBeenCalled();
   });
 
-  it("T-0402 round 2: with a real MEASURED window reading and the REAL default conversion, five_hour's genuine fit admits the launch despite seven_day's own documented units gap", async () => {
+  it("T-0402 fix round: with a real MEASURED window reading and the REAL default conversion, five_hour's own sub-decision is a genuine fit, but seven_day's own documented units gap still honestly holds the aggregate overall", async () => {
     const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
     const readUsageTelemetryFn = async () => ({
       five_hour: { windowKind: "five_hour", classification: "measured", utilization: 0.1, resetElapsed: false },
@@ -640,9 +640,27 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, readUsageTelemetryFn });
 
     // Deliberately NO loadUnitConversionFn override -- this exercises cardLaunch.js's own real
-    // default (resolveUnitConversionForAdmission -> DEFAULT_USD_UTILIZATION_CONVERSION).
-    await launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
-    expect(orchestrator.runCard).toHaveBeenCalledWith("T-0001");
+    // default (resolveUnitConversionForAdmission -> DEFAULT_USD_UTILIZATION_CONVERSION). The
+    // real default conversion IS wired through end to end (five_hour's window decision below is
+    // a genuine admit, never units_not_comparable), but @DennieSeth's #449 FIX ROUND review
+    // restored the "every required window must admit" guard -- seven_day's own documented
+    // evidence gap still honestly holds the launch overall, and that is the correct, intended
+    // fail-safe outcome given the current evidence, not a bug.
+    const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
+    await expect(rejection).rejects.toMatchObject({
+      name: "CardLaunchError",
+      statusCode: 409,
+      capacityFitHold: true,
+      message: expect.stringMatching(/units_not_comparable/),
+      admission: {
+        admitted: null,
+        windows: {
+          five_hour: { admitted: true, holdReason: null },
+          seven_day: { admitted: null, holdReason: "units_not_comparable" }
+        }
+      }
+    });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
   });
 
   it("T-0370 (Codex finding 2): under enforcement, an active overrun stop refuses a brand-new admission", async () => {
