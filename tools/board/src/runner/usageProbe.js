@@ -100,7 +100,10 @@ export async function spawnUsageProbe({
     }
 
     child.on("error", () => finish(null));
-    child.on("exit", () => finish(null));
+    // "close" fires only after stdio has fully flushed; "exit" can fire first, while a
+    // rate_limit_event line is still buffered on stdout -- finishing on "exit" would discard a
+    // reading that was already on its way (see usageProbe.test.js's exit-vs-close case).
+    child.on("close", () => finish(null));
 
     let buffer = "";
     child.stdout?.on("data", (chunk) => {
