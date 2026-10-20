@@ -312,12 +312,18 @@ export async function deriveUsdUtilizationConversionFromRuns({
  * in docs/usd-utilization-conversion.md.
  *
  * `five_hour` clears both bars (5 reset-cycle samples, coefficient of variation ~0.40) and ships
- * as usable. `seven_day` does NOT -- only one reset cycle in the real history ever had a second
- * measured reading before the window rolled over, so there is exactly one rate sample, nowhere
- * near `MIN_SAMPLES_FOR_USABLE_CONVERSION`. This is a genuine per-window disagreement in how much
- * evidence exists, not a shared rate forced onto both: `seven_day` stays `usable: false` until a
- * later re-fit (the mechanism above, not a code change) accumulates enough reset cycles with a
- * second reading.
+ * as usable. `seven_day` does NOT -- exactly one reset cycle in the real history produced a usable
+ * rate sample, nowhere near `MIN_SAMPLES_FOR_USABLE_CONVERSION`. This is NOT a reading-count
+ * shortage: several later weekly cycles do have two or more measured readings, but
+ * `deriveRateSamplesForWindow`'s all-or-nothing censoring rule drops a candidate cycle outright
+ * when ANY usage-ledger entry inside its interval is censored (`costUsd: null`), and the real
+ * history has enough censored entries landing inside those later cycles that none of them survives
+ * to become a second sample -- a censoring-driven gap, not a reading-count gap (see
+ * `docs/usd-utilization-conversion.md`'s "seven_day -- not usable" section for the full citation).
+ * This is a genuine per-window disagreement in how much evidence exists, not a shared rate forced
+ * onto both: `seven_day` stays `usable: false` until a later re-fit (the mechanism above, not a
+ * code change) accumulates enough reset cycles whose full interval's usage-ledger spend is
+ * uncensored.
  */
 export const DEFAULT_USD_UTILIZATION_CONVERSION = Object.freeze({
   version: CONVERSION_VERSION,
