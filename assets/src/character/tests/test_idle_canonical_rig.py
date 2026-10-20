@@ -30,9 +30,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from char_gen import idle_cycle
+from char_gen import idle_cycle, rig_compositor
 from char_gen import reference_pose_T0436 as refpose
-from char_gen import rig_compositor
 from char_gen.character_scale import CHARACTER_SCALE, FIGURE_PX
 from char_gen.draw_order_audit_T0436 import (
     canvas_geometry,
@@ -239,7 +238,6 @@ class TestPerSideArmRestAngles:
         placements = {p.name: p for p in idle_cycle.build_placements_at(phase=0.0)}
         rig = RIG
         lengths = rig_compositor.measured_bone_lengths(PARTS, rig)
-        shoulder_points, _ = idle_cycle.canonical_points(rig)
 
         from char_gen.walk_cycle import distal_joint
 
@@ -253,7 +251,7 @@ class TestPerSideArmRestAngles:
                 placements[sh_name].target_xy, lengths[sh_name], shoulder_deg,
             )
             fa_name = f"forearm_{side}"
-            assert placements[fa_name].pivot_px is not None  # sanity: part placed
+            assert placements[fa_name].target_xy == pytest.approx(expected_elbow)
             assert shoulder_deg == pytest.approx(0.0), (
                 f"upper arm {side} sits at {shoulder_deg}deg from vertical, not 0"
             )
@@ -313,7 +311,9 @@ class TestFeetDoNotDrift:
             ys, _xs = np.nonzero(alpha > 0)
             bottoms.append(int(ys.max()))
         max_dev = max(bottoms) - min(bottoms)
-        assert max_dev <= 1, f"lowest body pixel moves {max_dev}px across the loop -- the figure is not planted"
+        assert max_dev <= 1, (
+            f"lowest body pixel moves {max_dev}px across the loop -- not planted"
+        )
 
         # Per-frame leg geometry is phase-independent by construction (the hips do
         # not move in idle) -- confirm that directly from re-solved placements for

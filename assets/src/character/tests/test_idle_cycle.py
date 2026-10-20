@@ -11,11 +11,13 @@ import pytest
 
 from char_gen.idle_cycle import (
     BREATH_CYCLES_PER_LOOP,
-    ELBOW_REST_DEG,
+    ELBOW_REST_DEG_L,
+    ELBOW_REST_DEG_R,
     IDLE_KNEE_FLEXION_DEG,
     IDLE_THIGH_DEG,
     LEG_FOLLOW,
-    SHOULDER_REST_DEG,
+    SHOULDER_REST_DEG_L,
+    SHOULDER_REST_DEG_R,
     ankle_of,
     breath,
     idle_stance,
@@ -44,9 +46,15 @@ class TestOnlyTheUpperBodyMoves:
 
     @pytest.mark.parametrize("phase", PHASES)
     def test_the_arms_are_a_fixed_hanging_pose(self, phase):
+        """T-0437: one shared `shoulder_deg`/`elbow_deg` pair no longer exists --
+        each arm is rooted at its own canonical shoulder-bar end and carries its
+        own rest-angle fields instead (both still hang, at the same angle the old
+        shared pair used)."""
         p = pose_at(phase, TORSO_H)
-        assert p.shoulder_deg == SHOULDER_REST_DEG
-        assert p.elbow_deg == ELBOW_REST_DEG
+        assert p.shoulder_deg_r == SHOULDER_REST_DEG_R
+        assert p.elbow_deg_r == ELBOW_REST_DEG_R
+        assert p.shoulder_deg_l == SHOULDER_REST_DEG_L
+        assert p.elbow_deg_l == ELBOW_REST_DEG_L
 
     def test_the_legs_absorb_nothing(self):
         assert LEG_FOLLOW == 0.0, (
