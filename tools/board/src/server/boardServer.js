@@ -19,6 +19,7 @@ import { acquireBoardOwnership, boardOwnerLockPath } from "../runner/boardOwners
 import { createRunAwareTaskStore } from "../lib/runAwareTaskStore.js";
 import { createSelfImprovementLoop } from "../runner/selfImprovementTrigger.js";
 import { createAutoPullPoller } from "../runner/autoPullPoller.js";
+import { createMergeReconciler } from "../runner/mergeReconciler.js";
 import { createAutoLaunchPoller } from "../runner/autoLaunchPoller.js";
 import { createDrainWaitTracker, loadPersistedDrainWaitState } from "../runner/drainMode.js";
 import { drainPendingUsageWrites } from "../runner/usageLedger.js";
@@ -169,6 +170,18 @@ export async function startBoardServer({
     orchestrator,
     restartCoordinator
   });
+  // T-0458: notices a card's linked PR being merged (including merges missed while this
+  // process was down) and moves it to `done` -- see docs/design/auto-done-on-merge.md. Reads
+  // via `guardedStore` for the same cross-run-ownership reason orphanReaper/autoLaunchPoller do:
+  // a card in `review` is never orchestrator-tracked, so this is a no-op distinction in
+  // practice, but it keeps every write path on the same guard.
+  const mergeReconciler = createMergeReconciler({
+    store: guardedStore,
+    hub,
+    repoRoot: REPO_ROOT,
+    tasksDir,
+    taskStoreKind
+  });
   // WIP gate T-F drain mode, FIX ROUND 1 (Chat round-2 review of #408, finding 2): the original
   // firstHeldAtMs deadline must survive a board restart, or a restart quietly extends the bound.
   // Loaded BEFORE the tracker is constructed -- `createAutoLaunchPoller` itself stays synchronous,
@@ -267,6 +280,14 @@ export async function startBoardServer({
   selfImprovementLoop.start();
   autoPullPoller.start();
   autoLaunchPoller.start();
+  // Fire-and-forget, deliberately not awaited: a long outage can leave many `review` cards to
+  // check, each a network call to GitHub, and startup reconciliation must never be the reason
+  // boot itself times out (see the module's own docstring). The periodic sweep below is the
+  // ongoing backstop regardless of how this first pass finishes.
+  mergeReconciler.reconcileOnStartup().catch((err) => {
+    console.error("merge-reconciler: startup reconciliation failed:", err.message);
+  });
+  mergeReconciler.start();
 
   if (watcher) {
     await watcher.start();
@@ -289,7 +310,9 @@ export async function startBoardServer({
     selfImprovementLoop,
     autoPullPoller,
     autoLaunchPoller,
+    mergeReconciler,
     async close() {
+      mergeReconciler.stop();
       autoLaunchPoller.stop();
       autoPullPoller.stop();
       selfImprovementLoop.stop();
