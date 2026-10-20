@@ -8,7 +8,8 @@ import {
   findExistingPrRest,
   createPr,
   createPrRest,
-  classifyGhError
+  classifyGhError,
+  getPrState
 } from "../../src/runner/githubOps.js";
 import { rmTemp } from "../helpers/rmTemp.js";
 
@@ -285,6 +286,55 @@ describe("createPr", () => {
     await expect(
       createPr({ worktreeDir: tmpDir, base: "develop", head: "feature/T-0200", title: "t", body: "b" })
     ).rejects.toMatchObject({ ghClassification: "terminal" });
+  });
+});
+
+describe("getPrState", () => {
+  it("reads state/headRefName/number by PR url, not by branch", async () => {
+    await fs.writeFile(
+      path.join(stateDir, "pr-view-result.json"),
+      JSON.stringify({
+        url: "https://github.com/example/repo/pull/444",
+        state: "MERGED",
+        headRefName: "feature/T-0434",
+        number: 444
+      })
+    );
+    const result = await getPrState({ worktreeDir: tmpDir, prUrl: "https://github.com/example/repo/pull/444" });
+    expect(result).toEqual({
+      url: "https://github.com/example/repo/pull/444",
+      state: "MERGED",
+      headRefName: "feature/T-0434",
+      number: 444
+    });
+  });
+
+  it("reports CLOSED (not MERGED) for a PR closed without merging", async () => {
+    await fs.writeFile(
+      path.join(stateDir, "pr-view-result.json"),
+      JSON.stringify({
+        url: "https://github.com/example/repo/pull/271",
+        state: "CLOSED",
+        headRefName: "feature/T-0243",
+        number: 271
+      })
+    );
+    const result = await getPrState({ worktreeDir: tmpDir, prUrl: "https://github.com/example/repo/pull/271" });
+    expect(result.state).toBe("CLOSED");
+  });
+
+  it("throws a classified error when the PR cannot be read (missing/renamed)", async () => {
+    await fs.writeFile(path.join(stateDir, "pr-view-fail-message"), "no pull requests found\n");
+    await expect(
+      getPrState({ worktreeDir: tmpDir, prUrl: "https://github.com/example/repo/pull/9999" })
+    ).rejects.toMatchObject({ ghClassification: "terminal" });
+  });
+
+  it("throws an error classified 'transient' on a GitHub-side blip", async () => {
+    await fs.writeFile(path.join(stateDir, "pr-view-fail-message"), "HTTP 503: Service Unavailable\n");
+    await expect(
+      getPrState({ worktreeDir: tmpDir, prUrl: "https://github.com/example/repo/pull/444" })
+    ).rejects.toMatchObject({ ghClassification: "transient" });
   });
 });
 
