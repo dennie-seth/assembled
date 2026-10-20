@@ -31,6 +31,47 @@ export const MERGEABLE_STATUSES = new Set(["review"]);
  */
 const REPORT_ONLY_STATUSES = new Set(["in-progress", "validation", "backlog", "ready", "blocked"]);
 
+/**
+ * The only statuses worth spending a `gh pr view` call on at all -- `MERGEABLE_STATUSES` (where a
+ * MERGED PR triggers the actual transition) union `REPORT_ONLY_STATUSES` (where a MERGED PR is
+ * logged as a surprise). Every other status -- `done`, `retired`, and anything this module simply
+ * doesn't recognize -- is terminal or irrelevant to a merge event, and is skipped *before* any
+ * network call, not just before the eventual status check that follows a successful read. Reading
+ * first and only noticing the status can't use it afterwards means re-polling GitHub for every
+ * `done`/`retired` card that happens to still carry its old `pr` URL (every shipped card does) on
+ * every single sweep, forever -- that IS "hammering the API" against AC #15, not a hypothetical.
+ */
+const ELIGIBLE_FOR_PR_READ_STATUSES = new Set([...MERGEABLE_STATUSES, ...REPORT_ONLY_STATUSES]);
+
+/**
+ * How many cards this module will read PR state for at once during a single `reconcileAll` pass.
+ * A fixed, small bound sits between two failure modes a prior review caught: fully sequential (N
+ * cards x `prReadTimeoutMs` each, which during a GitHub outage with a long `review` backlog can
+ * run long enough to blow past the sweep interval or stall boot) and fully parallel (N simultaneous
+ * `gh` subprocesses against a single, possibly rate-limited API -- the literal "hammering" AC #15
+ * warns about). 4 is deliberately unremarkable: this module's own eligible set is already small by
+ * construction (only `review` plus the report-only statuses, see `ELIGIBLE_FOR_PR_READ_STATUSES`
+ * above), so this bound exists for the batch/outage tail, not the common case.
+ */
+export const DEFAULT_RECONCILE_CONCURRENCY = 4;
+
+/**
+ * Runs `fn` over `items` with at most `limit` calls in flight at once -- see
+ * DEFAULT_RECONCILE_CONCURRENCY for why this exists instead of a plain sequential loop or
+ * `Promise.all`. Preserves `items`' order in the returned array regardless of completion order.
+ */
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    for (let i = next++; i < items.length; i = next++) {
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 /** Sensible default: frequent enough that a card doesn't sit stranded in `review` for hours after a merge, cheap enough (one `gh pr view` per review card) to run indefinitely -- same order of magnitude as autoPullPoller.js's DEFAULT_AUTOPULL_INTERVAL_MS, which exists for the same "nothing catastrophic if this is a few minutes late" reason. */
 export const DEFAULT_MERGE_RECONCILE_INTERVAL_MS = 5 * 60_000;
 
@@ -118,6 +159,10 @@ export async function reconcileCard({
   prReadTimeoutMs = DEFAULT_PR_READ_TIMEOUT_MS
 }) {
   if (!task.pr) return null;
+  // See ELIGIBLE_FOR_PR_READ_STATUSES: a terminal/unrecognized status is skipped before the
+  // network call, never after -- this is the fix for the "every done card gets re-polled forever"
+  // defect, not merely a status check moved earlier for its own sake.
+  if (!ELIGIBLE_FOR_PR_READ_STATUSES.has(task.status)) return null;
 
   const prData = await readPrState({ worktreeDir, prUrl: task.pr, getPrStateFn, logger, timeoutMs: prReadTimeoutMs });
   if (!prData) {
@@ -230,14 +275,22 @@ export function createMergeReconciler({
   getPrStateFn = getPrState,
   needsApprovalFn = needsApproval,
   logger = console,
-  prReadTimeoutMs = DEFAULT_PR_READ_TIMEOUT_MS
+  prReadTimeoutMs = DEFAULT_PR_READ_TIMEOUT_MS,
+  reconcileConcurrency = DEFAULT_RECONCILE_CONCURRENCY
 }) {
   let timer = null;
+  // Shared by reconcileOnStartup and sweepOnce (not just the interval timer): a slow pass --
+  // GitHub degraded, a large eligible batch -- must never overlap ANOTHER pass reading and
+  // writing the same cards concurrently, regardless of which entry point triggered it. Without
+  // this, a tick that outlives its own interval (exactly the "overlapping sweeps accumulate, each
+  // spawning gh subprocesses" failure a prior review caught) piles up instead of being skipped.
+  let reconcileInFlight = null;
 
   async function reconcileAll() {
     const tasks = await store.list();
+    const eligible = tasks.filter((task) => task.pr && ELIGIBLE_FOR_PR_READ_STATUSES.has(task.status));
     const completed = [];
-    for (const task of tasks) {
+    await mapWithConcurrency(eligible, reconcileConcurrency, async (task) => {
       try {
         const updated = await reconcileCard({
           store,
@@ -257,18 +310,31 @@ export function createMergeReconciler({
       } catch (err) {
         logger.error(`merge-reconciler: unexpected error reconciling card ${task.id}: ${err.message}`);
       }
-    }
+    });
     return completed;
+  }
+
+  async function reconcileAllGuarded() {
+    if (reconcileInFlight) {
+      logger.log("merge-reconciler: a reconciliation pass is already in flight -- skipping this trigger rather than overlapping it");
+      return [];
+    }
+    reconcileInFlight = reconcileAll();
+    try {
+      return await reconcileInFlight;
+    } finally {
+      reconcileInFlight = null;
+    }
   }
 
   async function reconcileOnStartup() {
     if (!enabled || !startupEnabled) return [];
-    return reconcileAll();
+    return reconcileAllGuarded();
   }
 
   async function sweepOnce() {
     if (!enabled || !sweepEnabled) return [];
-    return reconcileAll();
+    return reconcileAllGuarded();
   }
 
   function start() {

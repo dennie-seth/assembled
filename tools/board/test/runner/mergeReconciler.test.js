@@ -12,7 +12,8 @@ import {
   mergeReconcileStartupEnabledFromEnv,
   mergeReconcileSweepEnabledFromEnv,
   mergeReconcileIntervalMsFromEnv,
-  DEFAULT_MERGE_RECONCILE_INTERVAL_MS
+  DEFAULT_MERGE_RECONCILE_INTERVAL_MS,
+  DEFAULT_RECONCILE_CONCURRENCY
 } from "../../src/runner/mergeReconciler.js";
 import { StaleWriteError } from "../../src/lib/taskStore.js";
 
@@ -212,7 +213,7 @@ describe("reconcileCard", () => {
     expect(store.update).not.toHaveBeenCalled();
   });
 
-  it("leaves a card already done untouched (idempotent: never double-applies)", async () => {
+  it("leaves a card already done untouched (idempotent: never double-applies), without reading its PR at all", async () => {
     const t = task({ status: "done" });
     const store = makeStore([t]);
     const getPrStateFn = mergedPr();
@@ -221,9 +222,14 @@ describe("reconcileCard", () => {
 
     expect(updated).toBeNull();
     expect(store.update).not.toHaveBeenCalled();
+    // A done card's `pr` field is the ordinary case for every card that ever shipped -- reading
+    // its state anyway (then discarding the result once the status check runs) means re-polling
+    // GitHub for the entire done backlog on every sweep, forever. The status check must happen
+    // BEFORE the network call, not after.
+    expect(getPrStateFn).not.toHaveBeenCalled();
   });
 
-  it("leaves a card moved to retired after its PR merged untouched (keeps the human's decision)", async () => {
+  it("leaves a card moved to retired after its PR merged untouched (keeps the human's decision), without reading its PR at all", async () => {
     const t = task({ status: "retired" });
     const store = makeStore([t]);
     const getPrStateFn = mergedPr();
@@ -232,6 +238,7 @@ describe("reconcileCard", () => {
 
     expect(updated).toBeNull();
     expect(store.update).not.toHaveBeenCalled();
+    expect(getPrStateFn).not.toHaveBeenCalled();
   });
 
   it("never silently completes a requires_approval card -- stays parked in review for a human", async () => {
@@ -549,5 +556,85 @@ describe("createMergeReconciler — the two recovery paths are independently suf
 
     expect(completed).toEqual(["T-0100"]);
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("unexpected error reconciling card T-0200"));
+  });
+
+  // AC: "GitHub unreachable or rate-limited during the sweep ... must not stall a tick or wedge
+  // the poller" / "A long outage with many merges ... handle a batch without hammering the API".
+  // Two prior defects, pinned here: (1) every card carrying a `pr` field got a network read
+  // regardless of status, so a 458-card deck with 19 already-`done` cards re-polled GitHub for
+  // all 19 on every sweep forever; (2) reconcileAll had no in-flight guard, so a slow tick
+  // (GitHub degraded) could overlap the next interval's tick, piling up `gh` subprocesses.
+  it("never reads PR state for a card outside the eligible statuses, even across a mixed batch (no pointless/hammering reads)", async () => {
+    const doneCard = task({ id: "T-0100", branch: "feature/T-0100", pr: "https://github.com/example/repo/pull/100", status: "done" });
+    const retiredCard = task({ id: "T-0101", branch: "feature/T-0101", pr: "https://github.com/example/repo/pull/101", status: "retired" });
+    const reviewCard = task({ id: "T-0102", branch: "feature/T-0102", pr: "https://github.com/example/repo/pull/102" });
+    const store = makeStore([doneCard, retiredCard, reviewCard]);
+    const getPrStateFn = mergedPr({ headRefName: "feature/T-0102" });
+    const reconciler = createMergeReconciler({ store, enabled: true, getPrStateFn, logger });
+
+    const completed = await reconciler.sweepOnce();
+
+    expect(completed).toEqual(["T-0102"]);
+    expect(getPrStateFn).toHaveBeenCalledTimes(1);
+    expect(getPrStateFn).toHaveBeenCalledWith({ worktreeDir: null, prUrl: "https://github.com/example/repo/pull/102" });
+  });
+
+  it("bounds concurrent PR reads during a sweep so a large batch never fires unlimited parallel requests", async () => {
+    const cards = Array.from({ length: 10 }, (_, i) =>
+      task({ id: `T-${1000 + i}`, branch: `feature/T-${1000 + i}`, pr: `https://github.com/example/repo/pull/${1000 + i}` })
+    );
+    const store = makeStore(cards);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const getPrStateFn = vi.fn(async ({ prUrl }) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await Promise.resolve();
+      await Promise.resolve();
+      inFlight--;
+      const branch = cards.find((c) => c.pr === prUrl).branch;
+      return { url: prUrl, state: "MERGED", headRefName: branch, number: 1 };
+    });
+    const reconciler = createMergeReconciler({ store, enabled: true, getPrStateFn, logger });
+
+    const completed = await reconciler.sweepOnce();
+
+    expect(completed).toHaveLength(10);
+    expect(maxInFlight).toBeGreaterThan(1); // actually concurrent, not purely sequential
+    expect(maxInFlight).toBeLessThanOrEqual(DEFAULT_RECONCILE_CONCURRENCY);
+  });
+
+  it("skips an overlapping sweep tick instead of piling up while the previous tick is still in flight", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = task();
+      const store = makeStore([t]);
+      let resolvePrRead;
+      const getPrStateFn = vi.fn(() => new Promise((resolve) => { resolvePrRead = resolve; }));
+      const reconciler = createMergeReconciler({
+        store,
+        enabled: true,
+        sweepEnabled: true,
+        intervalMs: 100,
+        getPrStateFn,
+        logger
+      });
+
+      reconciler.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(store.list).toHaveBeenCalledTimes(1); // first tick started and is now stuck awaiting the PR read
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(store.list).toHaveBeenCalledTimes(1); // second tick's reconcileAll never ran -- guard skipped it
+      expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("already in flight -- skipping this trigger"));
+
+      resolvePrRead({ url: t.pr, state: "MERGED", headRefName: t.branch, number: 444 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.update).toHaveBeenCalledTimes(1);
+
+      reconciler.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

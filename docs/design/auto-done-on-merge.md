@@ -125,10 +125,33 @@ back up. The periodic sweep is the ongoing backstop regardless of how long the f
 
 ## Safety and idempotence
 
+- **Status is checked before any network call, not after.** `reconcileCard` bails out on a status
+  outside `ELIGIBLE_FOR_PR_READ_STATUSES` (`MERGEABLE_STATUSES` union `REPORT_ONLY_STATUSES`)
+  before ever calling `gh pr view`. This matters at scale: every `done` card that has ever shipped
+  still carries its old `pr` URL, so without this check every sweep -- forever -- re-reads GitHub
+  for the entire done/retired backlog only to discard the result once the status check finally
+  runs. That is real "hammering the API", not a hypothetical: a sampled 458-card deck had 19
+  already-`done` cards with a live `pr` field. `reconcileAll` filters the eligible set once, up
+  front, against this same set, so the done/retired backlog is never even handed to a PR read.
 - **Bounded GitHub reads.** Every `gh pr view` call is wrapped in `boundedAwait.js`'s
   `withTimeout` (default 8s, `prReadTimeoutMs`). A hang, a rate limit, or any other slow response
   resolves to "unreadable" rather than wedging the sweep tick or stalling boot -- the same posture
   `launchAdvisory.js` already established for the launch path.
+- **Bounded concurrency, not sequential or unbounded.** `reconcileAll` reads at most
+  `DEFAULT_RECONCILE_CONCURRENCY` (4) cards' PR state at once, via a small internal
+  `mapWithConcurrency` helper. Fully sequential would mean N eligible cards x `prReadTimeoutMs`
+  each during an outage -- with even a modest `review` backlog that can run long enough to overrun
+  the sweep interval or stall boot. Fully parallel (`Promise.all` over the whole eligible set)
+  would fire N simultaneous `gh` subprocesses at a possibly rate-limited API -- the literal
+  "hammering" AC #15 warns against. 4 is small enough to never look like a burst, and the eligible
+  set is small by construction (only `review` plus the report-only statuses), so this bound exists
+  for the batch/outage tail, not the common case.
+- **An in-flight guard prevents overlapping passes.** `reconcileOnStartup` and `sweepOnce` both
+  go through a shared `reconcileAllGuarded` wrapper: if a pass is still running (GitHub degraded,
+  a large eligible batch) when the next sweep tick fires, the new tick logs that it is skipping
+  rather than starting a second, overlapping pass against the same cards. Without this, a tick
+  that outlives its own interval would pile up concurrent `gh` subprocesses instead of simply
+  running a little late -- exactly the "stall a tick / wedge the poller" failure AC #14 forbids.
 - **Per-card error isolation.** A thrown error reconciling one card (a store write failure, an
   unexpected exception) is caught, logged via `logger.error`, and the sweep continues with the
   next card -- one bad card never aborts the rest of the batch.
