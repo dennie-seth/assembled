@@ -1,4 +1,6 @@
-import { readVerdictEntries as defaultReadVerdictEntries, appendVerdictEntry as defaultAppendVerdictEntry } from "../lib/verdictArchive.js";
+import { promises as fsp } from "node:fs";
+import path from "node:path";
+import { readVerdictEntries as defaultReadVerdictEntries, appendVerdictEntry as defaultAppendVerdictEntry, verdictArchiveDir } from "../lib/verdictArchive.js";
 import { validateCodexVerdictPayload } from "./codexVerdictSchema.js";
 
 /**
@@ -47,6 +49,32 @@ function renderText({ reason, detail, payload }) {
   return lines.join("\n");
 }
 
+/**
+ * The real exactly-once primitive: an exclusive-create ("wx") marker file per (taskId,
+ * deliveryId), the same atomic technique launchReservation.js uses for launch slots (fs.link
+ * there, fs.open(..., "wx") here -- either way, the OS rejects the second creator, not this
+ * process's own bookkeeping). T-0460's own real review run reproduced the race this closes: the
+ * pre-fix mechanism was read-existing-entries-then-append with no lock between those two awaits,
+ * so two genuinely concurrent deliveries of the same result could both pass the "already
+ * recorded?" check before either appended, publishing twice. Whichever caller's open() wins the
+ * race proceeds to process and append; the loser is told to treat this delivery as a duplicate.
+ */
+async function defaultClaimDelivery(tasksDir, taskId, deliveryId) {
+  const dir = verdictArchiveDir(tasksDir);
+  await fsp.mkdir(dir, { recursive: true });
+  const markerPath = path.join(dir, `${taskId}.${deliveryId}.delivered`);
+  try {
+    const handle = await fsp.open(markerPath, "wx");
+    await handle.close();
+    return true;
+  } catch (err) {
+    if (err.code === "EEXIST") {
+      return false;
+    }
+    throw err;
+  }
+}
+
 function processFailureReason(runResult) {
   if (!runResult) return "missing-result";
   if (runResult.kind === "process-failure" || runResult.kind === "parse-failure") {
@@ -76,7 +104,8 @@ export async function publishCodexVerdict({
   cancelled = false,
   now = defaultNow,
   readEntriesFn = defaultReadVerdictEntries,
-  appendEntryFn = defaultAppendVerdictEntry
+  appendEntryFn = defaultAppendVerdictEntry,
+  claimDeliveryFn = defaultClaimDelivery
 }) {
   if (typeof deliveryId !== "string" || deliveryId.length === 0) {
     throw new Error("publishCodexVerdict requires a non-empty deliveryId");
@@ -84,14 +113,23 @@ export async function publishCodexVerdict({
   if (!dispatchedJob || typeof dispatchedJob.jobId !== "string" || typeof dispatchedJob.dispatchedSha !== "string") {
     throw new Error("publishCodexVerdict requires dispatchedJob.jobId and dispatchedJob.dispatchedSha");
   }
+  // Required, not merely optional-and-skipped: the whole point of this argument is to let the
+  // publisher compare "what was reviewed" against "what the card is at right now." A caller that
+  // can't supply it yet has no business asking this function to decide published/superseded.
+  if (typeof currentHead !== "string" || currentHead.length === 0) {
+    throw new Error("publishCodexVerdict requires currentHead");
+  }
 
-  // Exactly-once: a retry, a restart, or a replayed delivery of the same result is a pure no-op
-  // once its deliveryId has already been recorded -- this read-before-append check, keyed on
-  // the archive itself rather than any in-memory state, is the mechanism (not "timing").
-  const existing = await readEntriesFn(tasksDir, taskId);
-  const duplicate = existing.find((entry) => entry.deliveryId === deliveryId);
-  if (duplicate) {
-    return { status: "duplicate", outcome: duplicate.outcome, entry: duplicate };
+  // Exactly-once, including under real concurrency (not just sequential retries): see
+  // defaultClaimDelivery's docstring for the race this closes. Whichever caller fails to claim
+  // the marker reads back whatever the winner produced (or finds nothing, if the winner's own
+  // append hasn't landed yet / was itself rejected) and reports "duplicate" rather than
+  // reprocessing.
+  const claimed = await claimDeliveryFn(tasksDir, taskId, deliveryId);
+  if (!claimed) {
+    const existing = await readEntriesFn(tasksDir, taskId);
+    const match = existing.find((entry) => entry.deliveryId === deliveryId);
+    return { status: "duplicate", outcome: match ? match.outcome : undefined, entry: match ?? null };
   }
 
   // A result for a job that was cancelled never publishes, regardless of validity -- cancellation
@@ -134,13 +172,14 @@ export async function publishCodexVerdict({
   const identityOk =
     payload.job.jobId === dispatchedJob.jobId &&
     payload.job.ticketId === dispatchedJob.ticketId &&
+    payload.job.sprintId === dispatchedJob.sprintId &&
     payload.reviewedSha === dispatchedJob.dispatchedSha;
   if (!identityOk) {
     // Rejected, not published with a correction: nothing is appended to the archive at all.
     return { status: "rejected", reason: "identity-mismatch", payload };
   }
 
-  if (typeof currentHead === "string" && currentHead.length > 0 && currentHead !== dispatchedJob.dispatchedSha) {
+  if (currentHead !== dispatchedJob.dispatchedSha) {
     const entry = {
       ...baseEntry,
       heading: `${HEADING_PREFIX}: SUPERSEDED`,
