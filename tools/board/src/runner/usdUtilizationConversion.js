@@ -52,13 +52,19 @@ export const MAX_COEFFICIENT_OF_VARIATION = 0.5;
  * subtotal, which would bias the rate low -- never silently treated as the whole spend); or the
  * known spend in its interval is non-positive (a zero/negative rate is never fabricated).
  */
-export function deriveRateSamplesForWindow({ readings, ledgerEntries }) {
+/** Shared by `deriveRateSamplesForWindow` and `diagnoseCensoredCycles` so the two can never disagree about what counts as one reset cycle. */
+function groupReadingsByResetCycle(readings) {
   const byResetCycle = new Map();
   for (const r of readings) {
     const key = String(r.resetsAt);
     if (!byResetCycle.has(key)) byResetCycle.set(key, []);
     byResetCycle.get(key).push(r);
   }
+  return byResetCycle;
+}
+
+export function deriveRateSamplesForWindow({ readings, ledgerEntries }) {
+  const byResetCycle = groupReadingsByResetCycle(readings);
 
   const samples = [];
   for (const cycleReadings of byResetCycle.values()) {
@@ -95,6 +101,55 @@ export function deriveRateSamplesForWindow({ readings, ledgerEntries }) {
     });
   }
   return samples;
+}
+
+/**
+ * T-0457: names exactly which reset cycles `deriveRateSamplesForWindow` dropped SPECIFICALLY
+ * because a censored (`costUsd: null`) ledger entry fell inside their interval -- as opposed to a
+ * cycle dropped for having fewer than two readings, no genuine utilization increase, or zero known
+ * spend, none of which are a censoring problem. Conflating those would misrepresent how much of a
+ * window's evidence gap is actually cost-data censoring versus something else (see
+ * docs/usd-utilization-conversion.md's "origin of costUsd: null" section, which this function is
+ * the re-derivable mechanism behind -- re-run it against any `runsDir` via this module's own scan
+ * helpers whenever the evidence needs re-checking, instead of a one-off script).
+ *
+ * Shares `deriveRateSamplesForWindow`'s own cycle-eligibility rules (>=2 readings, a genuine
+ * increase) so a cycle only ever appears here when censoring is the ONE AND ONLY reason it isn't
+ * also a rate sample -- never double-reported as both.
+ */
+export function diagnoseCensoredCycles({ readings, ledgerEntries }) {
+  const byResetCycle = groupReadingsByResetCycle(readings);
+  const diagnostics = [];
+
+  for (const [resetsAtKey, cycleReadings] of byResetCycle.entries()) {
+    if (cycleReadings.length < 2) continue;
+    const sorted = [...cycleReadings].sort((a, b) => a.receivedAtMs - b.receivedAtMs);
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const dUtil = last.utilization - first.utilization;
+    if (!(dUtil > 0)) continue;
+
+    let censoredEntryCount = 0;
+    let knownEntryCount = 0;
+    for (const entry of ledgerEntries) {
+      if (typeof entry.recordedAtMs !== "number") continue;
+      if (entry.recordedAtMs <= first.receivedAtMs || entry.recordedAtMs > last.receivedAtMs) continue;
+      if (typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd)) knownEntryCount += 1;
+      else censoredEntryCount += 1;
+    }
+    if (censoredEntryCount === 0) continue;
+
+    diagnostics.push({
+      resetsAt: Number(resetsAtKey),
+      cycleStartMs: first.receivedAtMs,
+      cycleEndMs: last.receivedAtMs,
+      readingCount: sorted.length,
+      censoredEntryCount,
+      knownEntryCount
+    });
+  }
+
+  return diagnostics;
 }
 
 function median(sortedValues) {
