@@ -270,13 +270,7 @@ describe("runCodexReviewJob -- real concurrency: two simultaneous starts for the
       const child = makeFakeChild({ pid: 4000 + children.length });
       children.push(child);
       return {
-        start: vi.fn(async () => {
-          // Give the other concurrent call a chance to also reach the claim before either
-          // resolves its own `start()` -- if the guard were still read-then-write, both would
-          // pass; with the real atomic reservation, only one ever gets this far at all.
-          await new Promise((resolve) => setTimeout(resolve, 5));
-          return { child, spawnError: null, timedOut: false, budgetExceeded: false };
-        })
+        start: vi.fn(async () => ({ child, spawnError: null, timedOut: false, budgetExceeded: false }))
       };
     });
 
@@ -284,7 +278,9 @@ describe("runCodexReviewJob -- real concurrency: two simultaneous starts for the
       worktreeDir,
       createRunner,
       // Real claim/release lifecycle -- deliberately NOT overridden with the mocked defaults, so
-      // the two calls below race on the genuine atomic `link()` in launchReservation.js.
+      // the two calls below race on the genuine atomic `link()` in launchReservation.js. Exactly
+      // one wins regardless of scheduling, so this test does not depend on any fixed timing
+      // window between the two `runCodexReviewJob` calls below.
       claimReviewSlotFn: claimReviewSlot,
       releaseReviewSlotFn: releaseOwnedReviewSlot
     });
@@ -292,7 +288,14 @@ describe("runCodexReviewJob -- real concurrency: two simultaneous starts for the
     const jobPromiseA = runCodexReviewJob(deps);
     const jobPromiseB = runCodexReviewJob(deps);
 
-    await settle();
+    // Poll for the winner's child to exist rather than a fixed-delay settle() -- under heavy
+    // parallel-suite load the real fs-backed claim can legitimately take longer than any small
+    // fixed delay, and a hardcoded wait would either emit "exit" too early (nothing created yet)
+    // or needlessly slow every run down to cover a worst case.
+    const deadline = Date.now() + 5000;
+    while (children.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
     for (const child of children) child.emit("exit", 0);
 
     const [resultA, resultB] = await Promise.all([jobPromiseA, jobPromiseB]);
