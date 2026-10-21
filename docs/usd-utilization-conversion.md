@@ -124,13 +124,155 @@ window with no conversion still let the launch through). A window that can't be 
 the estimate is an unresolved unknown, not an absent window, so that carve-out was reverted and
 the aggregate stays strict.
 
+## T-0457: the origin of `costUsd: null`, and why fixing it still doesn't unblock `seven_day`
+
+T-0402's reviewer established that `seven_day` is unfittable because of censoring, not scarcity of
+*readings*. This card re-ran the exact pipeline against the real, larger `tasks/.runs/` evidence
+that exists today (2026-10-21 -- 1291 files, 475 deduplicated usage-ledger entries, up from the
+436 cited above) via the same `node -e` technique T-0402 used (see "Where the evidence lives"
+above), to answer two questions this card's acceptance criteria require answered from the real
+ledger, not assumed: why do entries end up censored, and does fixing that actually get `seven_day`
+to `MIN_SAMPLES_FOR_USABLE_CONVERSION`?
+
+**Re-verification first, because it matters for everything below**: re-running
+`deriveUsdUtilizationConversionFromRuns` against today's evidence reproduces the committed
+`DEFAULT_USD_UTILIZATION_CONVERSION` for **both** windows byte-for-byte -- `five_hour`'s 5 samples,
+`usdPerUtilizationUnit: 77.45769000000003`, `cv: 0.4021426187372661`, and `seven_day`'s 1 sample at
+376.497433, unchanged. Five more days of real launches have not changed either number: no new
+`five_hour` cycle cleared, and `seven_day` is exactly where T-0402 left it. This card's finding
+does not require touching the committed constant at all.
+
+### Why entries end up with `costUsd: null`
+
+As of this run, **15 usage-ledger entries carry `costUsd: null`**, spanning 2026-09-17 through
+today (2026-10-21 -- one of the 15 is this very run's own still-in-flight implementer phase; the
+set has visibly drifted since whatever earlier snapshot this card's own History section cited: a
+few entries that were null then have since resolved to a known cost on a later revision for the
+same key, while new ones have appeared past 2026-09-30, which is itself evidence for this card's
+"approximation drifting over time" edge case -- a null census is a moving target, not a fixed
+fact). Every one of the 15 shares `complete: false` and a non-terminal `outcome`
+(`cancelled`/`phase_timeout`/`in_progress`): T-0247 (09-29, cancelled), T-0361 (09-17,
+phase_timeout), T-0384 ×3 (09-18 reviewer in_progress, 09-18 implementer cancelled, 09-19
+implementer in_progress), T-0390 ×2 (09-19 phase_timeout, 09-19 cancelled), T-0403 ×2 (09-21
+phase_timeout, 09-21 cancelled), T-0408 (09-24, cancelled), T-0423 ×2 (09-30 in_progress ×2),
+T-0424 (10-01 reviewer, phase_timeout), T-0428 (10-03, cancelled), T-0457 (10-21, this run,
+in_progress).
+
+The mechanism (`usageLedger.js`'s `summarizeUsageFromEvents`, unchanged by this card): a session's
+USD cost is **only ever reported in its terminal `result` event** (`total_cost_usd`); the
+per-message `assistant` events that stream throughout a run never carry a cost figure at all, only
+token counts. A phase that is cancelled, hits its wall-clock timeout, or is orphaned by a board
+crash before the CLI emits that terminal event therefore has no cost figure *anywhere in its own
+event stream* at the moment the ledger write happens -- `costUsd: null` is `usageLedger.js`
+correctly, deliberately reporting "unknown", not a bug in `usageLedger.js` or
+`usdUtilizationConversion.js` (neither file originates this null; both are already behaving
+correctly given the `events` they were handed, confirmed by reading every one of the 15 entries'
+own `sourceLogPath` in full).
+
+Reading each of the 15 entries' own complete, final NDJSON log confirms two different causes,
+not one:
+
+- **13 of 15 never emit a terminal `result` event at all**, verified directly: T-0247, T-0361,
+  both T-0384 implementer entries, both T-0390 entries, both T-0403 entries, T-0408, both T-0423
+  entries, T-0428, and T-0457 (still running). These sessions' own CLI process genuinely never
+  produced a cost figure anywhere -- not a capture bug, not recoverable by any means after the
+  fact. This is the majority cause and it is permanent.
+- **2 of 15 (T-0384's 09-18T11:34:51Z reviewer phase, and T-0424's 10-01T14:03:52Z reviewer phase)
+  DO have a complete terminal `result` event in their full on-disk log**, with a real
+  `total_cost_usd` ($8.229906800000004 and $3.643557 respectively) -- yet the recorded ledger entry
+  still shows `costUsd: null`. This is a genuine, narrow capture-timing race: the child process
+  finished and streamed its own terminal line to the log at essentially the same moment the board
+  declared the phase `phase_timeout`/`in_progress` and finalized that key's usage entry from an
+  `events` snapshot that predated the result line actually landing. The defect, such as it is,
+  lives in **`runOrchestrator.js`'s** phase-finalization timing, not in `usageLedger.js` or
+  `usdUtilizationConversion.js` -- both correctly summarize whatever `events` list they are given;
+  neither is the file where this race could be fixed. `runOrchestrator.js` is outside this card's
+  stated deliverable paths, so this card documents the finding (with exact cardId/timestamp/amount
+  citations, above) as evidence for a future, separately-scoped card, rather than reaching into a
+  file this card was not asked to touch.
+
+Even setting scope aside: neither of those 2 recoverable entries would help `seven_day`. T-0384's
+reviewer entry (09-18T11:34:51Z) falls outside every `five_hour` *and* every `seven_day` candidate
+cycle's interval -- recovering it changes nothing in either window. T-0424's entry
+(10-01T14:03:52Z) falls *inside* an otherwise-censored `five_hour` candidate cycle
+(2026-10-01T13:54:47.719Z-14:12:15.396Z) -- recovering it would turn that cycle into a **6th**
+`five_hour` sample, changing the committed fit this card must leave untouched. There is no
+retroactive fix here that helps `seven_day` and is simultaneously safe for `five_hour`.
+
+### The one `seven_day` candidate cycle, and why recovering it still isn't enough
+
+`diagnoseCensoredCycles` (new in this card -- see `usdUtilizationConversion.js`) names exactly
+which cycles censoring, specifically, drops. Run against today's real evidence for `seven_day`, it
+reports exactly one: the reset cycle spanning 2026-09-18T23:36:29.105Z to
+2026-09-23T06:11:15.534Z (76 readings, resetsAt `1790200800`). That interval has 94 ledger entries
+with a known cost and **5 censored**: T-0384 implementer (09-19T12:51:19.984Z, in_progress), T-0390
+implementer ×2 (09-19T15:02:21.990Z phase_timeout, 09-19T15:06:17.593Z cancelled), T-0403
+implementer ×2 (09-21T13:31:43.353Z cancelled, 09-21T14:12:42.911Z phase_timeout). Every one of
+these 5 is in the "13 of 15, no result event at all" group above -- **none of the entries blocking
+this specific cycle are recoverable by any means**. This single candidate cycle's censoring is
+therefore a true dead end today, not a capture bug waiting to be fixed.
+
+But even a hypothetical perfect recovery of all 5 would only add a **second** `seven_day` sample
+(the existing 2026-09-12 to 09-15 one, plus this one) -- nowhere near
+`MIN_SAMPLES_FOR_USABLE_CONVERSION` (5). The real, deeper constraint, also established from the
+real evidence: across the entire recorded history there have been 633 `seven_day` `rate_limit_event`
+readings, and **521 of them (82%) carry no `receivedAtMs` at all** and are excluded by
+`scanRateLimitReadings`'s own "untrusted timing" rule (3 more lack a numeric `utilization`). Of the
+111 that remain, every single one shares one of only **two distinct `resetsAt` values** -- meaning
+the entire recorded history contains exactly two weekly reset-cycle boundaries with two or more
+timed readings at all, one of which already produced today's one sample. There have not yet been
+enough DISTINCT weekly reset-cycle boundaries, each with enough timed readings, recorded for this
+window to ever reach 5 -- a reading-*cycle* scarcity (not the reading-*count*-per-cycle scarcity
+T-0402's reviewer already ruled out), compounding the censoring gap rather than being explained
+away by it. No change to the censoring rule closes this; only more elapsed calendar time with the
+instrumentation running, accumulating more weekly boundaries, does.
+
+### Decision: no lower-bound approximation adopted
+
+This doc already warns that "approximate the true spend from a known lower bound" is a shortcut
+to justify, not take for granted. This card considered it directly for the one blocked cycle above
+(treat its 94-entry known subtotal as the cycle's spend, ignoring the 5 unknowns) and declines it,
+for two independent reasons, either one sufficient on its own:
+
+1. **Zero benefit.** Even granting the shortcut, the cycle becomes `seven_day`'s 2nd sample, still
+   three short of the floor of 5. It does not change `seven_day`'s `usable: false` verdict at all.
+2. **An unwanted side effect on `five_hour`.** `deriveRateSamplesForWindow`'s censoring rule is
+   shared by both windows -- there is no way to relax it "only for `seven_day`" without it also
+   applying to `five_hour`'s own otherwise-censored 2026-10-01 candidate cycle (see above), which
+   would grow `five_hour` from 5 to 6 samples and change its committed rate. That is exactly the
+   "making the gate more permissive as a side effect" regression this card's own edge cases warn
+   against: more admissions headroom with no corresponding improvement in `seven_day`'s evidence.
+
+So the all-or-nothing censoring rule in `deriveRateSamplesForWindow` is unchanged by this card.
+`seven_day` stays `usable: false`, honestly, with a now fully re-derived account of why: not a
+single-cause censoring problem, but censoring compounding a reading-cycle scarcity that censoring
+fixes cannot reach.
+
+### What would actually change the verdict
+
+Per T-0439's five-hour-only enforcement policy and this card's own scope (it must not change the
+required-window set -- see `docs/wip-gate-admission.md`'s new T-0457 section): nothing here
+changes behaviour today. A later `seven_day` re-fit becomes possible once more weekly reset-cycle
+boundaries with 2+ timed readings accumulate in `tasks/.runs/` -- purely a function of elapsed
+calendar time with this instrumentation running, not a code change. Separately, a future,
+differently-scoped card fixing `runOrchestrator.js`'s phase-finalization event-snapshot race (see
+above) would recover a handful of historical entries' true cost, but would not, on its own, close
+the reading-cycle gap identified here.
+
 ## How to re-fit
 
 `deriveUsdUtilizationConversionFromRuns({ runsDir: "<repo-root>/tasks/.runs" })` re-runs this exact
 pipeline against whatever evidence exists at call time -- no code change required, only a new
 `fitDate` and a human review of the result before it replaces
-`DEFAULT_USD_UTILIZATION_CONVERSION`. Re-fit periodically (e.g. whenever
-`docs/wip-gate-admission.md`'s "how to enable safely" runbook calls for it) and especially once
-`seven_day` has accumulated more reset cycles whose full interval's usage-ledger spend is
-uncensored -- that, not a shortage of multi-reading cycles, is what stands between it and clearing
-`MIN_SAMPLES_FOR_USABLE_CONVERSION`.
+`DEFAULT_USD_UTILIZATION_CONVERSION`. `diagnoseCensoredCycles({ readings, ledgerEntries })` (T-0457)
+is the companion diagnostic for exactly this review: call it with the same scanned readings/ledger
+entries to see which candidate cycles censoring is still blocking and by how much, instead of
+hand-rolling a one-off script against `tasks/.runs/` the way this card's own investigation
+initially did.
+
+Re-fit periodically (e.g. whenever `docs/wip-gate-admission.md`'s "how to enable safely" runbook
+calls for it) and especially once `seven_day` has accumulated more reset cycles with two or more
+timed readings each -- per T-0457's finding above, that (a shortage of DISTINCT weekly reset-cycle
+boundaries with enough readings, not a shortage of readings within the one cycle that exists) is
+now the dominant gap, compounded by -- but not solely explained by -- censoring of the one
+candidate cycle that does exist.

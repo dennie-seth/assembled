@@ -420,6 +420,23 @@ window, while a human can still launch a heavier card manually.
   other existing guard. This card does not flip the flag on the live board; that remains
   @DennieSeth's call, informed by T-0370's predicted-vs-actual advisory evidence.
 
+### T-0457: revisiting `seven_day`'s place in the required-window set
+
+T-0439's five-hour-only enforcement policy (recorded on that card, not restated here) was a
+deliberate stopgap because `seven_day` had no usable conversion. T-0457 investigated the root
+cause -- `docs/usd-utilization-conversion.md`'s "origin of `costUsd: null`" and "diagnosis"
+sections have the full citation against the real recorded evidence -- and the finding is: a
+weekly rate still does not exist today. Recovering every recoverable piece of censored cost data
+would not change that; the real bottleneck is a shortage of distinct weekly reset-cycle boundaries
+with enough timed readings, not the censoring rule itself (see that doc for the numbers). Per this
+card's own acceptance criteria, **the required-window policy is not changed by this card** --
+enforcement stays `five_hour`-only, exactly as T-0439 left it. This section exists only so the next
+person who re-fits `seven_day` and gets a usable rate knows where to come update this runbook:
+once `resolveUnitConversionForAdmission(DEFAULT_USD_UTILIZATION_CONVERSION).seven_day` is non-null,
+revisit whether `seven_day` should rejoin the windows this runbook's "How to enable safely" section
+below treats as required -- that is a separate, deliberate decision (the same way T-0439's
+five-hour-only call was), not an automatic consequence of the rate existing.
+
 ## How to enable safely
 
 Once `seven_day` has enough evidence to be usable too (re-run
