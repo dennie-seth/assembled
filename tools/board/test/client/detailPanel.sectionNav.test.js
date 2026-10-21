@@ -314,7 +314,7 @@ describe("switching cards mid-navigation resets position", () => {
   });
 });
 
-describe("the nav bar UI (sticky jump control)", () => {
+describe("the nav bar UI (jump control)", () => {
   let root;
   beforeEach(() => {
     root = attached();
