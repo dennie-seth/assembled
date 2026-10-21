@@ -50,3 +50,13 @@ assets/final/**/*.pt filter=lfs diff=lfs merge=lfs -text
 # text diffing so PRs render a real patch instead of "Binary files differ".
 # Safe to remove once develop's copy of the file no longer contains NULs.
 tools/board/src/runner/promptBuilder.js diff
+
+# T-0464: this file is a generated snapshot (exportApprovalLedger.js), regenerated on every
+# reviewer PASS and on a 4h schedule -- both sides of nearly every merge touch it, so the default
+# text merge conflicts on it constantly. Route it through a custom merge driver that re-derives the
+# merged content (union of card ids, never-older generated_at) instead. The driver's command lives
+# in local git config, installed by tools/board/ops/install-approval-ledger-merge-driver.sh (a
+# .gitattributes entry can only name a driver, not define one) -- see
+# docs/approval-ledger-merge-driver.md. This does not disturb the `*.json text eol=lf` rule above;
+# it only adds the `merge` attribute, which is independent of `text`/`eol`.
+tools/board/approval-ledger.json merge=approval-ledger

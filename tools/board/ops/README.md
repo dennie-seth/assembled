@@ -97,6 +97,7 @@ section below.
 | `check-comfyui-regime.sh` (T-0322) | Wrapper for `npm run check:comfyui-regime` (`../scripts/checkComfyUiRegime.js`, part of the ordinary `tools/board` npm/Vitest project, **not** copied to `~/.local/bin` itself), following the same `flock` + timestamped-log pattern as `board-db-backup.sh`. Read-only against ComfyUI (`GET /system_stats` only). Fails loudly if the live server's `argv` has drifted from the regime declared in `comfyui-regime.json`, in either direction. See `docs/comfyui-setup.md#determinism`. Also invocable directly (ad hoc or from an asset-generation preflight) without this wrapper. |
 | `vetAndReady.sh` (T-0384) | `flock`-guarded wrapper for `npm run vet:ready -- --apply` (`../ops/vetAndReady.js`, part of the ordinary `tools/board` npm/Vitest project, **not** copied to `~/.local/bin` itself). See "Nightly vet-and-ready (T-0384)" below. |
 | `board-ledger-export.sh` (T-0434) | `flock`-guarded wrapper for `npm run export:ledger:scheduled` (`../ops/exportApprovalLedgerScheduled.js`, part of the ordinary `tools/board` npm/Vitest project, **not** copied to `~/.local/bin` itself). See "Scheduled approval-ledger export (T-0434)" below. |
+| `install-approval-ledger-merge-driver.sh` (T-0464) | Idempotent, run-once-per-clone installer for the local git merge driver that resolves `tools/board/approval-ledger.json` conflicts without a human (see "Conflict-free approval-ledger merge driver (T-0464)" below and `docs/approval-ledger-merge-driver.md`). Not copied to `~/.local/bin` -- invoked directly from the repo, not on a timer. |
 
 ## Install locations on the box
 
@@ -857,6 +858,22 @@ Check the last run with `systemctl --user status
 board-ledger-export.service`, `journalctl --user -u
 board-ledger-export.service`, or by reading
 `~/.local/state/board-ledger-export/latest.log` directly.
+
+## Conflict-free approval-ledger merge driver (T-0464)
+
+`tools/board/approval-ledger.json` is regenerated on every reviewer PASS and on the 4h schedule
+above, so both sides of nearly every merge touch it and git's default text merge conflicts on it
+constantly -- observed as four and then three open branches hand-resolving the same "take the
+generated copy" conflict within a single day (2026-10-21). A `.gitattributes` entry
+(`tools/board/approval-ledger.json merge=approval-ledger`) now routes this one path through a
+custom merge driver (`tools/board/scripts/mergeApprovalLedgerDriver.js`, backed by the unit-tested
+`tools/board/src/lib/approvalLedgerMerge.js`) that unions card ids and never lets `generated_at` go
+backwards, instead of conflicting on nearly every merge.
+
+Because a `.gitattributes` entry can only name a driver, not define its command, this needs one
+piece of local git config per clone, installed by `install-approval-ledger-merge-driver.sh` above.
+Full writeup, including why the ledger needs this and what happens if the installer was never run:
+[`docs/approval-ledger-merge-driver.md`](../../../docs/approval-ledger-merge-driver.md).
 
 ## Deploying changes
 
