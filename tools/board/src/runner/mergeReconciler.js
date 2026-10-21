@@ -4,6 +4,7 @@ import { withTimeout } from "./boundedAwait.js";
 import { needsApproval } from "../lib/approvalGate.js";
 import { StaleWriteError } from "../lib/taskStore.js";
 import { appendNote } from "./runOrchestrator.js";
+import { applyTerminalStatusEffects } from "../server/httpApi.js";
 import * as gitOps from "./gitOps.js";
 
 const MERGE_RECONCILE_DISABLE_VALUES = new Set(["0", "false", "off", "no"]);
@@ -156,7 +157,10 @@ export async function reconcileCard({
   getPrStateFn = getPrState,
   needsApprovalFn = needsApproval,
   logger = console,
-  prReadTimeoutMs = DEFAULT_PR_READ_TIMEOUT_MS
+  prReadTimeoutMs = DEFAULT_PR_READ_TIMEOUT_MS,
+  orchestrator = null,
+  restartCoordinator = null,
+  applyTerminalStatusEffectsFn = applyTerminalStatusEffects
 }) {
   if (!task.pr) return null;
   // See ELIGIBLE_FOR_PR_READ_STATUSES: a terminal/unrecognized status is skipped before the
@@ -233,6 +237,12 @@ export async function reconcileCard({
     hub.broadcast({ type: "changed", id: task.id, task: updated });
   }
   await commitMergedCard({ taskId: task.id, repoRoot, tasksDir, git, taskStoreKind });
+  // This reconciler is a third route to `done`, alongside the PATCH {status: "done"} and
+  // comment-approval routes in httpApi.js -- all three must fire the exact same terminal-status
+  // follow-through (the artifact-cache purge and the develop-branch deploy pull), or a card
+  // completed by a merge the board noticed on its own would land in `done` with none of it, the
+  // same divergence shape docs/board-invariants.md AP-8 warns about (PULL-1).
+  await applyTerminalStatusEffectsFn({ orchestrator, restartCoordinator, id: task.id, status: updated.status, repoRoot });
   return updated;
 }
 
@@ -276,7 +286,10 @@ export function createMergeReconciler({
   needsApprovalFn = needsApproval,
   logger = console,
   prReadTimeoutMs = DEFAULT_PR_READ_TIMEOUT_MS,
-  reconcileConcurrency = DEFAULT_RECONCILE_CONCURRENCY
+  reconcileConcurrency = DEFAULT_RECONCILE_CONCURRENCY,
+  orchestrator = null,
+  restartCoordinator = null,
+  applyTerminalStatusEffectsFn = applyTerminalStatusEffects
 }) {
   let timer = null;
   // Shared by reconcileOnStartup and sweepOnce (not just the interval timer): a slow pass --
@@ -304,7 +317,10 @@ export function createMergeReconciler({
           getPrStateFn,
           needsApprovalFn,
           logger,
-          prReadTimeoutMs
+          prReadTimeoutMs,
+          orchestrator,
+          restartCoordinator,
+          applyTerminalStatusEffectsFn
         });
         if (updated) completed.push(task.id);
       } catch (err) {

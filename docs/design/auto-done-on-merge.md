@@ -2,9 +2,11 @@
 
 **Status:** implemented. **Owning code:** `tools/board/src/runner/mergeReconciler.js`,
 `tools/board/src/runner/githubOps.js` (`getPrState`), wired into
-`tools/board/src/server/boardServer.js`. See [[agent-runner.md]] for the base card lifecycle
-this extends, and `tools/board/src/runner/lifecycle.js` for the state machine `review` already
-sits at the edge of.
+`tools/board/src/server/boardServer.js`. On a successful completion it also calls
+`tools/board/src/server/httpApi.js`'s `applyTerminalStatusEffects` -- the same terminal-status
+follow-through the PATCH and comment-approval routes already trigger (see "Explicitly out of
+scope" below). See [[agent-runner.md]] for the base card lifecycle this extends, and
+`tools/board/src/runner/lifecycle.js` for the state machine `review` already sits at the edge of.
 
 ## Problem
 
@@ -180,7 +182,17 @@ back up. The periodic sweep is the ongoing backstop regardless of how long the f
   `current_sha`); this module does not read or write any of those fields.
 - **Anything on a PR being closed without merging.** Covered above -- `state !== "MERGED"` is
   simply not acted on, full stop.
-- **Changing what `done` itself triggers.** This module writes `status: "done"` through the same
-  `store.update` every other write path uses, so it picks up whatever `done` already does
-  (commit-on-write, the board's own broadcast) without re-implementing or special-casing any of
-  it. It does not add any NEW done-triggered behaviour of its own.
+- **Changing what `done` itself triggers.** `done`'s real follow-through -- the artifact-cache
+  purge and the develop-branch deploy pull -- lives in `httpApi.js`'s `applyTerminalStatusEffects`,
+  shared by the PATCH `{status: "done"}` route and the comment-approval route (see that function's
+  own docstring: "shared by the two routes that can put it there"). This module is a *third* route
+  to `done`, so it calls that exact same shared function, with the exact same arguments, right
+  after its own write succeeds -- `reconcileCard`'s `orchestrator`/`restartCoordinator` parameters
+  exist for this and nothing else. It does not add any NEW done-triggered behaviour of its own, and
+  it does not re-implement `applyTerminalStatusEffects`'s logic locally.
+
+  This module's commit-on-write (`commitMergedCard`) and ws broadcast are its own, separate from
+  that shared function -- they mirror `orphanReaper.js`'s `commitReapedCard` pattern (committing
+  *this* card's own write to disk) rather than anything `done` itself triggers, since a commit and
+  a broadcast have to happen for every status transition this module makes, not just the terminal
+  ones `applyTerminalStatusEffects` cares about.

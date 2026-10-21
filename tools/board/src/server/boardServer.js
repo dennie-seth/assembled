@@ -180,7 +180,9 @@ export async function startBoardServer({
     hub,
     repoRoot: REPO_ROOT,
     tasksDir,
-    taskStoreKind
+    taskStoreKind,
+    orchestrator,
+    restartCoordinator
   });
   // WIP gate T-F drain mode, FIX ROUND 1 (Chat round-2 review of #408, finding 2): the original
   // firstHeldAtMs deadline must survive a board restart, or a restart quietly extends the bound.
