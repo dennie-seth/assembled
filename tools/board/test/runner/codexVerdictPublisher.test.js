@@ -21,15 +21,27 @@ function validPayload(overrides = {}) {
   };
 }
 
-/** An in-memory stand-in for verdictArchive's readVerdictEntries/appendVerdictEntry, keyed by taskId. */
+/**
+ * An in-memory stand-in for verdictArchive's readVerdictEntries/appendVerdictEntry, plus the
+ * delivery-claim primitive, keyed by taskId. claimDeliveryFn's body has no `await` before the
+ * claimed-set mutation, so -- same as the real fs.open(path, "wx") exclusive-create it stands in
+ * for -- two concurrent callers racing on the same (taskId, deliveryId) can never both win.
+ */
 function makeFakeArchive() {
   const store = new Map();
+  const claimed = new Set();
   return {
     readEntriesFn: vi.fn(async (_tasksDir, taskId) => store.get(taskId) ?? []),
     appendEntryFn: vi.fn(async (_tasksDir, taskId, entry) => {
       const list = store.get(taskId) ?? [];
       list.push(entry);
       store.set(taskId, list);
+    }),
+    claimDeliveryFn: vi.fn(async (_tasksDir, taskId, deliveryId) => {
+      const key = `${taskId}:${deliveryId}`;
+      if (claimed.has(key)) return false;
+      claimed.add(key);
+      return true;
     }),
     store
   };
@@ -163,6 +175,92 @@ describe("publishCodexVerdict -- identity validated before publish", () => {
     });
     expect(result.status).toBe("rejected");
     expect(archive.appendEntryFn).not.toHaveBeenCalled();
+  });
+
+  // T-0460's own real review run (tasks/.verdicts/T-0460.spike-evidence.json, job
+  // T-0460-2026-10-21T12-19-45-975Z) found this gap live: a schema-valid payload naming the
+  // right jobId/ticketId/reviewedSha but the WRONG sprintId was published as PASS instead of
+  // being rejected, because the identity check never compared job.sprintId at all.
+  it("rejects a result whose sprintId doesn't match -- not just jobId/ticketId/reviewedSha", async () => {
+    const archive = makeFakeArchive();
+    const result = await publishCodexVerdict({
+      tasksDir: "/tasks",
+      taskId: "T-0460",
+      deliveryId: "d1",
+      dispatchedJob: dispatchedJob({ sprintId: "sprint-7" }),
+      runResult: {
+        kind: "payload",
+        payload: validPayload({ job: { jobId: "job-1", ticketId: "T-0460", sprintId: "wrong-sprint" } })
+      },
+      currentHead: SHA_A,
+      ...archive
+    });
+    expect(result.status).toBe("rejected");
+    expect(result.reason).toBe("identity-mismatch");
+    expect(archive.appendEntryFn).not.toHaveBeenCalled();
+  });
+});
+
+// Also found live by T-0460's own real review run: omitting currentHead entirely (rather than
+// passing the dispatched sha) silently skipped the "has the head moved" check altogether and
+// published PASS unconditionally -- the exact failure mode "validating ... the CURRENT head"
+// exists to prevent. currentHead is now a required argument, not an optional one that degrades
+// to "assume it hasn't moved" when absent.
+describe("publishCodexVerdict -- currentHead is required, never silently skipped", () => {
+  it("throws when currentHead is missing", async () => {
+    const archive = makeFakeArchive();
+    await expect(
+      publishCodexVerdict({
+        tasksDir: "/tasks",
+        taskId: "T-0460",
+        deliveryId: "d1",
+        dispatchedJob: dispatchedJob(),
+        runResult: { kind: "payload", payload: validPayload() },
+        ...archive
+      })
+    ).rejects.toThrow(/currentHead/);
+    expect(archive.appendEntryFn).not.toHaveBeenCalled();
+  });
+
+  it("throws when currentHead is an empty string", async () => {
+    const archive = makeFakeArchive();
+    await expect(
+      publishCodexVerdict({
+        tasksDir: "/tasks",
+        taskId: "T-0460",
+        deliveryId: "d1",
+        dispatchedJob: dispatchedJob(),
+        runResult: { kind: "payload", payload: validPayload() },
+        currentHead: "",
+        ...archive
+      })
+    ).rejects.toThrow(/currentHead/);
+  });
+});
+
+// Also found live: the pre-fix mechanism was read-existing-entries-then-append, two separate
+// awaits with no lock between them -- a real concurrent repro (two identical deliveries
+// in-flight at once, run as part of T-0460's own review) got "published" from both callers and
+// two entries appended, violating exactly-once. The fix below is the claim-before-process step.
+describe("publishCodexVerdict -- exactly-once under real concurrency, not just sequential retries", () => {
+  it("two concurrent deliveries of the same deliveryId append exactly one entry between them", async () => {
+    const archive = makeFakeArchive();
+    const args = {
+      tasksDir: "/tasks",
+      taskId: "T-0460",
+      deliveryId: "same-delivery-id",
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A,
+      ...archive
+    };
+
+    const [first, second] = await Promise.all([publishCodexVerdict(args), publishCodexVerdict(args)]);
+
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual(["duplicate", "published"]);
+    expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
+    expect(archive.store.get("T-0460")).toHaveLength(1);
   });
 });
 
