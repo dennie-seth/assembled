@@ -1,4 +1,19 @@
 [extend]
 useDefault = true
 [allowlist]
-paths = ['''\.env$''', '''\.env\..*''']
+# T-0431: `generic-api-key` false-positives on `assert r1.keypoints == r2.keypoints`
+# in this determinism test -- "key" inside "keypoints" plus the `==` operator is
+# enough to match the rule's generic pattern. No secret-shaped content lives in
+# this file; scoped to it alone rather than a path glob, so the allowlist can't
+# accidentally cover an unrelated file later.
+#
+# T-0431 FIX ROUND 2: `.gitleaksignore` itself is also exempted here, categorically
+# rather than per-fingerprint. Every line added to that file is, by construction, a
+# 40-hex commit SHA plus a path/rule/line reference -- the same shape the
+# `generic-api-key` heuristic matches -- so under commit-range scanning the commit
+# that *adds* a fingerprint is itself reported as a new finding, and no fingerprint
+# can fix that (a fingerprint for the fingerprint line would just repeat the problem
+# one file down). There is no secret-shaped content a fingerprint file could ever
+# carry, so exempting the whole path is a category fix, not a weakening: it can never
+# mask a real finding, unlike exempting a source file would.
+paths = ['''\.env$''', '''\.env\..*''', '''^assets/src/character/tests/test_walk_sheet_T0431\.py$''', '''^\.gitleaksignore$''']
