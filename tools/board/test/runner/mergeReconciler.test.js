@@ -341,6 +341,57 @@ describe("reconcileCard", () => {
 
     expect(hub.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: "changed", id: "T-0434" }));
   });
+
+  // A prior review round caught this module hand-rolling its own commit + broadcast and calling
+  // that "whatever done already does" in the docs -- false. What `done` actually triggers
+  // (httpApi.js's applyTerminalStatusEffects: the artifact-cache purge and the develop-branch
+  // deploy pull) lives outside store.update entirely, so this module's write never fired it,
+  // making it a third route to `done` with less follow-through than the other two
+  // (PATCH {status: "done"} and the comment-approval path). This pins that the reconciler now
+  // invokes the exact same shared helper, with the exact same arguments those two routes pass.
+  it("fires the same terminal-status side effects every other done-route fires (artifact-cache purge + deploy pull)", async () => {
+    const t = task();
+    const store = makeStore([t]);
+    const getPrStateFn = mergedPr();
+    const orchestrator = { worktreesDir: "/repo/worktrees" };
+    const restartCoordinator = { notifyPulled: vi.fn() };
+    const applyTerminalStatusEffectsFn = vi.fn().mockResolvedValue(undefined);
+
+    await reconcileCard({
+      store,
+      task: t,
+      getPrStateFn,
+      logger,
+      orchestrator,
+      restartCoordinator,
+      repoRoot: "/repo",
+      applyTerminalStatusEffectsFn
+    });
+
+    expect(applyTerminalStatusEffectsFn).toHaveBeenCalledWith({
+      orchestrator,
+      restartCoordinator,
+      id: "T-0434",
+      status: "done",
+      repoRoot: "/repo"
+    });
+  });
+
+  it("never fires the terminal-status side effects on any path that leaves the card untouched", async () => {
+    const t = task();
+    const store = makeStore([t]);
+    const getPrStateFn = vi.fn().mockResolvedValue({
+      url: "https://github.com/example/repo/pull/444",
+      state: "CLOSED",
+      headRefName: "feature/T-0434",
+      number: 444
+    });
+    const applyTerminalStatusEffectsFn = vi.fn();
+
+    await reconcileCard({ store, task: t, getPrStateFn, logger, applyTerminalStatusEffectsFn });
+
+    expect(applyTerminalStatusEffectsFn).not.toHaveBeenCalled();
+  });
 });
 
 describe("MERGEABLE_STATUSES", () => {
