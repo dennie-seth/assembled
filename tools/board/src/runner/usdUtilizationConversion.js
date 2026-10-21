@@ -314,16 +314,16 @@ export async function deriveUsdUtilizationConversionFromRuns({
  * `five_hour` clears both bars (5 reset-cycle samples, coefficient of variation ~0.40) and ships
  * as usable. `seven_day` does NOT -- exactly one reset cycle in the real history produced a usable
  * rate sample, nowhere near `MIN_SAMPLES_FOR_USABLE_CONVERSION`. This is NOT a reading-count
- * shortage: several later weekly cycles do have two or more measured readings, but
- * `deriveRateSamplesForWindow`'s all-or-nothing censoring rule drops a candidate cycle outright
- * when ANY usage-ledger entry inside its interval is censored (`costUsd: null`), and the real
- * history has enough censored entries landing inside those later cycles that none of them survives
- * to become a second sample -- a censoring-driven gap, not a reading-count gap (see
- * `docs/usd-utilization-conversion.md`'s "seven_day -- not usable" section for the full citation).
+ * shortage: the real history has precisely one OTHER candidate weekly cycle with two or more
+ * measured readings (`resetsAt 1790200800`, 76 readings, a real 0.49 utilization increase), but
+ * `deriveRateSamplesForWindow`'s all-or-nothing censoring rule drops it outright because its
+ * interval contains 5 usage-ledger entries with `costUsd: null`
+ * (`2026-09-19T12:51:19.984Z`..`2026-09-21T14:12:42.911Z`) -- a censoring-driven gap, not a
+ * reading-count gap (see `docs/usd-utilization-conversion.md`'s "seven_day -- not usable" section
+ * for the full citation, including the repo-wide census of all 14 `costUsd: null` entries).
  * This is a genuine per-window disagreement in how much evidence exists, not a shared rate forced
  * onto both: `seven_day` stays `usable: false` until a later re-fit (the mechanism above, not a
- * code change) accumulates enough reset cycles whose full interval's usage-ledger spend is
- * uncensored.
+ * code change) lands a reset cycle whose full interval's usage-ledger spend is uncensored.
  */
 export const DEFAULT_USD_UTILIZATION_CONVERSION = Object.freeze({
   version: CONVERSION_VERSION,
