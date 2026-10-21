@@ -511,7 +511,20 @@ const SECTION_FINDERS = [
   ["attachments", findAttachmentsLandmark]
 ];
 
-/** Every named section this task's rendered panel currently has, in reading order. */
+// FIX ROUND 3: SECTION_FINDERS above is a lookup table, not a reading-order declaration -- the
+// panel's actual append order (renderDetailPanel) puts the comments section (with the composer
+// inside it) and then attachments BEFORE the body preview (and the Acceptance heading nested
+// inside that), not after. Sorting by compareDocumentPosition here means the returned order
+// always matches whatever renderDetailPanel actually put on the page, so this list cannot drift
+// out of sync with it again the next time the panel's layout changes.
+function byDocumentPosition(a, b) {
+  const rel = a.element.compareDocumentPosition(b.element);
+  if (rel & (Node.DOCUMENT_POSITION_FOLLOWING | Node.DOCUMENT_POSITION_CONTAINED_BY)) return -1;
+  if (rel & (Node.DOCUMENT_POSITION_PRECEDING | Node.DOCUMENT_POSITION_CONTAINS)) return 1;
+  return 0;
+}
+
+/** Every named section this task's rendered panel currently has, in actual document order. */
 export function listDetailSections(root) {
   if (!root) return [];
   const sections = [];
@@ -522,6 +535,7 @@ export function listDetailSections(root) {
       sections.push({ key, label: SECTION_LABELS[key], element });
     }
   }
+  sections.sort(byDocumentPosition);
   return sections;
 }
 
