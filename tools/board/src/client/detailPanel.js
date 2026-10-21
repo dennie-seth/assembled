@@ -439,11 +439,21 @@ function attachmentsSectionFor(task, onUploadAttachment, onRemoveAttachment) {
 // where they landed) that *contains* the input; the input itself is still one plain Tab away,
 // unchanged, for actually typing.
 //
-// Deliberately stateless: "current position" is read from document.activeElement every call
-// rather than tracked separately, so switching to a different, already-rendered task can never
-// carry a stale index or element reference -- there is nothing to carry. Sections are
-// re-queried from the live DOM on every call (never cached), so a comment arriving over the
-// socket while the panel is open is reflected the next time someone navigates.
+// "Current position" is read from document.activeElement every call rather than cached, so
+// switching to a different, already-rendered task can never carry a stale element reference --
+// there is nothing to go stale. Sections are re-queried from the live DOM on every call (never
+// cached), so a comment arriving over the socket while the panel is open is reflected the next
+// time someone navigates.
+//
+// FIX ROUND 5: one small piece of state (root.__lastNavSectionKey, set by applyFocus) is the
+// exception. A real pointer click on .detail-nav-prev/.detail-nav-next focuses the BUTTON before
+// the click handler runs (the browser's own mousedown-focusing steps), so document.activeElement
+// at that point is the nav bar itself -- a sibling of every section, contained in none of them.
+// Without a fallback, currentSectionIndex sees "nothing matches" and stepDetailSection treats
+// every click as a cold start: Next always lands on "top", Prev always jumps to the last section.
+// currentSectionIndex below only consults this fallback when activeElement is inside the nav bar
+// itself, never as a general substitute for reading real focus -- and renderDetailPanel clears it
+// whenever the task changes, so it can never carry a position over to a different card.
 const SECTION_LABELS = {
   top: "Top",
   body: "Body",
@@ -558,7 +568,17 @@ function currentSectionIndex(root, sections) {
       }
     }
   }
-  return bestIndex;
+  if (bestIndex !== -1) return bestIndex;
+
+  // See the FIX ROUND 5 comment above SECTION_LABELS: activeElement sitting inside the nav bar
+  // itself means a nav button was just clicked, not that focus is "nowhere". Resolve to whichever
+  // section focus was most recently moved to instead of treating this as a cold start.
+  const navBar = root.querySelector(".detail-nav");
+  if (navBar && navBar.contains(active) && root.__lastNavSectionKey) {
+    const idx = sections.findIndex((section) => section.key === root.__lastNavSectionKey);
+    if (idx !== -1) return idx;
+  }
+  return -1;
 }
 
 function updateNavDisplay(root, sections, index) {
@@ -583,6 +603,7 @@ function applyFocus(root, sections, index) {
     // there is no bar for the target to land underneath regardless of where it scrolls to.
     section.element.scrollIntoView({ block: "center" });
   }
+  root.__lastNavSectionKey = section.key;
   updateNavDisplay(root, sections, index);
   return section.key;
 }
@@ -737,11 +758,15 @@ export function renderDetailPanel(
   if (!task) {
     delete root.dataset.taskId;
     delete root.__lastTask;
+    delete root.__lastNavSectionKey;
     root.hidden = true;
     return;
   }
   root.dataset.taskId = String(task.id);
   root.hidden = false;
+  if (!isSameTask) {
+    delete root.__lastNavSectionKey;
+  }
 
   const panel = document.createElement("div");
   panel.className = "detail-panel";
