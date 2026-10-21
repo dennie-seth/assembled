@@ -248,6 +248,56 @@ So the all-or-nothing censoring rule in `deriveRateSamplesForWindow` is unchange
 single-cause censoring problem, but censoring compounding a reading-cycle scarcity that censoring
 fixes cannot reach.
 
+### Edge case: a rate fitted across a pricing change
+
+This card's own edge cases call out a conversion averaged across samples billed at two different
+prices as wrong even with enough samples, and ask how the window is bounded against it. Checked
+directly rather than assumed:
+
+**This repo never computes a price itself, so it cannot apply a stale one.** `usageLedger.js`'s
+`summarizeUsageFromEvents` reads `costUsd` straight from the CLI's own terminal `result` event's
+`total_cost_usd` field -- never from a token count multiplied by a price constant kept anywhere in
+this codebase. Whatever Anthropic billed for a given call at the moment it happened is exactly what
+lands in that entry's `costUsd`; there is no local price table here that could go stale.
+
+**The real exposure is narrower: one fit's own point estimate blending samples recorded under two
+different price regimes**, if a model's published price changed between two reset-cycle samples
+that both feed the same median/mean. Re-running this card's own diagnostic directly against the
+real evidence (`node`, the same `deriveRateSamplesForWindow` pipeline, reading each contributing
+entry's own `models` field) shows every one of the 5 committed `five_hour` samples and the 1
+committed `seven_day` sample already mixes `claude-sonnet-5` and `claude-opus-5` *within* a single
+sample's interval. That is a cross-**model** blend (two different per-token prices active at the
+same moment), not a cross-**time** pricing-change blend (one model's own price changing between
+samples) -- a pre-existing property of the real evidence this card's acceptance criterion 4
+requires leaving untouched, and a different axis from the one this edge case names.
+
+**How the window is bounded against the time axis:**
+
+- Every produced fit entry already carries its own `windowRangeStart`/`windowRangeEnd` -- the exact
+  span its samples were drawn from, not an unbounded lifetime average. The committed `five_hour`
+  fit spans 13 days (`2026-09-17T20:52:57.940Z` to `2026-09-30T16:10:45.255Z`); the one `seven_day`
+  sample spans about 2.3 days. Short windows bound how much calendar time a mid-window price change
+  would have to land inside to corrupt either fit.
+- `deriveUsdUtilizationConversionFromRuns` always re-derives entirely fresh from whatever evidence
+  exists at call time -- it never appends new samples onto an old committed table's existing ones.
+  A re-fit therefore can't silently accrete a multi-month span that straddles more pricing changes
+  than a reviewer looking at one `fitDate` would expect; each fit is one atomic snapshot.
+- This repo keeps no record of Anthropic's own pricing/price-change history -- that lives entirely
+  outside this codebase, so no check here can assert "no price change occurred inside this window"
+  from code alone. That has to be a human judgment call at re-fit review time, same as the existing
+  "a human review of the result before it replaces `DEFAULT_USD_UTILIZATION_CONVERSION`" step in
+  "How to re-fit" below already requires. This card makes that check explicit: when a known pricing
+  change for a model appearing in the evidence (an entry's own `models` field) is announced, treat
+  it as a mandatory re-fit trigger, and reject a fit whose own `windowRangeStart`/`windowRangeEnd`
+  straddles the change date rather than accepting one that silently averaged across it -- re-derive
+  instead once enough post-change evidence exists on its own.
+
+No code change accompanies this section: `CONVERSION_VERSION` is deliberately NOT bumped for this,
+exactly per its own docstring ("a re-fit with the same method against newer evidence is a new
+`fitDate`/`sampleCount`, not a new version") -- a pricing change is newer evidence to re-fit
+against, not a change to the fitting method itself, and this card's acceptance criterion 4 forbids
+touching the committed `five_hour` values regardless.
+
 ### What would actually change the verdict
 
 Per T-0439's five-hour-only enforcement policy and this card's own scope (it must not change the
@@ -276,3 +326,10 @@ timed readings each -- per T-0457's finding above, that (a shortage of DISTINCT 
 boundaries with enough readings, not a shortage of readings within the one cycle that exists) is
 now the dominant gap, compounded by -- but not solely explained by -- censoring of the one
 candidate cycle that does exist.
+
+Also treat a known Anthropic pricing change for a model that appears in the evidence (check each
+candidate sample's contributing entries' own `models` field) as a mandatory extra re-fit trigger,
+per the "edge case: a rate fitted across a pricing change" section above: reject a candidate fit
+whose `windowRangeStart`/`windowRangeEnd` straddles the change date instead of accepting one that
+silently averaged across it, and re-derive once enough evidence recorded entirely after the change
+date exists on its own.

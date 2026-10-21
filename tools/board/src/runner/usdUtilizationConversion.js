@@ -9,7 +9,10 @@ import { rateLimitInfoFromEvent } from "./usageLimitDetector.js";
  * window's `utilization_fraction` budget (see that module's `convertUsdToWindowUnits`). Bump
  * this when the FITTING METHOD itself changes (e.g. a different pairing strategy); a re-fit with
  * the same method against newer evidence is a new `fitDate`/`sampleCount`, not a new version --
- * same convention as `costEstimator.js`'s `ESTIMATOR_VERSION`.
+ * same convention as `costEstimator.js`'s `ESTIMATOR_VERSION`. A known Anthropic pricing change
+ * for a model in the evidence is newer evidence to re-fit against, same as any other re-fit --
+ * it never bumps this version either; see docs/usd-utilization-conversion.md's "edge case: a rate
+ * fitted across a pricing change" for the window-bound rule that governs it instead.
  */
 export const CONVERSION_VERSION = "v1";
 
