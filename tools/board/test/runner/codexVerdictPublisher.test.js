@@ -1,18 +1,23 @@
-import { describe, it, expect, vi } from "vitest";
-import { publishCodexVerdict } from "../../src/runner/codexVerdictPublisher.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { publishCodexVerdict, deliveryMarkerPath } from "../../src/runner/codexVerdictPublisher.js";
+import { rmTemp } from "../helpers/rmTemp.js";
 
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
+const ACV = "2026-10-21";
 
 function dispatchedJob(overrides = {}) {
-  return { jobId: "job-1", ticketId: "T-0460", sprintId: "sprint-7", dispatchedSha: SHA_A, ...overrides };
+  return { jobId: "job-1", ticketId: "T-0460", sprintId: "sprint-7", dispatchedSha: SHA_A, acceptanceCriteriaVersion: ACV, ...overrides };
 }
 
 function validPayload(overrides = {}) {
   return {
     job: { jobId: "job-1", ticketId: "T-0460", sprintId: "sprint-7" },
     reviewedSha: SHA_A,
-    acceptanceCriteriaVersion: "2026-10-21",
+    acceptanceCriteriaVersion: ACV,
     outcome: "PASS",
     findings: [],
     checksPerformed: ["npx vitest run"],
@@ -21,15 +26,9 @@ function validPayload(overrides = {}) {
   };
 }
 
-/**
- * An in-memory stand-in for verdictArchive's readVerdictEntries/appendVerdictEntry, plus the
- * delivery-claim primitive, keyed by taskId. claimDeliveryFn's body has no `await` before the
- * claimed-set mutation, so -- same as the real fs.open(path, "wx") exclusive-create it stands in
- * for -- two concurrent callers racing on the same (taskId, deliveryId) can never both win.
- */
+/** An in-memory stand-in for verdictArchive's readVerdictEntries/appendVerdictEntry, keyed by taskId. The exactly-once delivery claim itself is real filesystem state under a real temp `tasksDir` (see beforeEach) -- that is the actual mechanism under test, not something to fake away. */
 function makeFakeArchive() {
   const store = new Map();
-  const claimed = new Set();
   return {
     readEntriesFn: vi.fn(async (_tasksDir, taskId) => store.get(taskId) ?? []),
     appendEntryFn: vi.fn(async (_tasksDir, taskId, entry) => {
@@ -37,21 +36,25 @@ function makeFakeArchive() {
       list.push(entry);
       store.set(taskId, list);
     }),
-    claimDeliveryFn: vi.fn(async (_tasksDir, taskId, deliveryId) => {
-      const key = `${taskId}:${deliveryId}`;
-      if (claimed.has(key)) return false;
-      claimed.add(key);
-      return true;
-    }),
     store
   };
 }
+
+let tasksDir;
+
+beforeEach(async () => {
+  tasksDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-verdict-publisher-test-"));
+});
+
+afterEach(async () => {
+  await rmTemp(tasksDir);
+});
 
 describe("publishCodexVerdict -- failed process or invalid result is BLOCKED, never PASS", () => {
   it("non-zero exit -> published as BLOCKED", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob(),
@@ -68,7 +71,7 @@ describe("publishCodexVerdict -- failed process or invalid result is BLOCKED, ne
   it("timeout -> published as BLOCKED", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob(),
@@ -83,7 +86,7 @@ describe("publishCodexVerdict -- failed process or invalid result is BLOCKED, ne
   it("truncated/unparseable JSON output -> published as BLOCKED, never degrades to 'no findings'", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob(),
@@ -100,7 +103,7 @@ describe("publishCodexVerdict -- failed process or invalid result is BLOCKED, ne
     const payload = validPayload();
     delete payload.outcome;
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob(),
@@ -118,7 +121,7 @@ describe("publishCodexVerdict -- failed process or invalid result is BLOCKED, ne
     const payload = validPayload();
     delete payload.findings;
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob(),
@@ -134,7 +137,7 @@ describe("publishCodexVerdict -- identity validated before publish", () => {
   it("rejects a result whose job identity doesn't match the dispatched job -- not published, not corrected", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob({ jobId: "job-1" }),
@@ -150,7 +153,7 @@ describe("publishCodexVerdict -- identity validated before publish", () => {
   it("rejects a result whose ticketId doesn't match -- describing a different job's card", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob(),
@@ -165,7 +168,7 @@ describe("publishCodexVerdict -- identity validated before publish", () => {
   it("rejects a result whose reviewedSha doesn't match the dispatched sha", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob(),
@@ -184,7 +187,7 @@ describe("publishCodexVerdict -- identity validated before publish", () => {
   it("rejects a result whose sprintId doesn't match -- not just jobId/ticketId/reviewedSha", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob({ sprintId: "sprint-7" }),
@@ -199,6 +202,42 @@ describe("publishCodexVerdict -- identity validated before publish", () => {
     expect(result.reason).toBe("identity-mismatch");
     expect(archive.appendEntryFn).not.toHaveBeenCalled();
   });
+
+  // FIX ROUND (Dennie, human comment (b)): a schema-valid, identity-matching payload for the
+  // right job/ticket/sprint/sha but a STALE acceptanceCriteriaVersion used to publish PASS
+  // against a superseded contract for the same commit -- the identity check never compared it.
+  it("rejects a result whose acceptanceCriteriaVersion doesn't match the dispatched version -- never publishes a PASS against a superseded contract", async () => {
+    const archive = makeFakeArchive();
+    const result = await publishCodexVerdict({
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId: "d1",
+      dispatchedJob: dispatchedJob({ acceptanceCriteriaVersion: "v2" }),
+      runResult: { kind: "payload", payload: validPayload({ acceptanceCriteriaVersion: "v1", outcome: "PASS" }) },
+      currentHead: SHA_A,
+      ...archive
+    });
+    expect(result.status).toBe("rejected");
+    expect(result.reason).toBe("identity-mismatch");
+    expect(archive.appendEntryFn).not.toHaveBeenCalled();
+  });
+
+  it("requires dispatchedJob.acceptanceCriteriaVersion -- a caller cannot dispatch without freezing the contract it expects back", async () => {
+    const archive = makeFakeArchive();
+    const job = dispatchedJob();
+    delete job.acceptanceCriteriaVersion;
+    await expect(
+      publishCodexVerdict({
+        tasksDir,
+        taskId: "T-0460",
+        deliveryId: "d1",
+        dispatchedJob: job,
+        runResult: { kind: "payload", payload: validPayload() },
+        currentHead: SHA_A,
+        ...archive
+      })
+    ).rejects.toThrow(/acceptanceCriteriaVersion/);
+  });
 });
 
 // Also found live by T-0460's own real review run: omitting currentHead entirely (rather than
@@ -211,7 +250,7 @@ describe("publishCodexVerdict -- currentHead is required, never silently skipped
     const archive = makeFakeArchive();
     await expect(
       publishCodexVerdict({
-        tasksDir: "/tasks",
+        tasksDir,
         taskId: "T-0460",
         deliveryId: "d1",
         dispatchedJob: dispatchedJob(),
@@ -226,7 +265,7 @@ describe("publishCodexVerdict -- currentHead is required, never silently skipped
     const archive = makeFakeArchive();
     await expect(
       publishCodexVerdict({
-        tasksDir: "/tasks",
+        tasksDir,
         taskId: "T-0460",
         deliveryId: "d1",
         dispatchedJob: dispatchedJob(),
@@ -246,7 +285,7 @@ describe("publishCodexVerdict -- exactly-once under real concurrency, not just s
   it("two concurrent deliveries of the same deliveryId append exactly one entry between them", async () => {
     const archive = makeFakeArchive();
     const args = {
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "same-delivery-id",
       dispatchedJob: dispatchedJob(),
@@ -268,7 +307,7 @@ describe("publishCodexVerdict -- a head that moved during review", () => {
   it("retains the result and marks it superseded, requesting a fresh review, instead of discarding it or misapplying it", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob({ dispatchedSha: SHA_A }),
@@ -289,7 +328,7 @@ describe("publishCodexVerdict -- a result arriving after cancellation", () => {
   it("does not publish; reports rejection with a cancellation reason", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob(),
@@ -308,7 +347,7 @@ describe("publishCodexVerdict -- exactly-once on duplicate delivery", () => {
   it("delivering the identical result twice (retry/replay) produces exactly one appended entry", async () => {
     const archive = makeFakeArchive();
     const args = {
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "same-delivery-id",
       dispatchedJob: dispatchedJob(),
@@ -322,13 +361,14 @@ describe("publishCodexVerdict -- exactly-once on duplicate delivery", () => {
 
     expect(first.status).toBe("published");
     expect(second.status).toBe("duplicate");
+    expect(second.entry).toEqual(first.entry);
     expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
     expect(archive.store.get("T-0460")).toHaveLength(1);
   });
 
   it("a different deliveryId for the same task is not treated as a duplicate", async () => {
     const archive = makeFakeArchive();
-    const base = { tasksDir: "/tasks", taskId: "T-0460", dispatchedJob: dispatchedJob(), currentHead: SHA_A, ...archive };
+    const base = { tasksDir, taskId: "T-0460", dispatchedJob: dispatchedJob(), currentHead: SHA_A, ...archive };
 
     await publishCodexVerdict({ ...base, deliveryId: "d1", runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) } });
     const second = await publishCodexVerdict({
@@ -345,7 +385,7 @@ describe("publishCodexVerdict -- exactly-once on duplicate delivery", () => {
     const archive = makeFakeArchive();
     await expect(
       publishCodexVerdict({
-        tasksDir: "/tasks",
+        tasksDir,
         taskId: "T-0460",
         deliveryId: "",
         dispatchedJob: dispatchedJob(),
@@ -357,11 +397,133 @@ describe("publishCodexVerdict -- exactly-once on duplicate delivery", () => {
   });
 });
 
+// FIX ROUND (Dennie, human comment (a), P2): the pre-fix mechanism created its exclusive marker
+// BEFORE appending and never recovered it -- an append failure, or the owning process dying
+// before it could finish, permanently consumed the delivery: every retry read back
+// `{status: "duplicate", entry: null}` and nothing was ever actually published. These four cases
+// are exactly what Dennie's review asked to be covered, each with its own test.
+describe("publishCodexVerdict -- recoverable delivery, not a one-shot claim that can strand a delivery forever", () => {
+  it("append failure: a retry (same still-alive process) actually completes the publish instead of reading back duplicate/null forever", async () => {
+    const archive = makeFakeArchive();
+    const args = {
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId: "flaky-delivery",
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A
+    };
+
+    const realAppend = archive.appendEntryFn;
+    let calls = 0;
+    const flakyAppend = vi.fn(async (...a) => {
+      calls += 1;
+      if (calls === 1) throw new Error("simulated disk-full on first append attempt");
+      return realAppend(...a);
+    });
+
+    const first = await publishCodexVerdict({ ...args, readEntriesFn: archive.readEntriesFn, appendEntryFn: flakyAppend }).catch((err) => err);
+    expect(first).toBeInstanceOf(Error);
+
+    // The marker the failed attempt created must not have permanently consumed the delivery --
+    // the retry below is what proves that, not an inspection of the marker file's own shape.
+    const retry = await publishCodexVerdict({ ...args, readEntriesFn: archive.readEntriesFn, appendEntryFn: flakyAppend });
+
+    expect(retry.status).toBe("published");
+    expect(retry.entry.outcome).toBe("PASS");
+    expect(flakyAppend).toHaveBeenCalledTimes(2);
+    expect(archive.store.get("T-0460")).toHaveLength(1);
+  });
+
+  it("process death before append: a stale claim left by a dead pid is recovered and actually published, not read back as duplicate/null", async () => {
+    const archive = makeFakeArchive();
+    const deliveryId = "crashed-before-append";
+    const markerPath = deliveryMarkerPath(tasksDir, "T-0460", deliveryId);
+    await fs.mkdir(path.dirname(markerPath), { recursive: true });
+    // Simulates the exact shape a real claim leaves behind the instant after createMarkerAtomic
+    // succeeds but before the append that was about to follow -- the process died right here.
+    await fs.writeFile(markerPath, JSON.stringify({ pid: 999999, claimedAt: new Date().toISOString() }), "utf8");
+
+    const result = await publishCodexVerdict({
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId,
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A,
+      isPidAliveFn: (pid) => pid !== 999999, // the recorded claimant is dead; this process is not
+      ...archive
+    });
+
+    expect(result.status).toBe("published");
+    expect(result.entry.outcome).toBe("PASS");
+    expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
+    expect(archive.store.get("T-0460")).toHaveLength(1);
+
+    const markerAfter = JSON.parse(await fs.readFile(markerPath, "utf8"));
+    expect(markerAfter.completed).toBe(true);
+  });
+
+  it("process death after append but before completion marking: the archive already has the entry -- recovery must not append a second one", async () => {
+    const archive = makeFakeArchive();
+    const deliveryId = "crashed-after-append";
+    const markerPath = deliveryMarkerPath(tasksDir, "T-0460", deliveryId);
+    await fs.mkdir(path.dirname(markerPath), { recursive: true });
+    await fs.writeFile(markerPath, JSON.stringify({ pid: 999999, claimedAt: new Date().toISOString() }), "utf8");
+
+    // The append that the dead claimant made before it died, landed in the archive already.
+    const alreadyPublishedEntry = { deliveryId, jobId: "job-1", ticketId: "T-0460", sprintId: "sprint-7", dispatchedSha: SHA_A, heading: "Codex Review: PASS", timestamp: "2026-10-21T00:00:00.000Z", outcome: "PASS", text: "..." };
+    await archive.appendEntryFn(tasksDir, "T-0460", alreadyPublishedEntry);
+
+    const result = await publishCodexVerdict({
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId,
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A,
+      isPidAliveFn: (pid) => pid !== 999999,
+      ...archive
+    });
+
+    expect(result.status).toBe("duplicate");
+    expect(result.entry).toEqual(alreadyPublishedEntry);
+    expect(archive.appendEntryFn).toHaveBeenCalledTimes(1); // only the pre-seeded one -- no second append
+    expect(archive.store.get("T-0460")).toHaveLength(1);
+  });
+
+  it("simultaneous retry of the same stale (dead-pid) claim: two concurrent recoverers still append exactly once", async () => {
+    const archive = makeFakeArchive();
+    const deliveryId = "crashed-simultaneous-retry";
+    const markerPath = deliveryMarkerPath(tasksDir, "T-0460", deliveryId);
+    await fs.mkdir(path.dirname(markerPath), { recursive: true });
+    await fs.writeFile(markerPath, JSON.stringify({ pid: 999999, claimedAt: new Date().toISOString() }), "utf8");
+
+    const args = {
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId,
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A,
+      isPidAliveFn: (pid) => pid !== 999999,
+      ...archive
+    };
+
+    const [first, second] = await Promise.all([publishCodexVerdict(args), publishCodexVerdict(args)]);
+
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual(["duplicate", "published"]);
+    expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
+    expect(archive.store.get("T-0460")).toHaveLength(1);
+  });
+});
+
 describe("publishCodexVerdict -- the happy path", () => {
   it("appends exactly one PASS verdict when identity, schema, and head all check out", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob(),
@@ -377,12 +539,13 @@ describe("publishCodexVerdict -- the happy path", () => {
     expect(entry.outcome).toBe("PASS");
     expect(entry.deliveryId).toBe("d1");
     expect(entry.dispatchedSha).toBe(SHA_A);
+    expect(entry.acceptanceCriteriaVersion).toBe(ACV);
   });
 
   it("appends a CHANGES_REQUESTED verdict carrying its findings", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob(),
@@ -402,7 +565,7 @@ describe("publishCodexVerdict -- the publisher is ordinary, deterministic code",
   it("never mutates or returns anything granting merge authority or a protected-flag change -- its result is only a verdict-archive entry", async () => {
     const archive = makeFakeArchive();
     const result = await publishCodexVerdict({
-      tasksDir: "/tasks",
+      tasksDir,
       taskId: "T-0460",
       deliveryId: "d1",
       dispatchedJob: dispatchedJob(),
