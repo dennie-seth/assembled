@@ -2,7 +2,7 @@ import path from "node:path";
 import { getPrState } from "./githubOps.js";
 import { withTimeout } from "./boundedAwait.js";
 import { needsApproval } from "../lib/approvalGate.js";
-import { StaleWriteError } from "../lib/taskStore.js";
+import { StaleWriteError, hashBody } from "../lib/taskStore.js";
 import { appendNote } from "./runOrchestrator.js";
 import { applyTerminalStatusEffects } from "../server/httpApi.js";
 import * as gitOps from "./gitOps.js";
@@ -78,6 +78,17 @@ export const DEFAULT_MERGE_RECONCILE_INTERVAL_MS = 5 * 60_000;
 
 /** How long a single `gh pr view` is allowed to take before this card is treated as unreadable for this pass -- see boundedAwait.js. Bounded well under the sweep interval so one slow/rate-limited call can never make a tick overrun into the next one. */
 const DEFAULT_PR_READ_TIMEOUT_MS = 8_000;
+
+/**
+ * Bounds `reconcileCard`'s self-retry when the guarded write below discovers the card changed
+ * shape (its `pr`, `branch`, `requires_approval`, `approved_by`, or `body`) between the PR lookup
+ * and the completion write (PR #451 FIX ROUND -- the compare-and-swap previously guarded `status`
+ * only, so a card whose PR got swapped, or that had `requires_approval` set, or whose body was
+ * edited DURING the lookup still completed from the stale pre-lookup snapshot). A small, finite
+ * bound (not unbounded retry) means a card that somehow keeps changing on every single attempt is
+ * left for the NEXT sweep/startup pass rather than this call looping forever.
+ */
+const MAX_STALE_GUARD_RETRIES = 2;
 
 /** BOARD_MERGE_RECONCILE env var: master switch, default ON. */
 export function mergeReconcileEnabledFromEnv() {
@@ -160,7 +171,12 @@ export async function reconcileCard({
   prReadTimeoutMs = DEFAULT_PR_READ_TIMEOUT_MS,
   orchestrator = null,
   restartCoordinator = null,
-  applyTerminalStatusEffectsFn = applyTerminalStatusEffects
+  applyTerminalStatusEffectsFn = applyTerminalStatusEffects,
+  // Internal re-entry counter for the stale-guard retry below -- never passed by an external
+  // caller (`reconcileAll`, `reconcileOnStartup`, `sweepOnce` all call this at attempt 0). Not
+  // part of this function's documented contract; it exists solely so a single call can re-run
+  // itself against a freshly-read task without `reconcileAll`'s own loop knowing anything changed.
+  attempt = 0
 }) {
   if (!task.pr) return null;
   // See ELIGIBLE_FOR_PR_READ_STATUSES: a terminal/unrecognized status is skipped before the
@@ -214,20 +230,81 @@ export async function reconcileCard({
     return null;
   }
 
+  // Guard the write with everything this decision above actually depended on, not just `status`
+  // -- PR #451 FIX ROUND. Before this, only `status: "review"` was compared-and-swapped, so a
+  // card whose `pr` got repointed, had `requires_approval` set, or had its `body` edited AFTER
+  // the checks above ran but BEFORE this write landed still completed from the stale snapshot:
+  // `done` with an approval gate that was never honoured, carrying a note describing a PR the
+  // card no longer links to. `bodyHash` (not `body` itself) is the guarded form `taskStore.js`'s
+  // `findMismatchedExpectedFields` expects -- see its own docstring.
+  const expected = {
+    status: "review",
+    pr: task.pr,
+    branch: task.branch,
+    requires_approval: task.requires_approval,
+    approved_by: task.approved_by,
+    bodyHash: hashBody(task.body)
+  };
+
   let updated;
   try {
     updated = await store.update(
       task.id,
       { status: "done", body: appendNote(task.body, "Merge reconciler", `PR ${task.pr} observed MERGED -- auto-completed.`) },
-      { expected: { status: "review" } }
+      { expected }
     );
   } catch (err) {
     if (err instanceof StaleWriteError) {
+      if (err.changedFields.includes("status")) {
+        // The original race this guard was built for: a human (or another route to `done`)
+        // moved the card off `review` entirely. The card is no longer eligible full stop --
+        // nothing to re-check, re-running against a fresh snapshot would just land on the same
+        // "not mergeable" conclusion the status check above already encodes. Skip, don't retry.
+        logger.log(
+          `merge-reconciler: card ${task.id} changed status before the done write landed (likely a human moving ` +
+            `it at the same time) -- skipped, no conflicting write`
+        );
+        return null;
+      }
+
+      // Status is still "review" -- the card remains eligible, but something this decision was
+      // actually BASED ON (its linked PR, its branch, its approval gate, or its body) changed
+      // underneath the lookup above. Forcing the write through anyway is exactly the bug this
+      // FIX ROUND exists for: completing a card against a PR it no longer points at, skipping a
+      // newly-set approval gate, or stamping a completion note onto a body that's already stale.
+      // Re-read the authoritative current record and re-run this entire decision against IT --
+      // re-checking the PR and the approval gate fresh, never forcing the old verdict through.
+      if (attempt >= MAX_STALE_GUARD_RETRIES) {
+        logger.log(
+          `merge-reconciler: card ${task.id} kept changing (${err.changedFields.join(", ")}) across ` +
+            `${MAX_STALE_GUARD_RETRIES} retries -- leaving it for the next pass rather than completing from a stale snapshot`
+        );
+        return null;
+      }
       logger.log(
-        `merge-reconciler: card ${task.id} changed status before the done write landed (likely a human moving ` +
-          `it at the same time) -- skipped, no conflicting write`
+        `merge-reconciler: card ${task.id} changed (${err.changedFields.join(", ")}) between its PR lookup and the ` +
+          `completion write -- re-checking the fresh record instead of completing from stale data`
       );
-      return null;
+      const freshTask = await store.get(task.id);
+      if (!freshTask) return null; // deleted concurrently -- nothing left to complete
+      return reconcileCard({
+        store,
+        hub,
+        task: freshTask,
+        repoRoot,
+        tasksDir,
+        git,
+        taskStoreKind,
+        worktreeDir,
+        getPrStateFn,
+        needsApprovalFn,
+        logger,
+        prReadTimeoutMs,
+        orchestrator,
+        restartCoordinator,
+        applyTerminalStatusEffectsFn,
+        attempt: attempt + 1
+      });
     }
     throw err;
   }

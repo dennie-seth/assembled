@@ -158,16 +158,32 @@ back up. The periodic sweep is the ongoing backstop regardless of how long the f
   unexpected exception) is caught, logged via `logger.error`, and the sweep continues with the
   next card -- one bad card never aborts the rest of the batch.
 - **Idempotent by construction.** The write uses `store.update(id, patch, { expected: { status:
-  "review" } })`. Reconciling the same card twice is a no-op the second time: once `status` is
+  "review", ... } })`. Reconciling the same card twice is a no-op the second time: once `status` is
   `done`, `MERGEABLE_STATUSES` no longer matches and nothing is written. A card already `done`
   stays `done`; a card a human moved to `retired` after its PR merged stays `retired` -- this
   module only ever moves a card towards `done` once, from `review`, and never second-guesses
   anything past that.
-- **No conflicting write with a human racing the sweep.** The same `expected: { status: "review"
-  }` precondition means a human dragging the card to `done` (or anywhere else) at the same moment
-  wins the race cleanly: the loser gets a `StaleWriteError`, which is caught, logged ("changed
-  status before the done write landed ... skipped, no conflicting write"), and treated as a no-op
-  rather than retried or escalated.
+- **No conflicting write with a human racing the sweep -- guarded on the card's whole evaluated
+  shape, not just `status`.** PR #451 FIX ROUND: the compare-and-swap originally guarded `status`
+  alone, so a card whose `pr` got repointed, had `requires_approval` set, or had its `body` edited
+  between the PR lookup and this write still completed from the pre-lookup snapshot -- `done`,
+  carrying an approval gate that was never honoured, with a completion note describing a PR the
+  card no longer links to. `expected` now also pins `pr`, `branch`, `requires_approval`,
+  `approved_by`, and a `bodyHash` of the body this decision was actually based on, so ANY of those
+  changing underneath the lookup is caught at write time, atomically, by the same store-level
+  check every other guarded write in this codebase uses (`findMismatchedExpectedFields`).
+  A human dragging the card to `done` (or anywhere else) at the same moment still wins the race
+  cleanly the original way: `changedFields` includes `status`, which is logged ("changed status
+  before the done write landed ... skipped, no conflicting write") and treated as a terminal
+  no-op -- the card is no longer eligible, so there is nothing to re-check.
+  Everything else (`pr`/`branch`/`requires_approval`/`approved_by`/`body` changed while `status`
+  held at `review`) is different: the card is still eligible, just not the one this pass
+  evaluated. Rather than force the stale verdict through, `reconcileCard` re-reads the
+  authoritative current record (`store.get`) and re-runs its *entire* decision against that fresh
+  snapshot -- re-fetching the PR's live state and re-checking the approval gate, never reusing the
+  old lookup's answer. This is bounded (`MAX_STALE_GUARD_RETRIES = 2`): a card that somehow keeps
+  changing on every single attempt is left for the next sweep/startup pass rather than retried
+  forever in one call.
 - **No linked PR, or a PR that cannot be read** (API failure, deleted/renamed PR, auth problem):
   the card is left exactly as it is and a reason is logged. This module never guesses a state it
   could not actually observe.
