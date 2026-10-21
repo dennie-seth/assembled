@@ -8,6 +8,7 @@ import { listActiveReservations } from "../../src/runner/launchReservation.js";
 import { buildLaunchDecide as realBuildLaunchDecide } from "../../src/runner/launchAdvisory.js";
 import { recordAdvisoryDecision as realRecordAdvisoryDecision, AdvisoryDecisionMissingError } from "../../src/runner/advisoryLogger.js";
 import { HOLD_REASON } from "../../src/runner/admissionDecision.js";
+import { resolveUnitConversionForAdmission } from "../../src/runner/usdUtilizationConversion.js";
 import { rmTemp } from "../helpers/rmTemp.js";
 
 function makeTask(overrides = {}) {
@@ -508,6 +509,29 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     expect(passedMaxAttempts).toBe(5);
   });
 
+  it("T-0402: passes the real, resolved DEFAULT_USD_UTILIZATION_CONVERSION through to buildLaunchDecideFn by default", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    let passedUnitConversion = null;
+    const buildLaunchDecideFn = vi.fn((args) => {
+      passedUnitConversion = args.unitConversion;
+      return async () => ({ estimate: { value: null, unit: "usd" }, telemetryReadings: {}, reason: "stub", admission: null });
+    });
+    await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn });
+    expect(passedUnitConversion).toEqual(resolveUnitConversionForAdmission());
+  });
+
+  it("T-0402: an injected loadUnitConversionFn overrides the default, same as loadAdmissionConfigFromEnvFn does for admissionConfig", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    const customConversion = { five_hour: { usdPerUtilizationUnit: 42, sampleCount: 20, fitDate: "2026-09-01", version: "v1" }, seven_day: null };
+    let passedUnitConversion = null;
+    const buildLaunchDecideFn = vi.fn((args) => {
+      passedUnitConversion = args.unitConversion;
+      return async () => ({ estimate: { value: null, unit: "usd" }, telemetryReadings: {}, reason: "stub", admission: null });
+    });
+    await launchCardRun({ orchestrator, id: "T-0001", buildLaunchDecideFn, loadUnitConversionFn: () => customConversion });
+    expect(passedUnitConversion).toEqual(customConversion);
+  });
+
   it("two simultaneous controlled launches (different cards) cannot reserve the same remaining capacity -- each gets its own lease, and the sum reflects both", async () => {
     // Held in flight (CI + startup follow-up, 2026-09-14): see the identical note on the
     // single-launch test above -- a run that finishes and releases its lease before this
@@ -577,7 +601,7 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     expect(await listActiveReservations({ runsDir })).toHaveLength(0);
   });
 
-  it("T-0379 Units: with a real MEASURED window reading but no shipped USD-to-utilization conversion, the real pipeline holds units_not_comparable, never a fabricated fit", async () => {
+  it("T-0379 Units: with a real MEASURED window reading but no conversion at all (neither window), the real pipeline holds units_not_comparable, never a fabricated fit", async () => {
     const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
     const readUsageTelemetryFn = async () => ({
       five_hour: { windowKind: "five_hour", classification: "measured", utilization: 0.1, resetElapsed: false },
@@ -585,12 +609,56 @@ describe("launchCardRun — advisory + reservation at the shared launch boundary
     });
     const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, readUsageTelemetryFn });
 
-    const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
+    // T-0402 round 2: `loadUnitConversionFn` overridden to `null` for both windows -- cardLaunch.js's
+    // own DEFAULT now resolves a genuine, usable five_hour rate (DEFAULT_USD_UTILIZATION_CONVERSION),
+    // so this fail-safe (acceptance: "an absent or malformed conversion still falls back to
+    // units_not_comparable") needs its own absent conversion deliberately injected to prove the
+    // fail-safe still fires when NEITHER window has any evidence, rather than relying on evidence
+    // this card has since shipped a real rate for.
+    const rejection = launchCardRun({
+      orchestrator,
+      id: "T-0001",
+      enforcementEnabledFn: () => true,
+      buildLaunchDecideFn,
+      loadUnitConversionFn: () => ({ five_hour: null, seven_day: null })
+    });
     await expect(rejection).rejects.toMatchObject({
       name: "CardLaunchError",
       statusCode: 409,
       capacityFitHold: true,
       message: expect.stringMatching(/units_not_comparable/)
+    });
+    expect(orchestrator.runCard).not.toHaveBeenCalled();
+  });
+
+  it("T-0402 fix round: with a real MEASURED window reading and the REAL default conversion, five_hour's own sub-decision is a genuine fit, but seven_day's own documented units gap still honestly holds the aggregate overall", async () => {
+    const orchestrator = makeAdvisoryOrchestrator([makeTask({ agent: "infra" })]);
+    const readUsageTelemetryFn = async () => ({
+      five_hour: { windowKind: "five_hour", classification: "measured", utilization: 0.1, resetElapsed: false },
+      seven_day: { windowKind: "seven_day", classification: "measured", utilization: 0.1, resetElapsed: false }
+    });
+    const buildLaunchDecideFn = (args) => realBuildLaunchDecide({ ...args, readUsageTelemetryFn });
+
+    // Deliberately NO loadUnitConversionFn override -- this exercises cardLaunch.js's own real
+    // default (resolveUnitConversionForAdmission -> DEFAULT_USD_UTILIZATION_CONVERSION). The
+    // real default conversion IS wired through end to end (five_hour's window decision below is
+    // a genuine admit, never units_not_comparable), but @DennieSeth's #449 FIX ROUND review
+    // restored the "every required window must admit" guard -- seven_day's own documented
+    // evidence gap still honestly holds the launch overall, and that is the correct, intended
+    // fail-safe outcome given the current evidence, not a bug.
+    const rejection = launchCardRun({ orchestrator, id: "T-0001", enforcementEnabledFn: () => true, buildLaunchDecideFn });
+    await expect(rejection).rejects.toMatchObject({
+      name: "CardLaunchError",
+      statusCode: 409,
+      capacityFitHold: true,
+      message: expect.stringMatching(/units_not_comparable/),
+      admission: {
+        admitted: null,
+        windows: {
+          five_hour: { admitted: true, holdReason: null },
+          seven_day: { admitted: null, holdReason: "units_not_comparable" }
+        }
+      }
     });
     expect(orchestrator.runCard).not.toHaveBeenCalled();
   });

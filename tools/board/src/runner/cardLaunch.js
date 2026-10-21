@@ -12,6 +12,7 @@ import {
 } from "./advisoryLogger.js";
 import { buildLaunchDecide, resolveCostEstimatorType, GPU_COST_ESTIMATOR_TYPE } from "./launchAdvisory.js";
 import { loadAdmissionConfigFromEnv, admissionEnforcementEnabledFromEnv, HOLD_REASON } from "./admissionDecision.js";
+import { resolveUnitConversionForAdmission } from "./usdUtilizationConversion.js";
 import { detectOversizedCard, drainModeEnabledFromEnv } from "./drainMode.js";
 import { releaseReservation } from "./launchReservation.js";
 import { withTimeout, DEFAULT_BOUND_MS } from "./boundedAwait.js";
@@ -191,6 +192,11 @@ export async function launchCardRun({
   buildLaunchDecideFn = buildLaunchDecide,
   withAdvisoryLoggingFn = withAdvisoryLogging,
   loadAdmissionConfigFromEnvFn = loadAdmissionConfigFromEnv,
+  // T-0402: resolves the versioned, per-window USD-to-utilization conversion
+  // (usdUtilizationConversion.js's committed, derived-from-evidence table) -- same injection
+  // pattern as loadAdmissionConfigFromEnvFn above, so a test can supply its own without touching
+  // the committed default.
+  loadUnitConversionFn = resolveUnitConversionForAdmission,
   reconcileLaunchOutcomeFn = reconcileLaunchOutcome,
   enforcementEnabledFn = admissionEnforcementEnabledFromEnv,
   drainModeEnabledFn = drainModeEnabledFromEnv,
@@ -341,6 +347,7 @@ export async function launchCardRun({
         owner: `cardLaunch:${id}`,
         maxAttempts: effectiveMaxAttempts(task),
         admissionConfig: loadAdmissionConfigFromEnvFn({ logger }),
+        unitConversion: loadUnitConversionFn(),
         logger
       });
 
