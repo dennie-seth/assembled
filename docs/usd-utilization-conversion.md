@@ -87,22 +87,30 @@ Only **one** reset cycle in the real history produced a usable rate sample
 (`2026-09-12T23:47:01.296Z` → `2026-09-15T08:51:03.630Z`, 35 readings, 27 ledger entries, rate
 376.50 USD/unit). An earlier draft of this note claimed every other weekly cycle had at most one
 measured reading, so there was no second point to measure an increase against -- the T-0402
-reviewer's 2026-10-16T18:39 VALIDATION pass found that claim contradicted by the recorded evidence:
-several later weekly cycles (readings spanning 2026-09-18 through 2026-09-23, sharing `resetsAt`
-values on the same 604800s weekly boundary) do have two or more measured readings. What actually
-drops them is `deriveRateSamplesForWindow`'s all-or-nothing censoring rule
+reviewer's 2026-10-16T18:39 VALIDATION pass found that claim contradicted by the recorded evidence,
+and a direct re-scan of `tasks/.runs/` (via `scanRateLimitReadings`, grouped by `resetsAt`) settles
+exactly how much evidence exists: the real history has precisely **two** distinct `seven_day`
+reset cycles with two or more measured readings at all, never more. One is the shipped sample
+above; the other, `resetsAt 1790200800`, spans `2026-09-18T23:36:29.105Z` →
+`2026-09-23T06:11:15.534Z`, has 76 readings, and shows a real 0.49 utilization increase -- a
+genuine candidate, not a reading-count shortage. It never becomes a second sample because of
+`deriveRateSamplesForWindow`'s all-or-nothing censoring rule
 (`usdUtilizationConversion.js`: "A cycle is dropped ... when ... ANY ledger entry inside its
 interval is censored") -- if even one usage-ledger entry recorded during a candidate cycle's
 interval has `costUsd: null`, the whole cycle is discarded rather than approximated from a
-partial, artificially-low subtotal. The real history has enough censored ledger entries landing
-inside those later cycles' intervals that none of them survives to become a second sample -- a
-censoring-driven gap, not a reading-count gap. Loosening the censoring rule to recover those
-cycles anyway is exactly the "approximate the true spend from a known lower bound" shortcut
-`deriveRateSamplesForWindow`'s own docstring rejects: a rate derived that way would be
-systematically biased low, which is worse than honestly holding `units_not_comparable`. One sample
-is nowhere near `MIN_SAMPLES_FOR_USABLE_CONVERSION` (5); `fitConversionFromSamples` marks it
-`usable: false` with that reason, and `resolveUnitConversionForAdmission` resolves `seven_day` to
-`null`.
+partial, artificially-low subtotal. This one candidate cycle's interval contains exactly **5**
+such entries: `2026-09-19T12:51:19.984Z`, `2026-09-19T15:02:21.990Z`, `2026-09-19T15:06:17.593Z`,
+`2026-09-21T13:31:43.353Z`, `2026-09-21T14:12:42.911Z` -- a censoring-driven gap, not a
+reading-count gap. (Repo-wide, as of this fit, `tasks/.runs/` carries 14 usage-ledger entries with
+`costUsd: null` in total, spanning `2026-09-17T01:08:55.184Z` through `2026-10-03T13:36:43.584Z`;
+the 5 above are the ones that actually matter here, since they're the only ones landing inside
+this one at-risk cycle's own interval -- the other 9 fall outside it and have no bearing on
+`seven_day`'s fit.) Loosening the censoring rule to recover this cycle anyway is exactly the
+"approximate the true spend from a known lower bound" shortcut `deriveRateSamplesForWindow`'s own
+docstring rejects: a rate derived that way would be systematically biased low, which is worse than
+honestly holding `units_not_comparable`. One sample is nowhere near
+`MIN_SAMPLES_FOR_USABLE_CONVERSION` (5); `fitConversionFromSamples` marks it `usable: false` with
+that reason, and `resolveUnitConversionForAdmission` resolves `seven_day` to `null`.
 
 **This is the card's explicit finding, not a gap the card papers over**: the task's own
 instructions are "do not invent a rate to make a test pass; if the recorded evidence cannot

@@ -261,9 +261,12 @@ predicted_remaining_cost_upper_bound
   one flat rate shared across both (`evaluateAdmission` narrows `unitConversion` to
   `unitConversion?.[windowKind]` before calling `evaluateWindowAdmission`). `five_hour` clears the
   minimum-evidence bar from real recorded data and gets a genuine admit/hold; `seven_day` honestly
-  does not yet (too few qualifying reset cycles in the real history) and keeps holding
-  `units_not_comparable` on its own until a later re-fit accumulates enough evidence — a real,
-  cited gap in the evidence, not an unbuilt mechanism.
+  does not yet — not for lack of readings, but because `deriveRateSamplesForWindow`'s
+  all-or-nothing censoring rule drops the one other candidate weekly cycle that has two or more
+  measured readings, since usage-ledger entries recorded inside its interval carry `costUsd: null`
+  (see "Enforcement flag" below for the count and dates) — and keeps holding
+  `units_not_comparable` on its own until a later re-fit lands an uncensored second cycle — a
+  real, cited gap in the evidence, not an unbuilt mechanism.
 - A healthy reading in one window never masks an exhausted other: `evaluateAdmission` combines
   both windows and is only "admitted" when *every* window admits. An earlier T-0402 attempt
   carved out an exception for `units_not_comparable` on its own, on the theory that a documented
@@ -316,13 +319,25 @@ external burn allowance.
   **T-0402 derived and wired in a real, versioned USD-to-utilization conversion** — see
   `docs/usd-utilization-conversion.md` for the full citation. `five_hour` now gets a genuine
   admit/hold from real recorded evidence, proven end to end (no mocked formula) in
-  `wipGateAutoManualIntegration.test.js`'s T-0402 integration suite; `seven_day`'s own evidence
-  doesn't clear the minimum-sample bar yet (one qualifying reset cycle exists in the real
-  history, not the five `MIN_SAMPLES_FOR_USABLE_CONVERSION` requires), so it honestly still holds
-  `units_not_comparable` on its own. Because `evaluateAdmission` only ever admits when EVERY
-  window admits, turning this flag on **today** still holds every real `auto` launch overall, on
-  `seven_day`'s own separate, legitimate gap, not a fabricated one. See "How to enable safely"
-  below for what changes once `seven_day` clears that bar too.
+  `wipGateAutoManualIntegration.test.js`'s T-0402 integration suite. `seven_day` has no usable
+  rate, and the cause is **censoring, not a reading-count shortage**: the real history has exactly
+  two `seven_day` reset cycles with two or more measured readings at all (one shipped as the
+  sample; the other, `resetsAt 1790200800`, spans `2026-09-18T23:36:29.105Z` →
+  `2026-09-23T06:11:15.534Z`, 76 readings, a real 0.49 utilization increase). That second cycle
+  never becomes a second sample because `deriveRateSamplesForWindow`'s all-or-nothing censoring
+  rule drops a candidate cycle outright the moment ANY usage-ledger entry inside its interval is
+  censored (`costUsd: null`) — and this cycle's interval contains exactly **5** such entries:
+  `2026-09-19T12:51:19.984Z`, `2026-09-19T15:02:21.990Z`, `2026-09-19T15:06:17.593Z`,
+  `2026-09-21T13:31:43.353Z`, `2026-09-21T14:12:42.911Z`. (Repo-wide, as of this fit, 14 usage-
+  ledger entries anywhere in `tasks/.runs/` carry `costUsd: null`, spanning
+  `2026-09-17T01:08:55.184Z` through `2026-10-03T13:36:43.584Z` — the 5 above are the ones that
+  actually matter, since they're the only ones landing inside this one at-risk cycle's own
+  interval.) One sample is nowhere near `MIN_SAMPLES_FOR_USABLE_CONVERSION` (5), so `seven_day`
+  honestly still holds `units_not_comparable` on its own. Because `evaluateAdmission` only ever
+  admits when EVERY window admits, turning this flag on **today** still holds every real `auto`
+  launch overall, on `seven_day`'s own separate, legitimate, censoring-driven gap, not a
+  fabricated one or a lack of underlying data. See "How to enable safely" below for what changes
+  once an uncensored second `seven_day` cycle lands.
 - **The boundary never falls through to an unconditional launch under the flag (fix round 2 finding
   4).** `decide()` is bounded at `cardLaunch.js` itself (on top of `buildLaunchDecide`'s own
   internal bound), so a throwing or never-settling decide resolves to `advisory: null` — an
@@ -404,18 +419,21 @@ window, while a human can still launch a heavier card manually.
   of variation ~0.40, cleared against `MIN_SAMPLES_FOR_USABLE_CONVERSION`/
   `MAX_COEFFICIENT_OF_VARIATION`) and now gets a genuine `admitted: true/false` from real evidence,
   proven end to end (no mocked formula) in `wipGateAutoManualIntegration.test.js`'s T-0402
-  integration test. `seven_day` honestly is NOT usable yet — only one qualifying reset cycle exists
-  in the real recorded history — and keeps holding `units_not_comparable` on its own, independent
-  of `five_hour`'s result, until a later re-fit (`deriveUsdUtilizationConversionFromRuns`, no code
-  change required) accumulates enough evidence. A conversion is never a hard-coded guess — both
+  integration test. `seven_day` honestly is NOT usable yet — not for lack of readings, but because
+  the one other candidate reset cycle in the real recorded history is dropped by the censoring
+  rule described in "Enforcement flag" above (5 `costUsd: null` ledger entries land inside its
+  interval) — and keeps holding `units_not_comparable` on its own, independent of `five_hour`'s
+  result, until a later re-fit (`deriveUsdUtilizationConversionFromRuns`, no code change required)
+  lands an uncensored second cycle. A conversion is never a hard-coded guess — both
   windows' numbers are fitted from, and gated on, actually recorded usage-ledger spend and
   `rate_limit_event` utilization readings, with an explicit minimum-sample-count +
   maximum-spread threshold below which a window is not used.
 - **Turning enforcement on**, once ready: set `WIP_GATE_ENFORCEMENT_ENABLED=1` (or `true`/`on`/`yes`)
   on the board process. Because `evaluateAdmission` only admits when EVERY window admits, and
-  `seven_day` still holds `units_not_comparable` (above), every real `auto` launch will still be
-  refused overall today — on `seven_day`'s own gap, not a fabricated one — until a re-fit makes
-  `seven_day` usable too (see "How to enable safely" below). Manual (Run button) launches are
+  `seven_day` still holds `units_not_comparable` (above, with the censoring-driven cause and the
+  entry dates cited), every real `auto` launch will still be refused overall today — on
+  `seven_day`'s own gap, not a fabricated one — until a re-fit makes `seven_day` usable too (see
+  "How to enable safely" below). Manual (Run button) launches are
   unaffected by the capacity-fit limit either way, but still subject to the overrun stop and every
   other existing guard. This card does not flip the flag on the live board; that remains
   @DennieSeth's call, informed by T-0370's predicted-vs-actual advisory evidence.
@@ -534,8 +552,9 @@ is deferred to a later card.
 ## What this card deliberately does not do
 
 - Derives and ships a USD-to-window-utilization conversion rate for `five_hour` (T-0402 — see
-  `docs/usd-utilization-conversion.md`); `seven_day` honestly still lacks enough recorded evidence
-  to be usable, so turning enforcement on today still holds every real `auto` launch overall — on
+  `docs/usd-utilization-conversion.md`); `seven_day` honestly still has no usable rate — a
+  censoring-driven gap, not a shortage of readings (see "Enforcement flag" above for the count
+  and dates) — so turning enforcement on today still holds every real `auto` launch overall — on
   `seven_day`'s own separate gap, not a fabricated one (see "Enforcement flag"/"How to enable
   safely"). An earlier draft of this card let `five_hour`'s own genuine fit admit the aggregate
   despite that gap; @DennieSeth's review of PR #449 rejected that (a window that can't be
