@@ -578,11 +578,9 @@ function applyFocus(root, sections, index) {
   if (!section) return null;
   section.element.focus({ preventScroll: true });
   if (typeof section.element.scrollIntoView === "function") {
-    // `block: "center"` plus the `scroll-margin-top` every `[data-detail-section]` carries
-    // (style.css) together keep the sticky .detail-nav bar from ever landing on top of the
-    // section we just jumped to -- scrollIntoView expands the target rect by its scroll-margin
-    // before aligning, so even a section scrolled to the very start/end of #detail keeps that
-    // much clearance above it instead of parking flush under the bar.
+    // `block: "center"` puts the target in the middle of the visible area rather than flush
+    // against an edge. .detail-nav is a normal-flow block (style.css), not sticky/fixed, so
+    // there is no bar for the target to land underneath regardless of where it scrolls to.
     section.element.scrollIntoView({ block: "center" });
   }
   updateNavDisplay(root, sections, index);
