@@ -404,6 +404,228 @@ function attachmentsSectionFor(task, onUploadAttachment, onRemoveAttachment) {
   return wrap;
 }
 
+// --- Section navigation (T-0462) -------------------------------------------------------
+//
+// On a long card (T-0436: 13 comments, several multi-screen) the compose box and the
+// attachments were reachable only by scrolling the entire comment thread. These functions
+// discover a fixed set of named landmarks already present in the rendered panel -- the title
+// (top), the markdown body preview, the Acceptance heading inside that rendered markdown (if
+// any), the latest comment, the composer, and the attachments heading -- and move focus
+// directly to one of them. A section with no corresponding element for this task (no
+// comments yet, no attachments callback) is simply absent from the list, never a dead stop.
+//
+// Deliberately stateless: "current position" is read from document.activeElement every call
+// rather than tracked separately, so switching to a different, already-rendered task can never
+// carry a stale index or element reference -- there is nothing to carry. Sections are
+// re-queried from the live DOM on every call (never cached), so a comment arriving over the
+// socket while the panel is open is reflected the next time someone navigates.
+const SECTION_LABELS = {
+  top: "Top",
+  body: "Body",
+  acceptance: "Acceptance",
+  comments: "Latest comment",
+  composer: "Composer",
+  attachments: "Attachments"
+};
+
+function findBodyLandmark(root) {
+  const preview = root.querySelector(".detail-body-preview");
+  if (!preview) return null;
+  preview.tabIndex = -1;
+  preview.setAttribute("role", "region");
+  preview.setAttribute("aria-label", "Body");
+  return preview;
+}
+
+function findAcceptanceHeading(root) {
+  const preview = root.querySelector(".detail-body-preview");
+  if (!preview) return null;
+  for (const heading of preview.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
+    if (/acceptance/i.test(heading.textContent)) {
+      heading.tabIndex = -1;
+      return heading;
+    }
+  }
+  return null;
+}
+
+function findLatestComment(root) {
+  const items = root.querySelectorAll(".detail-comment");
+  if (items.length === 0) return null;
+  const latest = items[items.length - 1];
+  latest.tabIndex = -1;
+  const meta = latest.querySelector(".detail-comment-meta");
+  latest.setAttribute("aria-label", meta ? `Latest comment: ${meta.textContent}` : "Latest comment");
+  return latest;
+}
+
+function findComposer(root) {
+  const el = root.querySelector(".detail-comment-input");
+  if (el) el.setAttribute("aria-label", "Comment composer");
+  return el;
+}
+
+function findAttachmentsLandmark(root) {
+  const el = root.querySelector(".detail-attachments");
+  if (el) {
+    el.tabIndex = -1;
+    el.setAttribute("role", "region");
+    el.setAttribute("aria-label", "Attachments");
+  }
+  return el;
+}
+
+const SECTION_FINDERS = [
+  ["top", (root) => root.querySelector(".detail-title")],
+  ["body", findBodyLandmark],
+  ["acceptance", findAcceptanceHeading],
+  ["comments", findLatestComment],
+  ["composer", findComposer],
+  ["attachments", findAttachmentsLandmark]
+];
+
+/** Every named section this task's rendered panel currently has, in reading order. */
+export function listDetailSections(root) {
+  if (!root) return [];
+  const sections = [];
+  for (const [key, find] of SECTION_FINDERS) {
+    const element = find(root);
+    if (element) {
+      element.dataset.detailSection = key;
+      sections.push({ key, label: SECTION_LABELS[key], element });
+    }
+  }
+  return sections;
+}
+
+// The Acceptance heading lives INSIDE the body preview's rendered markdown, so the body
+// landmark .contains() it too -- a plain first-match search would always resolve focus on the
+// heading back to "body", never "acceptance". An exact match wins immediately; among
+// .contains() matches (nested landmarks, or a focusable descendant inside one, e.g. a
+// remove-attachment button inside the attachments region), the most specific (innermost) one
+// wins.
+function currentSectionIndex(root, sections) {
+  const active = (root.ownerDocument ?? document).activeElement;
+  if (!active) return -1;
+  let bestIndex = -1;
+  for (let i = 0; i < sections.length; i++) {
+    const element = sections[i].element;
+    if (element === active) return i;
+    if (element.contains(active)) {
+      if (bestIndex === -1 || sections[bestIndex].element.contains(element)) {
+        bestIndex = i;
+      }
+    }
+  }
+  return bestIndex;
+}
+
+function updateNavDisplay(root, sections, index) {
+  const current = root.querySelector(".detail-nav-current");
+  const jump = root.querySelector(".detail-nav-jump");
+  const prevBtn = root.querySelector(".detail-nav-prev");
+  const nextBtn = root.querySelector(".detail-nav-next");
+  const section = sections[index];
+  if (current) current.textContent = section ? `Section: ${section.label}` : "";
+  if (jump && section) jump.value = section.key;
+  if (prevBtn) prevBtn.disabled = index === 0;
+  if (nextBtn) nextBtn.disabled = sections.length > 0 && index === sections.length - 1;
+}
+
+function applyFocus(root, sections, index) {
+  const section = sections[index];
+  if (!section) return null;
+  section.element.focus({ preventScroll: true });
+  if (typeof section.element.scrollIntoView === "function") {
+    section.element.scrollIntoView({ block: "center" });
+  }
+  updateNavDisplay(root, sections, index);
+  return section.key;
+}
+
+/**
+ * Move to the next (1) or previous (-1) section relative to wherever focus currently is.
+ * Clamped at both ends -- repeating the key at the last section stops there rather than
+ * wrapping back to the top, so the Prev/Next disabled state (updateNavDisplay) is always a
+ * true boundary signal rather than something wrapping could silently hide.
+ */
+export function stepDetailSection(root, direction) {
+  const sections = listDetailSections(root);
+  if (sections.length === 0) return null;
+  const index = currentSectionIndex(root, sections);
+  const nextIndex =
+    index === -1
+      ? direction > 0
+        ? 0
+        : sections.length - 1
+      : Math.max(0, Math.min(sections.length - 1, index + direction));
+  return applyFocus(root, sections, nextIndex);
+}
+
+/**
+ * Jump straight to a named section (e.g. "composer", "attachments") in one call -- no
+ * intermediate section is ever focused along the way. Returns false without acting if this
+ * task has no such section right now.
+ */
+export function focusDetailSection(root, key) {
+  const sections = listDetailSections(root);
+  const index = sections.findIndex((section) => section.key === key);
+  if (index === -1) return false;
+  return applyFocus(root, sections, index) !== null;
+}
+
+function detailNavBarFor(root) {
+  const nav = document.createElement("div");
+  nav.className = "detail-nav";
+  nav.setAttribute("role", "navigation");
+  nav.setAttribute("aria-label", "Card sections");
+
+  const prevBtn = document.createElement("button");
+  prevBtn.type = "button";
+  prevBtn.className = "detail-nav-prev";
+  prevBtn.textContent = "↑ Prev";
+  prevBtn.setAttribute("aria-label", "Previous section");
+  prevBtn.addEventListener("click", () => stepDetailSection(root, -1));
+
+  const jump = document.createElement("select");
+  jump.className = "detail-nav-jump";
+  jump.setAttribute("aria-label", "Jump to section");
+  jump.addEventListener("change", () => focusDetailSection(root, jump.value));
+
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "detail-nav-next";
+  nextBtn.textContent = "↓ Next";
+  nextBtn.setAttribute("aria-label", "Next section");
+  nextBtn.addEventListener("click", () => stepDetailSection(root, 1));
+
+  const current = document.createElement("span");
+  current.className = "detail-nav-current";
+  current.setAttribute("aria-live", "polite");
+
+  nav.append(prevBtn, jump, nextBtn, current);
+  return nav;
+}
+
+// Run once the whole panel subtree is attached to `root` -- the section finders above query
+// `root` itself (e.g. the latest `.detail-comment`, the Acceptance heading inside the body
+// preview), so this must come after every other section-owning builder has run.
+function populateNavBar(root) {
+  const sections = listDetailSections(root);
+  const jump = root.querySelector(".detail-nav-jump");
+  if (jump) {
+    jump.replaceChildren(
+      ...sections.map((section) => {
+        const opt = document.createElement("option");
+        opt.value = section.key;
+        opt.textContent = section.label;
+        return opt;
+      })
+    );
+  }
+  updateNavDisplay(root, sections, currentSectionIndex(root, sections));
+}
+
 function deleteControlsFor(task, onDelete) {
   const wrap = document.createElement("div");
   wrap.className = "detail-delete-wrap";
@@ -584,6 +806,7 @@ export function renderDetailPanel(
   });
 
   panel.append(
+    detailNavBarFor(root),
     closeBtn,
     labeledField("Title", titleInput),
     labeledField("Priority", prioritySelect),
@@ -636,5 +859,6 @@ export function renderDetailPanel(
   }
 
   restoreFocusState(root, focusState);
+  populateNavBar(root);
   root.__lastTask = task;
 }

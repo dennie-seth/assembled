@@ -51,7 +51,7 @@ function isContentEditable(el) {
 }
 
 /** Does this element hold text the user may have typed but not committed? */
-function isTextEntry(el) {
+export function isTextEntry(el) {
   if (!el || !el.tagName) return false;
   if (el.tagName === "TEXTAREA") return true;
   if (el.tagName === "INPUT") {
@@ -152,7 +152,17 @@ export function captureViewState(root, doc) {
 
   let focus = null;
   const active = ownerDoc?.activeElement;
-  if (active && active !== ownerDoc.body && root.contains(active)) {
+  // detailPanel.js's section-nav landmarks (`data-detail-section`) are structurally IDENTICAL
+  // across different tasks -- same tag, class and dataset, no id/name tying one to a specific
+  // card's content -- unlike every other focusable field here (title, comment draft, deps
+  // chips, ...), which differ by value or a task-specific id. The signature-based `locate()`
+  // fallback below cannot tell those apart, so without this guard, navigating to e.g. "Body" on
+  // one card and then switching to a DIFFERENT card would re-attach focus onto that other
+  // card's matching landmark (T-0462: caught by its own "switching cards mid-navigation resets"
+  // test). These elements manage their own focus recovery -- none, deliberately, since a fresh
+  // render always starts a card's navigation over -- rather than through this generic one.
+  const isSectionNavLandmark = Boolean(active?.dataset?.detailSection);
+  if (active && active !== ownerDoc.body && !isSectionNavLandmark && root.contains(active)) {
     const descriptor = describe(active, root);
     if (descriptor) {
       focus = descriptor;

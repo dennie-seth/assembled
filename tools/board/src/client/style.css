@@ -325,6 +325,38 @@ body:has(#terminal-panel.collapsed) #side-panel {
   cursor: not-allowed;
 }
 
+/* T-0462: sticky section-nav bar inside #detail. `position: sticky` (never `fixed`) is
+   deliberate: a sticky element still occupies its own box in normal document flow, so every
+   sibling after it (title, body, comments, composer, attachments) is laid out BELOW its
+   reserved space from the very first render -- there is no scroll position at which that
+   content could end up underneath it, the way a `fixed`/`absolute` overlay would need a
+   separate reserved-space rule (like --terminal-reserve above) to avoid. `flex-wrap: wrap`
+   lets it degrade to two lines at a narrow width instead of overlapping anything. */
+.detail-nav {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0;
+  margin-bottom: 0.5rem;
+  background: Canvas;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+}
+
+.detail-nav-current {
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+
+.detail-nav-prev:disabled,
+.detail-nav-next:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .detail-field {
   display: flex;
   flex-direction: column;
