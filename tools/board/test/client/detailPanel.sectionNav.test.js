@@ -66,10 +66,17 @@ describe("listDetailSections", () => {
     document.body.removeChild(root);
   });
 
-  it("lists top, body, acceptance, latest comment, composer and attachments in reading order for a full card", () => {
+  it("lists top, latest comment, composer, attachments, body and acceptance in actual DOM reading order for a full card", () => {
+    // FIX ROUND 3: the panel's real append order (renderDetailPanel) is top, then the
+    // comments section (with the composer inside it), then attachments, and only THEN the
+    // body preview (with the Acceptance heading inside that). A hardcoded "top, body,
+    // acceptance, comments, composer, attachments" list does not match that -- it made a
+    // down-labelled Next button scroll UP (to the body, below everything) and disabled Next at
+    // "attachments" even though body/acceptance still sit below it in the real page. Order is
+    // now derived from each element's actual document position, not an assumed sequence.
     renderDetailPanel(root, task({ comments: manyComments(13), attachments: [] }), baseOpts());
     const keys = listDetailSections(root).map((s) => s.key);
-    expect(keys).toEqual(["top", "body", "acceptance", "comments", "composer", "attachments"]);
+    expect(keys).toEqual(["top", "comments", "composer", "attachments", "body", "acceptance"]);
   });
 
   it("names each section with a human-readable label", () => {
@@ -204,30 +211,30 @@ describe("stepDetailSection: bidirectional navigation", () => {
     expect(document.activeElement).toBe(root.querySelector(".detail-top-landmark"));
   });
 
-  it("repeated forward steps walk every section in order", () => {
+  it("repeated forward steps walk every section in actual DOM order", () => {
     renderDetailPanel(root, task({ comments: manyComments(13) }), baseOpts());
     const seen = [];
     for (let i = 0; i < 6; i++) {
       seen.push(stepDetailSection(root, 1));
     }
-    expect(seen).toEqual(["top", "body", "acceptance", "comments", "composer", "attachments"]);
+    expect(seen).toEqual(["top", "comments", "composer", "attachments", "body", "acceptance"]);
   });
 
   it("stepping backward from the last section walks back in reverse order", () => {
     renderDetailPanel(root, task({ comments: manyComments(13) }), baseOpts());
-    for (let i = 0; i < 6; i++) stepDetailSection(root, 1); // drive to the last section (attachments)
+    for (let i = 0; i < 6; i++) stepDetailSection(root, 1); // drive to the last section (acceptance)
     const seen = [];
     for (let i = 0; i < 6; i++) seen.push(stepDetailSection(root, -1));
-    expect(seen).toEqual(["composer", "comments", "acceptance", "body", "top", "top"]);
+    expect(seen).toEqual(["body", "attachments", "composer", "comments", "top", "top"]);
   });
 
   it("repeating the forward key at the last section stops there -- it does not wrap to the top", () => {
     renderDetailPanel(root, task({ comments: manyComments(13) }), baseOpts());
     for (let i = 0; i < 6; i++) stepDetailSection(root, 1);
-    expect(document.activeElement.closest(".detail-attachments")).not.toBeNull();
+    expect(document.activeElement.tagName).toMatch(/^H[1-6]$/); // last section is "acceptance"
     const key = stepDetailSection(root, 1);
-    expect(key).toBe("attachments");
-    expect(document.activeElement.closest(".detail-attachments")).not.toBeNull();
+    expect(key).toBe("acceptance");
+    expect(document.activeElement.tagName).toMatch(/^H[1-6]$/);
   });
 
   it("repeating the backward key at the first section stops there -- it does not wrap to the end", () => {
@@ -339,7 +346,7 @@ describe("the nav bar UI (sticky jump control)", () => {
     root.querySelector(".detail-nav-next").dispatchEvent(new Event("click", { bubbles: true }));
     expect(document.activeElement).toBe(root.querySelector(".detail-top-landmark"));
     root.querySelector(".detail-nav-next").dispatchEvent(new Event("click", { bubbles: true }));
-    expect(document.activeElement).toBe(root.querySelector(".detail-body-preview"));
+    expect(document.activeElement.className).toContain("detail-comment");
   });
 
   it("disables Next at the last section and Prev at the first, as a visible boundary signal", () => {
@@ -351,8 +358,8 @@ describe("the nav bar UI (sticky jump control)", () => {
     expect(prev.disabled).toBe(true);
     expect(next.disabled).toBe(false);
 
-    for (let i = 0; i < 5; i++) stepDetailSection(root, 1); // walk to the last section (attachments)
-    expect(document.activeElement.closest(".detail-attachments")).not.toBeNull();
+    for (let i = 0; i < 5; i++) stepDetailSection(root, 1); // walk to the last section (acceptance)
+    expect(document.activeElement.tagName).toMatch(/^H[1-6]$/);
     expect(next.disabled).toBe(true);
     expect(prev.disabled).toBe(false);
   });

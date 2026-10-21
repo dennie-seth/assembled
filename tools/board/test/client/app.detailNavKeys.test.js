@@ -123,6 +123,9 @@ describe("detail panel section-navigation keyboard shortcuts", () => {
   // a browser does, instead of always on `document.body` (which bypassed shouldIgnoreDetailNavKey
   // entirely and hid the dead-end: landing on "top", a real <input>, made every following
   // Alt+ArrowDown a no-op because real text-entry focus correctly suppresses the shortcut).
+  // FIX ROUND 3: order is derived from actual DOM position (detailPanel.js), not an assumed
+  // "top, body, acceptance, comments, composer, attachments" sequence -- the panel's real
+  // append order puts comments/composer/attachments BEFORE the body preview.
   it("Alt+ArrowDown repeatedly walks every named section in order, even through the top and composer landmarks", () => {
     const seenClasses = [];
     for (let i = 0; i < 6; i++) {
@@ -130,10 +133,11 @@ describe("detail panel section-navigation keyboard shortcuts", () => {
       seenClasses.push(document.activeElement.className || document.activeElement.tagName);
     }
     expect(seenClasses[0]).toContain("detail-top-landmark");
-    expect(seenClasses[1]).toContain("detail-body-preview");
-    expect(seenClasses[2]).toMatch(/^H[1-6]$/);
-    expect(seenClasses[4]).toContain("detail-composer-landmark");
-    expect(seenClasses[5]).toContain("detail-attachments");
+    expect(seenClasses[1]).toContain("detail-comment");
+    expect(seenClasses[2]).toContain("detail-composer-landmark");
+    expect(seenClasses[3]).toContain("detail-attachments");
+    expect(seenClasses[4]).toContain("detail-body-preview");
+    expect(seenClasses[5]).toMatch(/^H[1-6]$/);
   });
 
   it("Alt+ArrowUp moves backward", () => {
@@ -156,7 +160,7 @@ describe("detail panel section-navigation keyboard shortcuts", () => {
   });
 
   it("Alt+ArrowDown past the composer landmark reaches attachments next -- composer does not swallow further steps", () => {
-    for (let i = 0; i < 5; i++) altKeydownOnActive("ArrowDown"); // top, body, acceptance, comments, composer
+    for (let i = 0; i < 3; i++) altKeydownOnActive("ArrowDown"); // top, comments, composer
     expect(document.activeElement).toBe(detailRoot.querySelector(".detail-composer-landmark"));
     altKeydownOnActive("ArrowDown");
     expect(document.activeElement.closest(".detail-attachments")).not.toBeNull();
