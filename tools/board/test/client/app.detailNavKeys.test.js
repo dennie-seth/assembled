@@ -61,7 +61,7 @@ function makeApp(overrides = {}) {
     fetchTasksImpl: overrides.fetchTasksImpl ?? vi.fn().mockResolvedValue([]),
     fetchAgentsImpl: vi.fn().mockResolvedValue([]),
     patchTaskImpl: vi.fn(),
-    connectSocketImpl: vi.fn(),
+    connectSocketImpl: overrides.connectSocketImpl ?? vi.fn(),
     runTaskImpl: vi.fn(),
     cancelTaskImpl: vi.fn(),
     createTaskImpl: vi.fn(),
@@ -75,6 +75,20 @@ function makeApp(overrides = {}) {
     fetchPollerStatusImpl: null
   });
   return app;
+}
+
+// Lets a test capture the callback createApp hands to connectSocketImpl, so it can simulate a
+// real websocket task-update event (the T-0462 fix-round scenario below) rather than only the
+// user-initiated paths every other test here drives.
+function makeAppWithSocketCapture(overrides = {}) {
+  let socketCallback;
+  const app = makeApp({
+    ...overrides,
+    connectSocketImpl: (cb) => {
+      socketCallback = cb;
+    }
+  });
+  return { app, getSocketCallback: () => socketCallback };
 }
 
 function altKeydown(target, key) {
@@ -247,6 +261,61 @@ describe("detail panel section-navigation shortcuts never fire while the user is
 
     expect(document.activeElement).toBe(body);
     expect(body.value).toBe("## Context\nediting this in place");
+  });
+});
+
+// FIX ROUND (2026-10-21, Codex review): a websocket "changed" event for the SAME card (e.g. a
+// new comment arriving) must not reset section-nav focus back to the top -- that is the exact
+// "scroll the comment wall" problem this card exists to solve. viewState.js's section-landmark
+// guard used to exclude every data-detail-section element from focus capture unconditionally;
+// it is now keyed on (taskId, sectionKey) so a same-card rebuild restores it and only a real
+// task switch (or the named section going missing) invalidates it.
+describe("a same-card socket update preserves section-nav focus", () => {
+  it("keeps focus on the section the reader had navigated to when a new comment arrives over the socket for the same card", async () => {
+    const { app, getSocketCallback } = makeAppWithSocketCapture({
+      fetchTasksImpl: vi.fn().mockResolvedValue([task({ id: "T-0001", comments: manyComments(13) })])
+    });
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    altKeydownOnActive("ArrowDown"); // top
+    altKeydownOnActive("ArrowDown"); // latest comment
+    expect(document.activeElement.dataset.detailSection).toBe("comments");
+
+    const panelScrollBefore = detailRoot.scrollTop;
+    getSocketCallback()({
+      type: "changed",
+      id: "T-0001",
+      task: task({ id: "T-0001", comments: manyComments(14) })
+    });
+
+    expect(document.activeElement.dataset.detailSection).toBe("comments");
+    expect(detailRoot.scrollTop).toBe(panelScrollBefore);
+  });
+
+  it("still resets to the top when the socket update is for a DIFFERENT card than the one selected", async () => {
+    const { app, getSocketCallback } = makeAppWithSocketCapture({
+      fetchTasksImpl: vi.fn().mockResolvedValue([
+        task({ id: "T-0001", comments: manyComments(13) }),
+        task({ id: "T-0002", comments: [] })
+      ])
+    });
+    await app.init();
+    app.handleCardClick("T-0001");
+
+    altKeydownOnActive("ArrowDown");
+    altKeydownOnActive("ArrowDown");
+    expect(document.activeElement.dataset.detailSection).toBe("comments");
+
+    // An update for the other, unselected card must not disturb T-0001's nav position.
+    getSocketCallback()({
+      type: "changed",
+      id: "T-0002",
+      task: task({ id: "T-0002", comments: manyComments(1) })
+    });
+
+    expect(document.activeElement.dataset.detailSection).toBe("comments");
+    expect(detailRoot.dataset.taskId).toBe("T-0001");
   });
 });
 
