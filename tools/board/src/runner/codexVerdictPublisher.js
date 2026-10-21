@@ -100,32 +100,43 @@ async function readMarker(markerPath, { readFileFn }) {
   }
 }
 
+/** Bounds the stale-claim reclaim loop below. Each non-returning iteration proves it removed a
+ * genuinely dead claim before looping, so only a pathological number of simultaneous racers could
+ * ever approach this -- it exists as a hard backstop against an unbounded loop, not a limit this
+ * card's own tests (at most a handful of concurrent callers) should ever come close to. */
+const MAX_CLAIM_RECOVERY_ATTEMPTS = 25;
+
 /**
- * The real exactly-once primitive, fixed for T-0460's "FIX ROUND" P2 finding: the pre-fix
- * mechanism created an exclusive marker BEFORE appending, and never recovered that marker if the
- * append failed or the process died before completing -- every retry read back "duplicate" with
- * no entry, because the marker's mere existence was treated as proof of publication. It never
- * was: existence only ever proved a claim was MADE, not that it finished.
+ * The real exactly-once primitive. Originally fixed for T-0460's "FIX ROUND" P2 finding (the
+ * pre-fix mechanism created an exclusive marker BEFORE appending and never recovered it if the
+ * append failed or the process died before completing) by making the marker a durable,
+ * recoverable delivery record rather than a one-shot flag -- but that first fix recovered a stale
+ * claim through a SECOND exclusive marker (`<marker>.takeover`), which turned out to carry the
+ * identical defect one level up (FIX ROUND 2, human comment (a)): the `.takeover` marker's mere
+ * existence proved a takeover was CLAIMED, never that it FINISHED, so a crash between creating it
+ * and its own append returning left it behind forever, and every later attempt lost the race to a
+ * dead pid's marker and returned duplicate/empty permanently -- exactly the bug the first marker
+ * was fixed for, reintroduced one level up.
  *
- * The fix makes the marker a durable, recoverable delivery record rather than a one-shot flag:
- *  - On a fresh claim (marker didn't exist): write `{ pid, claimedAt }`, append, then overwrite
- *    the marker with `{ completed: true, entry }`. An append that throws releases the claim (the
- *    marker is deleted) so a sequential retry -- in this same still-alive process -- redoes the
- *    whole attempt from scratch instead of reading back a permanently-stuck claim.
- *  - On a claim that already exists (`EEXIST`): read it.
- *      - `completed: true` -> genuinely already published; return the stored entry.
- *      - not completed, and the archive (the authoritative record, checked directly rather than
- *        trusting the marker alone) already has this deliveryId -> the append landed but the
- *        process died before marking completion; repair the marker and return the archive's
- *        entry, without appending a second one.
- *      - not completed, no archive entry, and the recorded `pid` is still alive -> a genuinely
- *        concurrent in-flight delivery (not a crash); report it as a duplicate-in-progress rather
- *        than racing the live claimant's own append.
- *      - not completed, no archive entry, and the recorded `pid` is dead -> a stale claim left by
- *        a process that died before finishing (crash recovery, the case the bug report names).
- *        Take it over through a SECOND exclusive marker (`.takeover`) so two simultaneous
- *        recoverers of the same stale claim can't both append -- the loser defers to the winner
- *        and reads the archive again once the winner is done.
+ * There is now exactly ONE marker file per `(taskId, deliveryId)`, and recovering a stale claim
+ * never creates a second one: it removes the stale marker and loops back to the SAME
+ * `createMarkerAtomic` exclusivity check a brand-new claim uses. Two concurrent recoverers of the
+ * same stale claim race on that one atomic `link`; the filesystem -- not either caller's own
+ * bookkeeping -- decides which one wins, exactly like the very first claim ever made for this
+ * deliveryId. "Crash during a recovery attempt" and "crash during the original claim" are
+ * therefore the identical code path and the identical recoverable shape; there is no
+ * recovery-specific state that can get permanently stuck.
+ *
+ * On EVERY successful claim -- the first attempt ever, or a recovery that just reclaimed a stale
+ * one -- the verdict archive (the authoritative record) is re-read and checked BEFORE appending,
+ * never after: a dead claimant may have completed its append and died before marking its own
+ * marker complete, and the archive is the only source that can tell "never ran" apart from "ran,
+ * just didn't get to say so."
+ *
+ * A claim is only ever removed once proven stale: not completed, no matching archive entry, and
+ * its recorded `pid` is not alive. A live claimant's marker is left untouched (reported as a
+ * genuine in-flight duplicate) -- this function never races a claimant that might still be
+ * writing.
  */
 async function publishEntryExactlyOnce({
   tasksDir,
@@ -146,48 +157,59 @@ async function publishEntryExactlyOnce({
   const io = { writeFileFn, mkdirFn, linkFn, renameFn, unlinkFn, readFileFn };
   const markerPath = deliveryMarkerPath(tasksDir, taskId, deliveryId);
 
-  const claimed = await createMarkerAtomic(markerPath, { pid: process.pid, claimedAt: now() }, io);
-  if (claimed) {
-    try {
-      await appendEntryFn(tasksDir, taskId, entry);
-    } catch (err) {
-      await unlinkFn(markerPath).catch(() => {});
-      throw err;
+  for (let attempt = 0; attempt < MAX_CLAIM_RECOVERY_ATTEMPTS; attempt += 1) {
+    const claimed = await createMarkerAtomic(markerPath, { pid: process.pid, claimedAt: now() }, io);
+    if (claimed) {
+      // Authoritative re-check before appending, whether this claim is brand new or just
+      // reclaimed a stale one left by a dead process -- see docstring above.
+      const existing = await readEntriesFn(tasksDir, taskId);
+      const already = existing.find((e) => e.deliveryId === deliveryId);
+      if (already) {
+        await overwriteMarkerAtomic(markerPath, { completed: true, entry: already }, io).catch(() => {});
+        return { alreadyPublished: true, entry: already };
+      }
+      try {
+        await appendEntryFn(tasksDir, taskId, entry);
+      } catch (err) {
+        await unlinkFn(markerPath).catch(() => {});
+        throw err;
+      }
+      await overwriteMarkerAtomic(markerPath, { completed: true, entry }, io).catch(() => {});
+      return { alreadyPublished: false, entry };
     }
-    await overwriteMarkerAtomic(markerPath, { completed: true, entry }, io).catch(() => {});
-    return { alreadyPublished: false, entry };
+
+    const marker = await readMarker(markerPath, io);
+    if (!marker) {
+      // Raced with someone else's removal of the marker we just failed to create -- the slot is
+      // free again; loop back and try to claim it fresh rather than giving up.
+      continue;
+    }
+    if (marker.completed) {
+      return { alreadyPublished: true, entry: marker.entry };
+    }
+
+    const existing = await readEntriesFn(tasksDir, taskId);
+    const already = existing.find((e) => e.deliveryId === deliveryId);
+    if (already) {
+      await overwriteMarkerAtomic(markerPath, { completed: true, entry: already }, io).catch(() => {});
+      return { alreadyPublished: true, entry: already };
+    }
+
+    if (typeof marker.pid === "number" && isPidAliveFn(marker.pid)) {
+      // Genuinely concurrent in-flight delivery, not a crash -- defer to it rather than racing
+      // its own append.
+      return { alreadyPublished: true, entry: null };
+    }
+
+    // Stale: not completed, no archive entry, recorded claimant is dead. Reclaim the SAME marker
+    // path -- best-effort unlink, since another recoverer may win the removal-then-reclaim race;
+    // either way the next loop iteration re-reads the true current state rather than assuming.
+    await unlinkFn(markerPath).catch(() => {});
   }
 
-  const marker = await readMarker(markerPath, io);
-  if (marker && marker.completed) {
-    return { alreadyPublished: true, entry: marker.entry };
-  }
-
-  const existing = await readEntriesFn(tasksDir, taskId);
-  const already = existing.find((e) => e.deliveryId === deliveryId);
-  if (already) {
-    await overwriteMarkerAtomic(markerPath, { completed: true, entry: already }, io).catch(() => {});
-    return { alreadyPublished: true, entry: already };
-  }
-
-  if (marker && typeof marker.pid === "number" && isPidAliveFn(marker.pid)) {
-    return { alreadyPublished: true, entry: null };
-  }
-
-  const takeoverPath = `${markerPath}.takeover`;
-  const tookOver = await createMarkerAtomic(takeoverPath, { pid: process.pid }, io);
-  if (!tookOver) {
-    const settled = await readEntriesFn(tasksDir, taskId);
-    const match = settled.find((e) => e.deliveryId === deliveryId);
-    return { alreadyPublished: true, entry: match ?? null };
-  }
-  try {
-    await appendEntryFn(tasksDir, taskId, entry);
-  } finally {
-    await unlinkFn(takeoverPath).catch(() => {});
-  }
-  await overwriteMarkerAtomic(markerPath, { completed: true, entry }, io).catch(() => {});
-  return { alreadyPublished: false, entry };
+  throw new Error(
+    `publishCodexVerdict: exceeded ${MAX_CLAIM_RECOVERY_ATTEMPTS} attempts reclaiming the delivery claim for ${taskId}/${deliveryId} -- a live claimant never settled`
+  );
 }
 
 function processFailureReason(runResult) {
