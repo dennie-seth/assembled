@@ -51,7 +51,7 @@ function isContentEditable(el) {
 }
 
 /** Does this element hold text the user may have typed but not committed? */
-function isTextEntry(el) {
+export function isTextEntry(el) {
   if (!el || !el.tagName) return false;
   if (el.tagName === "TEXTAREA") return true;
   if (el.tagName === "INPUT") {
@@ -146,22 +146,46 @@ function locate(root, descriptor) {
  * keeps a render from stealing focus onto a field the user never touched.
  */
 export function captureViewState(root, doc) {
-  const empty = { focus: null, scrolls: [], details: [] };
+  const empty = { focus: null, sectionFocus: null, scrolls: [], details: [] };
   if (!root) return empty;
   const ownerDoc = doc ?? root.ownerDocument ?? globalThis.document;
 
   let focus = null;
+  let sectionFocus = null;
   const active = ownerDoc?.activeElement;
+  // detailPanel.js's section-nav landmarks (`data-detail-section`) are structurally IDENTICAL
+  // across different tasks -- same tag, class and dataset, no id/name tying one to a specific
+  // card's content -- unlike every other focusable field here (title, comment draft, deps
+  // chips, ...), which differ by value or a task-specific id. The signature-based `locate()`
+  // fallback below cannot tell those apart, so a plain describe()/locate() round trip would
+  // re-attach focus onto a DIFFERENT card's matching landmark after a task switch.
+  //
+  // FIX ROUND (2026-10-21, Codex review): the original fix for that was to exclude section
+  // landmarks from capture entirely -- but that also discarded focus on every SAME-card
+  // re-render (a comment arriving over the socket, a status change, ...), reintroducing the
+  // "scroll the comment wall" complaint this card exists to fix. So landmarks get their own
+  // capture, keyed on `(taskId, sectionKey)` rather than position/signature: `root.dataset.
+  // taskId` is the id the card the DOM currently belongs to (detailPanel.js sets it before
+  // this capture runs), so `applyViewState` can tell a same-card rebuild from a task switch
+  // and only restore in the former case.
+  const isSectionNavLandmark = Boolean(active?.dataset?.detailSection);
   if (active && active !== ownerDoc.body && root.contains(active)) {
-    const descriptor = describe(active, root);
-    if (descriptor) {
-      focus = descriptor;
-      if (isTextEntry(active)) {
-        focus.value = active.value;
-        focus.selectionStart = active.selectionStart;
-        focus.selectionEnd = active.selectionEnd;
+    if (isSectionNavLandmark) {
+      const taskId = root.dataset?.taskId ?? null;
+      if (taskId !== null) {
+        sectionFocus = { taskId, sectionKey: active.dataset.detailSection };
       }
-      if (active.scrollTop) focus.scrollTop = active.scrollTop;
+    } else {
+      const descriptor = describe(active, root);
+      if (descriptor) {
+        focus = descriptor;
+        if (isTextEntry(active)) {
+          focus.value = active.value;
+          focus.selectionStart = active.selectionStart;
+          focus.selectionEnd = active.selectionEnd;
+        }
+        if (active.scrollTop) focus.scrollTop = active.scrollTop;
+      }
     }
   }
 
@@ -188,7 +212,15 @@ export function captureViewState(root, doc) {
     }
   }
 
-  return { focus, rootScroll, scrolls, details };
+  return { focus, sectionFocus, rootScroll, scrolls, details };
+}
+
+/** Find the section-nav landmark for `sectionKey`, without an interpolated selector string. */
+function findSectionLandmark(root, sectionKey) {
+  for (const candidate of root.querySelectorAll("[data-detail-section]")) {
+    if (candidate.dataset.detailSection === sectionKey) return candidate;
+  }
+  return null;
 }
 
 /** Re-apply a snapshot after the subtree has been rebuilt. Never throws. */
@@ -214,6 +246,8 @@ export function applyViewState(root, snapshot) {
       el.scrollLeft = entry.left;
     }
   }
+
+  restoreSectionFocus(root, snapshot.sectionFocus);
 
   const focus = snapshot.focus;
   if (!focus) return;
@@ -242,6 +276,28 @@ export function applyViewState(root, snapshot) {
   }
 
   if (focus.scrollTop) el.scrollTop = focus.scrollTop;
+}
+
+/**
+ * Restore section-nav focus only on a same-card rebuild. `root.dataset.taskId` is already the
+ * NEW card's id by the time this runs (detailPanel.js sets it before returning), so comparing
+ * it against the id captured alongside `sectionKey` is what tells a same-card re-render (e.g. a
+ * comment arriving over the socket) apart from a task switch -- the latter must invalidate
+ * rather than restore, even when the new card has a section with the same key. `preventScroll`
+ * keeps this from ever moving the panel's scroll position; restoring focus must not be how the
+ * reader loses their place either.
+ */
+function restoreSectionFocus(root, sectionFocus) {
+  if (!sectionFocus) return;
+  const currentTaskId = root.dataset?.taskId ?? null;
+  if (currentTaskId === null || currentTaskId !== sectionFocus.taskId) return;
+  const el = findSectionLandmark(root, sectionFocus.sectionKey);
+  if (!el) return;
+  try {
+    el.focus({ preventScroll: true });
+  } catch {
+    // Not focusable any more (disabled, or rebuilt as a different control).
+  }
 }
 
 /**

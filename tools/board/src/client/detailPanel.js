@@ -332,7 +332,22 @@ function commentsSectionFor(task, onAddComment) {
     input.value = "";
   });
 
-  wrap.append(input, addBtn);
+  // T-0462 FIX ROUND 2: the composer *section target* is this group wrapper, not the textarea
+  // itself. Landing sequential/direct navigation inside a real <textarea> made every subsequent
+  // Alt+Arrow a dead stop -- shouldIgnoreDetailNavKey (app.js) correctly treats text-entry focus
+  // as "the user is typing" and suppresses further shortcuts (criterion 3 requires exactly that).
+  // A non-text-entry group landmark that *contains* the textarea gives navigation a real,
+  // substantial, visibly-focusable target (so keyboard users still see where they landed) while
+  // leaving the textarea itself one plain Tab away to actually start typing -- and leaving its
+  // own suppression behaviour, once real focus is in it, completely untouched.
+  const composerLandmark = document.createElement("div");
+  composerLandmark.className = "detail-composer-landmark";
+  composerLandmark.tabIndex = -1;
+  composerLandmark.setAttribute("role", "group");
+  composerLandmark.setAttribute("aria-label", "Comment composer");
+  composerLandmark.append(input, addBtn);
+
+  wrap.append(composerLandmark);
   return wrap;
 }
 
@@ -404,6 +419,278 @@ function attachmentsSectionFor(task, onUploadAttachment, onRemoveAttachment) {
   return wrap;
 }
 
+// --- Section navigation (T-0462) -------------------------------------------------------
+//
+// On a long card (T-0436: 13 comments, several multi-screen) the compose box and the
+// attachments were reachable only by scrolling the entire comment thread. These functions
+// discover a fixed set of named landmarks already present in the rendered panel -- a group
+// wrapping the title (top), the markdown body preview, the Acceptance heading inside that
+// rendered markdown (if any), the latest comment, a group wrapping the composer, and the
+// attachments heading -- and move focus directly to one of them. A section with no
+// corresponding element for this task (no comments yet, no attachments callback) is simply
+// absent from the list, never a dead stop.
+//
+// "top" and "composer" land on a *wrapping group*, not the title <input>/comment <textarea>
+// themselves (FIX ROUND 2): real focus inside a text-entry element correctly suppresses every
+// further navigation keystroke (shouldIgnoreDetailNavKey in app.js, required by this card's own
+// "never fire while typing" criterion), so targeting the input/textarea directly made the very
+// first sequential step -- nothing focused yet -> lands on "top" -- a permanent dead end. The
+// group is a real, visible, substantial focus target (so a sighted keyboard user still sees
+// where they landed) that *contains* the input; the input itself is still one plain Tab away,
+// unchanged, for actually typing.
+//
+// "Current position" is read from document.activeElement every call rather than cached, so
+// switching to a different, already-rendered task can never carry a stale element reference --
+// there is nothing to go stale. Sections are re-queried from the live DOM on every call (never
+// cached), so a comment arriving over the socket while the panel is open is reflected the next
+// time someone navigates.
+//
+// FIX ROUND 5: one small piece of state (root.__lastNavSectionKey, set by applyFocus) is the
+// exception. A real pointer click on .detail-nav-prev/.detail-nav-next focuses the BUTTON before
+// the click handler runs (the browser's own mousedown-focusing steps), so document.activeElement
+// at that point is the nav bar itself -- a sibling of every section, contained in none of them.
+// Without a fallback, currentSectionIndex sees "nothing matches" and stepDetailSection treats
+// every click as a cold start: Next always lands on "top", Prev always jumps to the last section.
+// currentSectionIndex below only consults this fallback when activeElement is inside the nav bar
+// itself, never as a general substitute for reading real focus -- and renderDetailPanel clears it
+// whenever the task changes, so it can never carry a position over to a different card.
+const SECTION_LABELS = {
+  top: "Top",
+  body: "Body",
+  acceptance: "Acceptance",
+  comments: "Latest comment",
+  composer: "Composer",
+  attachments: "Attachments"
+};
+
+function findBodyLandmark(root) {
+  const preview = root.querySelector(".detail-body-preview");
+  if (!preview) return null;
+  preview.tabIndex = -1;
+  preview.setAttribute("role", "region");
+  preview.setAttribute("aria-label", "Body");
+  return preview;
+}
+
+function findAcceptanceHeading(root) {
+  const preview = root.querySelector(".detail-body-preview");
+  if (!preview) return null;
+  for (const heading of preview.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
+    if (/acceptance/i.test(heading.textContent)) {
+      heading.tabIndex = -1;
+      return heading;
+    }
+  }
+  return null;
+}
+
+function findLatestComment(root) {
+  const items = root.querySelectorAll(".detail-comment");
+  if (items.length === 0) return null;
+  const latest = items[items.length - 1];
+  latest.tabIndex = -1;
+  const meta = latest.querySelector(".detail-comment-meta");
+  latest.setAttribute("aria-label", meta ? `Latest comment: ${meta.textContent}` : "Latest comment");
+  return latest;
+}
+
+function findComposerLandmark(root) {
+  return root.querySelector(".detail-composer-landmark");
+}
+
+function findTopLandmark(root) {
+  return root.querySelector(".detail-top-landmark");
+}
+
+function findAttachmentsLandmark(root) {
+  const el = root.querySelector(".detail-attachments");
+  if (el) {
+    el.tabIndex = -1;
+    el.setAttribute("role", "region");
+    el.setAttribute("aria-label", "Attachments");
+  }
+  return el;
+}
+
+const SECTION_FINDERS = [
+  ["top", findTopLandmark],
+  ["body", findBodyLandmark],
+  ["acceptance", findAcceptanceHeading],
+  ["comments", findLatestComment],
+  ["composer", findComposerLandmark],
+  ["attachments", findAttachmentsLandmark]
+];
+
+// FIX ROUND 3: SECTION_FINDERS above is a lookup table, not a reading-order declaration -- the
+// panel's actual append order (renderDetailPanel) puts the comments section (with the composer
+// inside it) and then attachments BEFORE the body preview (and the Acceptance heading nested
+// inside that), not after. Sorting by compareDocumentPosition here means the returned order
+// always matches whatever renderDetailPanel actually put on the page, so this list cannot drift
+// out of sync with it again the next time the panel's layout changes.
+function byDocumentPosition(a, b) {
+  const rel = a.element.compareDocumentPosition(b.element);
+  if (rel & (Node.DOCUMENT_POSITION_FOLLOWING | Node.DOCUMENT_POSITION_CONTAINED_BY)) return -1;
+  if (rel & (Node.DOCUMENT_POSITION_PRECEDING | Node.DOCUMENT_POSITION_CONTAINS)) return 1;
+  return 0;
+}
+
+/** Every named section this task's rendered panel currently has, in actual document order. */
+export function listDetailSections(root) {
+  if (!root) return [];
+  const sections = [];
+  for (const [key, find] of SECTION_FINDERS) {
+    const element = find(root);
+    if (element) {
+      element.dataset.detailSection = key;
+      sections.push({ key, label: SECTION_LABELS[key], element });
+    }
+  }
+  sections.sort(byDocumentPosition);
+  return sections;
+}
+
+// The Acceptance heading lives INSIDE the body preview's rendered markdown, so the body
+// landmark .contains() it too -- a plain first-match search would always resolve focus on the
+// heading back to "body", never "acceptance". An exact match wins immediately; among
+// .contains() matches (nested landmarks, or a focusable descendant inside one, e.g. a
+// remove-attachment button inside the attachments region), the most specific (innermost) one
+// wins.
+function currentSectionIndex(root, sections) {
+  const active = (root.ownerDocument ?? document).activeElement;
+  if (!active) return -1;
+  let bestIndex = -1;
+  for (let i = 0; i < sections.length; i++) {
+    const element = sections[i].element;
+    if (element === active) return i;
+    if (element.contains(active)) {
+      if (bestIndex === -1 || sections[bestIndex].element.contains(element)) {
+        bestIndex = i;
+      }
+    }
+  }
+  if (bestIndex !== -1) return bestIndex;
+
+  // See the FIX ROUND 5 comment above SECTION_LABELS: activeElement sitting inside the nav bar
+  // itself means a nav button was just clicked, not that focus is "nowhere". Resolve to whichever
+  // section focus was most recently moved to instead of treating this as a cold start.
+  const navBar = root.querySelector(".detail-nav");
+  if (navBar && navBar.contains(active) && root.__lastNavSectionKey) {
+    const idx = sections.findIndex((section) => section.key === root.__lastNavSectionKey);
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+function updateNavDisplay(root, sections, index) {
+  const current = root.querySelector(".detail-nav-current");
+  const jump = root.querySelector(".detail-nav-jump");
+  const prevBtn = root.querySelector(".detail-nav-prev");
+  const nextBtn = root.querySelector(".detail-nav-next");
+  const section = sections[index];
+  if (current) current.textContent = section ? `Section: ${section.label}` : "";
+  if (jump && section) jump.value = section.key;
+  if (prevBtn) prevBtn.disabled = index === 0;
+  if (nextBtn) nextBtn.disabled = sections.length > 0 && index === sections.length - 1;
+}
+
+function applyFocus(root, sections, index) {
+  const section = sections[index];
+  if (!section) return null;
+  section.element.focus({ preventScroll: true });
+  if (typeof section.element.scrollIntoView === "function") {
+    // `block: "center"` puts the target in the middle of the visible area rather than flush
+    // against an edge. .detail-nav is a normal-flow block (style.css), not sticky/fixed, so
+    // there is no bar for the target to land underneath regardless of where it scrolls to.
+    section.element.scrollIntoView({ block: "center" });
+  }
+  root.__lastNavSectionKey = section.key;
+  updateNavDisplay(root, sections, index);
+  return section.key;
+}
+
+/**
+ * Move to the next (1) or previous (-1) section relative to wherever focus currently is.
+ * Clamped at both ends -- repeating the key at the last section stops there rather than
+ * wrapping back to the top, so the Prev/Next disabled state (updateNavDisplay) is always a
+ * true boundary signal rather than something wrapping could silently hide.
+ */
+export function stepDetailSection(root, direction) {
+  const sections = listDetailSections(root);
+  if (sections.length === 0) return null;
+  const index = currentSectionIndex(root, sections);
+  const nextIndex =
+    index === -1
+      ? direction > 0
+        ? 0
+        : sections.length - 1
+      : Math.max(0, Math.min(sections.length - 1, index + direction));
+  return applyFocus(root, sections, nextIndex);
+}
+
+/**
+ * Jump straight to a named section (e.g. "composer", "attachments") in one call -- no
+ * intermediate section is ever focused along the way. Returns false without acting if this
+ * task has no such section right now.
+ */
+export function focusDetailSection(root, key) {
+  const sections = listDetailSections(root);
+  const index = sections.findIndex((section) => section.key === key);
+  if (index === -1) return false;
+  return applyFocus(root, sections, index) !== null;
+}
+
+function detailNavBarFor(root) {
+  const nav = document.createElement("div");
+  nav.className = "detail-nav";
+  nav.setAttribute("role", "navigation");
+  nav.setAttribute("aria-label", "Card sections");
+
+  const prevBtn = document.createElement("button");
+  prevBtn.type = "button";
+  prevBtn.className = "detail-nav-prev";
+  prevBtn.textContent = "↑ Prev";
+  prevBtn.setAttribute("aria-label", "Previous section");
+  prevBtn.addEventListener("click", () => stepDetailSection(root, -1));
+
+  const jump = document.createElement("select");
+  jump.className = "detail-nav-jump";
+  jump.setAttribute("aria-label", "Jump to section");
+  jump.addEventListener("change", () => focusDetailSection(root, jump.value));
+
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "detail-nav-next";
+  nextBtn.textContent = "↓ Next";
+  nextBtn.setAttribute("aria-label", "Next section");
+  nextBtn.addEventListener("click", () => stepDetailSection(root, 1));
+
+  const current = document.createElement("span");
+  current.className = "detail-nav-current";
+  current.setAttribute("aria-live", "polite");
+
+  nav.append(prevBtn, jump, nextBtn, current);
+  return nav;
+}
+
+// Run once the whole panel subtree is attached to `root` -- the section finders above query
+// `root` itself (e.g. the latest `.detail-comment`, the Acceptance heading inside the body
+// preview), so this must come after every other section-owning builder has run.
+function populateNavBar(root) {
+  const sections = listDetailSections(root);
+  const jump = root.querySelector(".detail-nav-jump");
+  if (jump) {
+    jump.replaceChildren(
+      ...sections.map((section) => {
+        const opt = document.createElement("option");
+        opt.value = section.key;
+        opt.textContent = section.label;
+        return opt;
+      })
+    );
+  }
+  updateNavDisplay(root, sections, currentSectionIndex(root, sections));
+}
+
 function deleteControlsFor(task, onDelete) {
   const wrap = document.createElement("div");
   wrap.className = "detail-delete-wrap";
@@ -471,11 +758,15 @@ export function renderDetailPanel(
   if (!task) {
     delete root.dataset.taskId;
     delete root.__lastTask;
+    delete root.__lastNavSectionKey;
     root.hidden = true;
     return;
   }
   root.dataset.taskId = String(task.id);
   root.hidden = false;
+  if (!isSameTask) {
+    delete root.__lastNavSectionKey;
+  }
 
   const panel = document.createElement("div");
   panel.className = "detail-panel";
@@ -491,6 +782,19 @@ export function renderDetailPanel(
   titleInput.className = "detail-title";
   titleInput.value = dirty.title !== undefined ? dirty.title : task.title;
   titleInput.dataset.detailField = "title";
+
+  // T-0462 FIX ROUND 2: same reasoning as the composer landmark below -- "top" used to target
+  // this input directly, so the very first Alt+ArrowDown of any session (nothing focused yet ->
+  // lands on "top") immediately dead-ended every subsequent shortcut, because real focus in a
+  // text input correctly suppresses further navigation (criterion 3). The landmark wraps the
+  // existing Title <label> without changing what it displays; the input is still reachable and
+  // editable by Tab or click exactly as before.
+  const topLandmark = document.createElement("div");
+  topLandmark.className = "detail-top-landmark";
+  topLandmark.tabIndex = -1;
+  topLandmark.setAttribute("role", "group");
+  topLandmark.setAttribute("aria-label", "Card top");
+  topLandmark.appendChild(labeledField("Title", titleInput));
 
   const prioritySelect = selectFor(PRIORITIES, dirty.priority !== undefined ? dirty.priority : task.priority);
   prioritySelect.className = "detail-priority";
@@ -584,8 +888,9 @@ export function renderDetailPanel(
   });
 
   panel.append(
+    detailNavBarFor(root),
     closeBtn,
-    labeledField("Title", titleInput),
+    topLandmark,
     labeledField("Priority", prioritySelect),
     labeledField("Status", statusSelect),
     labeledField("Agent", agentSelect),
@@ -636,5 +941,6 @@ export function renderDetailPanel(
   }
 
   restoreFocusState(root, focusState);
+  populateNavBar(root);
   root.__lastTask = task;
 }

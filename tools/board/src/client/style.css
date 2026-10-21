@@ -11,6 +11,11 @@
      tests. */
   --terminal-reserve: 18rem;
   --terminal-reserve-collapsed: 4.25rem;
+  /* T-0462's section-nav bar (below) reserves this much height for its single-line layout --
+     enough for its 0.375rem top/bottom padding band plus one line of button text. Written as a
+     literal for the same reason `--terminal-reserve` above is: happy-dom, this project's default
+     test environment, may not resolve `calc()`, and this value is read by tests. */
+  --detail-nav-height: 2.5rem;
 }
 
 /* Full-height flex chain (body -> #board -> .board -> .column -> .column-cards) so each
@@ -321,6 +326,49 @@ body:has(#terminal-panel.collapsed) #side-panel {
    .detail-delete:disabled -- dimmed, and the cursor stops offering the interaction. */
 .card-run:disabled,
 .card-rerun:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* T-0462: section-nav bar inside #detail. FIX ROUND 1 shipped this as `position: sticky` and
+   claimed sticky alone made overlap with later content impossible; a reviewer correctly
+   rejected that (sticky only reserves flow space at its ORIGINAL position -- once #detail, a
+   real `overflow-y: auto` scroll container, scrolls past that point, a sticky element detaches
+   and stays pinned over whatever scrolls underneath it, exactly like `fixed`). FIX ROUND 2
+   patched that with a `scroll-margin-top` on every navigable landmark, but that margin is
+   honoured only by `scrollIntoView()` (CSSOM View spec) -- a user scrolling the thread by hand,
+   not through this card's own nav, could still park the composer, the last comment, or the
+   first line of the body directly under the sticky bar. A reviewer caught that gap too (FIX
+   ROUND 4).
+   FIX ROUND 4 removes the positioning scheme instead of continuing to patch around it: the bar
+   is a plain block in #detail's normal document flow, exactly like `.detail-close` right after
+   it, with no `position: sticky/fixed/absolute` and no negative margin pulling it over anything.
+   A normal-flow block can never overlap a later sibling -- that is the CSS visual formatting
+   model itself, true in every conforming browser, not something that needs a pixel measurement
+   to prove. The trade-off: the bar now scrolls away with the rest of the panel instead of
+   staying pinned at the top. This card's "reachable from anywhere without scrolling" criterion
+   does not depend on that -- it is satisfied by the Alt+ArrowUp/Down/C/A keyboard shortcuts
+   (app.js), which are bound on `document` and have never required the nav bar to be visible,
+   only that focus isn't inside a text-entry control. `flex-wrap: wrap` lets the bar degrade to
+   two lines at a narrow width instead of overflowing its own box. */
+.detail-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: var(--detail-nav-height);
+  padding: 0.375rem 0;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+}
+
+.detail-nav-current {
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+
+.detail-nav-prev:disabled,
+.detail-nav-next:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
