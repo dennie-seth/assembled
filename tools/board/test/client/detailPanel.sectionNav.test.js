@@ -312,6 +312,22 @@ describe("switching cards mid-navigation resets position", () => {
     expect(document.activeElement).toBe(root.querySelector(".detail-top-landmark"));
     document.body.removeChild(root);
   });
+
+  // FIX ROUND 5 adds a last-focused-section fallback (for nav-button clicks, which leave the
+  // button itself focused -- see below). That fallback must not leak the previous task's
+  // position into a different task whose sections happen to share the same key.
+  it("a Next-button click right after switching tasks starts fresh, even though both tasks have an 'acceptance' section", () => {
+    const root = attached();
+    renderDetailPanel(root, task({ id: "T-0001", comments: manyComments(13) }), baseOpts());
+    for (let i = 0; i < 6; i++) stepDetailSection(root, 1); // drive T-0001 to its last section
+
+    renderDetailPanel(root, task({ id: "T-0002", comments: manyComments(2) }), baseOpts());
+    const next = root.querySelector(".detail-nav-next");
+    next.focus();
+    next.dispatchEvent(new Event("click", { bubbles: true }));
+    expect(document.activeElement).toBe(root.querySelector(".detail-top-landmark"));
+    document.body.removeChild(root);
+  });
 });
 
 describe("the nav bar UI (jump control)", () => {
@@ -370,6 +386,53 @@ describe("the nav bar UI (jump control)", () => {
     const current = root.querySelector(".detail-nav-current");
     expect(current.getAttribute("aria-live")).toBe("polite");
     expect(current.textContent).toMatch(/top/i);
+  });
+
+  // FIX ROUND 5: the prior suite only ever drove the nav buttons via
+  // `dispatchEvent(new Event("click", { bubbles: true }))` with nothing focused, which happy-dom
+  // (and jsdom) does NOT focus as a side effect. A real pointer click runs the browser's own
+  // mousedown-focusing steps before "click" fires (Chrome, and Firefox on Windows/Linux), so by
+  // the time the button's click handler actually executes, `document.activeElement` is the
+  // button itself -- a sibling of every landmark, contained in none of them. These tests focus
+  // the button first, exactly as a real click would have already done, to catch that.
+  it("clicking Next with the button itself already focused (as a real click leaves it) still steps forward from wherever the reader was, not back to the top", () => {
+    renderDetailPanel(root, task({ comments: manyComments(5) }), baseOpts());
+    stepDetailSection(root, 1); // lands on "top"
+    const next = root.querySelector(".detail-nav-next");
+    next.focus();
+    next.dispatchEvent(new Event("click", { bubbles: true }));
+    expect(document.activeElement.className).toContain("detail-comment");
+  });
+
+  it("clicking Prev with the button itself already focused still steps backward from wherever the reader was, not to the last section", () => {
+    renderDetailPanel(root, task({ comments: manyComments(5) }), baseOpts());
+    for (let i = 0; i < 3; i++) stepDetailSection(root, 1); // top -> comments -> composer
+    const prev = root.querySelector(".detail-nav-prev");
+    prev.focus();
+    prev.dispatchEvent(new Event("click", { bubbles: true }));
+    expect(document.activeElement.className).toContain("detail-comment");
+  });
+
+  it("repeated Next clicks, each leaving the button itself focused first, walk every section once each -- not stuck re-landing on the first section", () => {
+    renderDetailPanel(root, task({ comments: manyComments(5) }), baseOpts());
+    const next = root.querySelector(".detail-nav-next");
+    const seen = [];
+    for (let i = 0; i < 6; i++) {
+      next.focus();
+      next.dispatchEvent(new Event("click", { bubbles: true }));
+      seen.push(document.activeElement.dataset.detailSection);
+    }
+    expect(seen).toEqual(["top", "comments", "composer", "attachments", "body", "acceptance"]);
+  });
+
+  it("choosing the jump select after the Next button was clicked (button left focused, then re-focused away) still reflects the right boundary state", () => {
+    renderDetailPanel(root, task({ comments: manyComments(5) }), baseOpts());
+    const next = root.querySelector(".detail-nav-next");
+    for (let i = 0; i < 6; i++) {
+      next.focus();
+      next.dispatchEvent(new Event("click", { bubbles: true }));
+    }
+    expect(next.disabled).toBe(true); // real last section reached, not stuck re-disabling at "top"
   });
 });
 
