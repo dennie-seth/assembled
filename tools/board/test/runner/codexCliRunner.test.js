@@ -1,22 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { AgentRunner } from "../../src/runner/agentRunner.js";
-import { CodexCliRunner, DEFAULT_ENV_ALLOWLIST, DEFAULT_TIMEOUT_MS } from "../../src/runner/codexCliRunner.js";
+import { CodexCliRunner, DEFAULT_ENV_ALLOWLIST, DEFAULT_TIMEOUT_MS, DEFAULT_MAX_TOTAL_TOKENS } from "../../src/runner/codexCliRunner.js";
 import { DEFAULT_KILL_ESCALATION_MS } from "../../src/runner/runState.js";
 
 const TASK = { id: "T-0460", agent: "infra" };
 
 function fakeChild() {
   return { stdout: {}, stderr: {}, stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() }, kill: vi.fn(), on: vi.fn(), pid: 4242 };
-}
-
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 describe("CodexCliRunner argv construction", () => {
@@ -308,5 +299,101 @@ describe("CodexCliRunner.kill process-group behavior (no orphans)", () => {
     runner.kill({ child });
 
     expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("CodexCliRunner token budget (bounded spend -- enforced, not just configured)", () => {
+  it("has a sane default token budget", () => {
+    expect(DEFAULT_MAX_TOTAL_TOKENS).toBeGreaterThan(0);
+  });
+
+  function stubbedChild(pid) {
+    const child = new EventEmitter();
+    child.pid = pid;
+    child.stdin = { write: vi.fn(), end: vi.fn(), on: vi.fn() };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = vi.fn();
+    return child;
+  }
+
+  function turnCompletedLine(usage) {
+    return `${JSON.stringify({ type: "turn.completed", usage })}\n`;
+  }
+
+  it("kills the run and marks it budgetExceeded once cumulative usage from turn.completed events crosses maxTotalTokens", async () => {
+    const child = stubbedChild(5555);
+    const spawnFn = vi.fn(() => child);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {});
+    const runner = new CodexCliRunner({ spawnFn, hostEnv: {} });
+
+    const run = await runner.start({ task: TASK, prompt: "x", worktreeDir: "/wt", maxTotalTokens: 1000 });
+    expect(run.budgetExceeded).toBe(false);
+
+    child.stdout.emit("data", Buffer.from(turnCompletedLine({ input_tokens: 600, output_tokens: 100 })));
+    expect(run.budgetExceeded).toBe(false);
+    expect(killSpy).not.toHaveBeenCalled();
+
+    child.stdout.emit("data", Buffer.from(turnCompletedLine({ input_tokens: 400, output_tokens: 50 })));
+
+    expect(run.budgetExceeded).toBe(true);
+    expect(killSpy).toHaveBeenCalledWith(-5555, "SIGTERM");
+    killSpy.mockRestore();
+  });
+
+  it("never fires while cumulative usage stays within maxTotalTokens", async () => {
+    const child = stubbedChild(5556);
+    const spawnFn = vi.fn(() => child);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {});
+    const runner = new CodexCliRunner({ spawnFn, hostEnv: {} });
+
+    const run = await runner.start({ task: TASK, prompt: "x", worktreeDir: "/wt", maxTotalTokens: 1000 });
+    child.stdout.emit("data", Buffer.from(turnCompletedLine({ input_tokens: 200, output_tokens: 50 })));
+
+    expect(run.budgetExceeded).toBe(false);
+    expect(killSpy).not.toHaveBeenCalled();
+    killSpy.mockRestore();
+  });
+
+  it("applies DEFAULT_MAX_TOTAL_TOKENS when the caller does not override it", async () => {
+    const child = stubbedChild(5557);
+    const spawnFn = vi.fn(() => child);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {});
+    const runner = new CodexCliRunner({ spawnFn, hostEnv: {} });
+
+    const run = await runner.start({ task: TASK, prompt: "x", worktreeDir: "/wt" });
+    child.stdout.emit("data", Buffer.from(turnCompletedLine({ input_tokens: DEFAULT_MAX_TOTAL_TOKENS + 1, output_tokens: 0 })));
+
+    expect(run.budgetExceeded).toBe(true);
+    killSpy.mockRestore();
+  });
+
+  it("ignores stray non-JSON stdout lines while still tracking usage from valid ones", async () => {
+    const child = stubbedChild(5558);
+    const spawnFn = vi.fn(() => child);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {});
+    const runner = new CodexCliRunner({ spawnFn, hostEnv: {} });
+
+    const run = await runner.start({ task: TASK, prompt: "x", worktreeDir: "/wt", maxTotalTokens: 500 });
+    child.stdout.emit("data", Buffer.from(`Reading additional input from stdin...\n${turnCompletedLine({ input_tokens: 600, output_tokens: 0 })}`));
+
+    expect(run.budgetExceeded).toBe(true);
+    killSpy.mockRestore();
+  });
+
+  it("does not double-kill once budgetExceeded has already fired", async () => {
+    const child = stubbedChild(5559);
+    const spawnFn = vi.fn(() => child);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {});
+    const runner = new CodexCliRunner({ spawnFn, hostEnv: {} });
+
+    const run = await runner.start({ task: TASK, prompt: "x", worktreeDir: "/wt", maxTotalTokens: 100 });
+    child.stdout.emit("data", Buffer.from(turnCompletedLine({ input_tokens: 200, output_tokens: 0 })));
+    const callsAfterFirstBreach = killSpy.mock.calls.length;
+    child.stdout.emit("data", Buffer.from(turnCompletedLine({ input_tokens: 200, output_tokens: 0 })));
+
+    expect(run.budgetExceeded).toBe(true);
+    expect(killSpy.mock.calls.length).toBe(callsAfterFirstBreach);
+    killSpy.mockRestore();
   });
 });
