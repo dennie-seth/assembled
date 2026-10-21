@@ -9,11 +9,18 @@ import { rmTemp } from "../helpers/rmTemp.js";
 /**
  * T-0460 edge case: "Kill the board mid-review" -- the one leg the prior VALIDATION round found
  * "not exercised at all, mocked or real." Exercised here, mocked, via the board's EXISTING
- * crash-recovery machinery (orphanReaper.js) rather than any Codex-specific recovery code --
- * there is none, and this is the test that proves none is needed. `runCodexReview.js` now writes
- * a runstate record the identical way `runOrchestrator.js`'s `_runPhase` does for every other
- * agent (right after `runner.start()` returns), so a Codex review in flight when the board
- * process dies leaves the exact same liveness evidence on disk any other phase would.
+ * crash-recovery machinery (orphanReaper.js) rather than any Codex-specific recovery code.
+ *
+ * This proves the SUBJECT CARD's own in-progress run (if any) survives a board restart exactly
+ * the way any other agent's does -- generic orphanReaper behavior, unrelated to the Codex review
+ * job itself. FIX ROUND correction (Dennie, review of #452, finding (c)): `runCodexReview.js`
+ * does NOT write the review job's own liveness under the subject's bare `taskId` the way this
+ * test's runstate is written here -- it writes under `reviewRunStateKey(taskId)`
+ * (`${taskId}.codex-review`), a key `orphanReaper.js` never looks at, precisely so a review-job
+ * crash can never get misread as the subject card's own run failing (or vice versa: a live
+ * review stomping the subject's own in-flight pid). See
+ * `docs/design/codex-reviewer-adapter-spike.md`'s §8b FIX ROUND note for what IS and is not
+ * covered for the review job's own crash recovery.
  */
 
 function makeTask(overrides = {}) {
