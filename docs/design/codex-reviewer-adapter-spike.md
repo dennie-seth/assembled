@@ -458,20 +458,37 @@ The fix makes the marker a durable, recoverable delivery record (`publishEntryEx
   time; not completed, no archive entry, and the recorded `pid` is still alive means a genuinely
   concurrent in-flight delivery, not a crash -- defer to it rather than race its own append; not
   completed, no archive entry, and the recorded `pid` is dead means a stale claim left by a
-  process that died before finishing -- take it over through a SECOND exclusive marker
-  (`<marker>.takeover`) so two simultaneous recoverers of the same stale claim still append
-  exactly once between them.
+  process that died before finishing -- reclaim it.
 
-All four cases Dennie's review named are each their own test in
+**FIX ROUND 2 (Dennie, human comment (a), P2): the first fix's own recovery step used a SECOND
+exclusive marker (`<marker>.takeover`) to arbitrate reclaiming a stale claim, and that marker had
+the identical defect the first marker was fixed for, one level up.** Its mere existence proved a
+takeover was *claimed*, never that it *finished* -- a crash between creating `.takeover` and its
+own append returning left it behind forever, and every later attempt lost the race to a dead pid's
+marker and returned duplicate/empty permanently. Collapsed to a single marker per `(taskId,
+deliveryId)`: reclaiming a stale claim is now just removing it and looping back to the SAME
+`createMarkerAtomic` exclusivity check a brand-new claim uses -- "crash during a recovery attempt"
+and "crash during the original claim" are the identical code path, so there is no
+recovery-specific state left that can get permanently stuck. On every successful claim -- first
+attempt or reclaim -- the archive is re-read and treated as authoritative BEFORE appending, never
+after, closing exactly the gap a dead claimant that *did* manage to append (but died before
+marking its own marker complete) would otherwise hit.
+
+All four cases Dennie's original review named are each their own test in
 `codexVerdictPublisher.test.js`'s "recoverable delivery, not a one-shot claim that can strand a
 delivery forever" block: append failure (a `vi.fn` that throws once then succeeds, retried in the
 same process), process death before append (a marker pre-written by hand with a dead `pid`,
 recovered and actually published), process death after append but before completion marking (same
 dead-`pid` marker, but the archive already has the entry -- recovery must not double-append), and
 simultaneous retry of the same stale claim (`Promise.all` against the same dead-`pid` marker,
-still exactly one append). `isPidAliveFn` defaults to the real `isPidAlive`
-(`tools/board/src/runner/runState.js`) -- reused, not reinvented, the same staleness idiom
-`boardOwnership.js`'s `acquireBoardOwnership` already applies to a different lock.
+still exactly one append). FIX ROUND 2 adds: a dead claim left by a *crashed recovery attempt*
+(not the original claimant) still recovers through the same single marker, asserting no
+`.takeover` file is ever created; two AND three simultaneous recovery attempts against the same
+stuck claim still leave exactly one archive entry; and the archive being re-checked as
+authoritative before any append during recovery, even when the marker was never marked completed.
+`isPidAliveFn` defaults to the real `isPidAlive` (`tools/board/src/runner/runState.js`) -- reused,
+not reinvented, the same staleness idiom `boardOwnership.js`'s `acquireBoardOwnership` already
+applies to a different lock.
 
 This same mechanism is what "restart recovery" (the card's edge case) reduces to: a board process
 that crashes mid-review and restarts, then replays a persisted result (from `tasks/.runs/<id>.jsonl`,
@@ -557,22 +574,66 @@ the acceptance item "the duplicate-start case being refused rather than overwrit
    implementer/reviewer run is still writing to the worktree; the job refuses to start and
    publishes an immediate `BLOCKED` verdict (`reason: "subject-mid-run"`) through the same
    publisher path §6 describes, rather than reviewing a moving tree.
-2. `readRunState({ runsDir, taskId: reviewRunStateKey(taskId) })` + `isRunLive(...)` against the
-   **review job's own key**. A live result means a review of this same card is already in flight;
-   the job refuses to start (`reason: "review-already-in-flight"`) and -- critically -- never
-   calls `writeRunState` in this path, so the in-flight review's own runstate is never overwritten.
+2. `claimReviewSlot({ runsDir, cardId: reviewRunStateKey(taskId), owner })` against the **review
+   job's own reservation key** -- see the FIX ROUND 2 note immediately below for why this replaced
+   a second `readRunState`/`isRunLive` pair.
 
-Both are exercised directly with mocked children in `test/runner/runCodexReviewJob.test.js`
-("the subject card being mid-run (precondition)" and "duplicate-start refusal" blocks), including
-a test that asserts the two `readRunState` calls use two different keys and a test that asserts
-`writeRunState` is never called on the refusal path. The happy-path lifecycle calls are: mint
-`createRunLog` -> check precondition 1 -> check precondition 2 -> `runner.start()` ->
-`writeRunState` (review key) -> stream the child's stdout into the run log as it arrives (durably;
-see the finding below) -> `publishCodexVerdict` -> `clearRunState` (review key). No board
-ownership/reservation claim (`launchReservation.js`/`boardOwnership.js`) is taken anywhere in this
-path -- see §9's "named but not wired in" note, unchanged by this fix round: a single
-deliberately-triggered smoke job still does not need dispatch-level exclusivity, only the two
-liveness preconditions above.
+**FIX ROUND 2 (Dennie, human comment (b)): the duplicate-start guard was read-then-write, not
+atomic.** The original precondition 2 called `readRunState` against the review job's own key,
+decided "not live," and only *later* -- after `runner.start()` had already returned -- called
+`writeRunState` to record its own pid. That left a real window between the read and the write:
+two concurrent invocations could both read "not live" and both pass, both spawn a `codex` child,
+and both race to publish. Dennie's review named `launchReservation.js`'s `reserveLaunchSlot`/
+`releaseReservation`/`DuplicateReservationError` -- already in this codebase for launch-slot budget
+bookkeeping, built on the identical temp-file-then-`fs.link` atomic primitive `codexVerdictPublisher.js`
+uses for delivery claims (§8b) -- as the existing machinery to reuse instead of inventing a third
+locking scheme.
+
+`claimReviewSlot`/`releaseOwnedReviewSlot` (`scripts/runCodexReview.js`) are the result:
+- `claimReviewSlot` reserves a lease keyed by `(cardId: reviewRunStateKey(taskId), executionId:
+  "codex-review", invocationId: "lock")` -- fixed per card, so two concurrent callers for the same
+  card collide on the IDENTICAL key and the filesystem's own atomic `link` decides which one wins,
+  not either caller's own bookkeeping. This is taken **before** `createRunner`/`runner.start()` is
+  ever called, not after -- the acceptance item this round added specifically to close the old
+  precondition's race window.
+- `launchReservation.js` never deletes a lease file itself (an append-only ledger by design), so
+  reusing the identical key for every review of this card needs its own recycling step: on
+  `DuplicateReservationError`, the existing lease is read directly and reclaimed (removed, then one
+  retry) when it is already marked `released`, or when its recorded owner `pid` is no longer alive
+  (`isPidAlive`, the same primitive `codexVerdictPublisher.js`'s own stale-claim recovery uses) --
+  so a review that was killed outright, not merely one that threw and released cleanly, still
+  frees the slot for the next attempt. This is the answer to the card's own edge case ("state
+  explicitly how the claim becomes reclaimable") for this synthetic key, which `orphanReaper.js`
+  never sweeps (§13).
+- `releaseOwnedReviewSlot` only releases a lease still recorded under the CALLING owner's own pid
+  -- a lease some other process now holds (a foreign claim, or one reclaimed out from under a run
+  that still thought it owned it) is left untouched, never released out from under its real owner.
+- The claim is released on every path out of `runCodexReviewJob`: the happy path (after
+  `clearRunState`), and a thrown `runner.start()` (edge case: "a crash between taking the claim and
+  spawning... the claim must not strand the card forever" -- a thrown `start()` never produced a
+  child to track, so the claim is simply freed and the error rethrown).
+
+Exercised in `test/runner/runCodexReviewJob.test.js`: refusal without constructing a runner; the
+claim using the review job's own key, never the subject's bare `taskId`; claim-before-`createRunner`
+ordering; release on the happy path and on a thrown `start()`; and -- the acceptance item asking
+for real concurrency, not a mock -- a dedicated describe block drives TWO simultaneous
+`runCodexReviewJob` calls against a real temp directory and the REAL `claimReviewSlot`/
+`releaseOwnedReviewSlot` (not stubbed), asserting exactly one child is ever spawned and the other
+refuses with `reason: "review-already-in-flight"`. A separate `claimReviewSlot`/
+`releaseOwnedReviewSlot` unit block (also against a real temp dir) covers: two simultaneous claims
+for the same card (exactly one wins); a released lease not blocking a later review; a dead-pid
+lease being reclaimable; a live-pid lease NOT being reclaimable (refused, not raced); and release
+being a no-op when the lease on disk is recorded under a different pid.
+
+The happy-path lifecycle calls are now: mint `createRunLog` -> check precondition 1 -> claim the
+review slot (precondition 2) -> `createRunner`/`runner.start()` -> `writeRunState` (review key,
+unchanged, still the liveness bookkeeping `orphanReaper.js`-adjacent observability relies on) ->
+stream the child's stdout into the run log as it arrives (durably; see the finding below) ->
+`publishCodexVerdict` -> `clearRunState` (review key) -> release the review slot. This closes part
+of §9's old "named but not wired in" note: `launchReservation.js` IS now wired in, for this one
+job's own single-flight exclusivity. It is still not full *dispatch-level* exclusivity across the
+live orchestrator's phase sequencing (`boardOwnership.js`'s cross-process ownership is still
+untouched) -- see the updated §9/§13 below.
 
 **FIX ROUND finding, same round: streamed evidence is now durable, not buffered until exit.**
 Before this fix round, `runCodexReview.js` only called `runLog.append()` in a loop over the
@@ -592,22 +653,27 @@ fires.
 | `AgentRunner` interface | `tools/board/src/runner/agentRunner.js` | `CodexCliRunner extends AgentRunner`, the same `start/observe/kill` contract `ClaudeCliRunner` implements -- a second sibling, not a second coordinator |
 | Per-run audit log + `BOARD_RUN_ID` minting | `tools/board/src/runner/runLog.js`'s `createRunLog` | `runCodexReview.js` calls it identically to how `runOrchestrator._runPhase` does, and threads the same `runId` into the child's env as `BOARD_RUN_ID`, matching `ClaudeCliRunner`'s own convention |
 | Verdict archive (exactly-once-per-card append store) | `tools/board/src/lib/verdictArchive.js`'s `appendVerdictEntry`/`readVerdictEntries` | `codexVerdictPublisher.js` calls these directly -- the same store `runOrchestrator._handlePass`/`_handleFailValidation` already write to for Claude verdicts |
-| Atomic exclusive-create as the concurrency primitive | pattern from `tools/board/src/runner/launchReservation.js` (temp-file + `fs.link`) | `publishEntryExactlyOnce`'s delivery/takeover markers use the identical temp-file-then-`fs.link` technique (§8b, FIX ROUND (a)) |
-| Pid-liveness staleness check | `tools/board/src/runner/runState.js`'s `isPidAlive`, the same idiom `boardOwnership.js`'s `acquireBoardOwnership` applies to its own lock | `publishEntryExactlyOnce` uses it to tell a genuinely concurrent in-flight claim apart from a stale one left by a dead process (§8b, FIX ROUND (a)) |
+| Atomic exclusive-create as the concurrency primitive | pattern from `tools/board/src/runner/launchReservation.js` (temp-file + `fs.link`) | `publishEntryExactlyOnce`'s delivery claim marker uses the identical temp-file-then-`fs.link` technique (§8b, FIX ROUND 2 (a)) |
+| Atomic launch-slot reservation lifecycle | `tools/board/src/runner/launchReservation.js`'s `reserveLaunchSlot`/`releaseReservation`/`DuplicateReservationError` -- the same module `cardLaunch.js` uses for budget reservations | `scripts/runCodexReview.js`'s `claimReviewSlot`/`releaseOwnedReviewSlot` reuse this directly for the review job's own single-flight exclusivity -- a genuinely new wiring, not a pattern-only reuse (§8b, FIX ROUND 2 (b)) |
+| Pid-liveness staleness check | `tools/board/src/runner/runState.js`'s `isPidAlive`, the same idiom `boardOwnership.js`'s `acquireBoardOwnership` applies to its own lock | `publishEntryExactlyOnce` and `claimReviewSlot` both use it to tell a genuinely concurrent in-flight claim apart from a stale one left by a dead process (§8b, FIX ROUND 2 (a) and (b)) |
 | Process-group kill/escalation constant | `tools/board/src/runner/runState.js`'s `DEFAULT_KILL_ESCALATION_MS` | `CodexCliRunner.kill()` uses it exactly as `ClaudeCliRunner.kill()` does |
 | Liveness runstate + crash-recovery sweep | `tools/board/src/runner/runState.js`'s `writeRunState`/`clearRunState`, `tools/board/src/runner/orphanReaper.js`'s `reapOnStartup`/`sweepOnce` | `runCodexReview.js` writes/clears a runstate record the same way `runOrchestrator.js`'s `_runPhase` does for every phase -- a board restart mid-review is recovered by the existing reaper, zero Codex-specific recovery code (see §8b's "kill the board mid-review" fix and `codexBoardKillRecovery.test.js`) |
 
-**Named but not wired in** (deliberately, for a spike -- see §13): `runOrchestrator.js`'s
+**Named but not fully wired in** (deliberately, for a spike -- see §13): `runOrchestrator.js`'s
 `_runPhase` (the one call site that invokes `this.runner.start(...)` for every phase) is where a
 real `agent: "codex-reviewer"` dispatch branch would plug in, selecting a `CodexCliRunner`
 instance instead of `ClaudeCliRunner` for that phase. This spike does not touch that file --
 changing the live orchestrator's dispatch table is a bigger, riskier change than a spike should
-make to a production service every other in-flight card currently depends on.
-`launchReservation.js`'s launch-slot reservation and `boardOwnership.js`'s cross-process ownership
-are the existing machinery a full wiring would reuse for *dispatch-level* exclusivity (two
-independent launches of the same card's reviewer phase); this spike's own concurrency fix (§8b)
-is at the *delivery* level (two deliveries of the same already-produced result), a different
-resource, and does not duplicate or bypass either of those.
+make to a production service every other in-flight card currently depends on. FIX ROUND 2 (b) DOES
+now wire `launchReservation.js` into this review job's own single-flight exclusivity (one review of
+one card at a time, via `claimReviewSlot`/`releaseOwnedReviewSlot`) -- what remains unwired is
+`boardOwnership.js`'s cross-process ownership and the live orchestrator's own dispatch table, which
+a full *dispatch-level* integration (the orchestrator choosing between `ClaudeCliRunner` and
+`CodexCliRunner` for the same phase slot) would still need. This spike's own concurrency fixes are
+at two narrower levels instead: the *delivery* level (two deliveries of the same already-produced
+result, §8b FIX ROUND 2 (a)) and the *single-job* level (two invocations of this one review job for
+one card, §8b FIX ROUND 2 (b)) -- neither duplicates or bypasses `boardOwnership.js`, which remains
+untouched.
 
 T-0444 (reviewed/verified/current-sha binding), T-0446 (harness-owned receipts), and T-0454
 (event-driven wake-up) don't exist as code in this worktree to link against (see the top of this
@@ -691,7 +757,13 @@ or whether a pre-spend ceiling is needed before any further slice, is a scope de
   schema-valid, genuinely-earned `CHANGES_REQUESTED` verdict with three real findings, all fixed.
 - The deterministic publisher's identity/schema/head/exactly-once gates are each independently
   tested, including one gate (exactly-once under concurrency) that was *wrong* until the one real
-  review found it and a fix landed in this same card.
+  review found it and a fix landed in this same card -- and whose own FIRST recovery fix (a second
+  `.takeover` marker) was itself found wrong by a later human review round and collapsed to a
+  single marker (§8b, FIX ROUND 2 (a)).
+- The duplicate-start guard is now a genuinely atomic claim, not a read-then-write check: exercised
+  under real concurrency (two simultaneous `runCodexReviewJob` calls against the real
+  `launchReservation.js` primitives, not mocks) and shown to spawn exactly one child (§8b, FIX
+  ROUND 2 (b)).
 - Least-privilege: the env allowlist, the hardcoded sandbox mode, and the absence of any
   model-writable code path are each demonstrated, not merely asserted.
 
@@ -706,18 +778,32 @@ or whether a pre-spend ceiling is needed before any further slice, is a scope de
 - **A writable scratch path for test execution.** The real review's own limitation (§4): a
   read-only reviewer cannot run `npx vitest` if the test runner needs any scratch write (Vite's
   temp config, in this case). No fix for this was attempted.
-- **A review-job crash leaving a permanently-stale `*.codex-review.runstate.json`.** FIX ROUND:
-  the subject-mid-run precondition and the duplicate-start refusal are now built and tested (§8b,
-  §12) under the review job's own `reviewRunStateKey`, deliberately kept apart from the subject
-  card's own runstate so a review-job crash never gets misread as the subject's own run failing.
-  But nothing cleans up that key's runstate file if the process that wrote it hard-crashes before
-  a later invocation ever re-checks it -- `orphanReaper.js` only sweeps real board cards, not this
-  synthetic key, so there is no reaper-equivalent for it. Not exercised; named here as a gap for
-  whichever slice wires this into a real scheduler (T-0454).
-- **Dispatch-level exclusivity via `launchReservation.js`/`boardOwnership.js`.** Still
-  deliberately not taken (§9's "named but not wired in") -- the two liveness preconditions above
-  are sufficient for one deliberately-triggered smoke job, but not a substitute for real
-  reservation-based exclusivity once this is wired into a scheduler.
+- **A review-job crash leaving a permanently-stale `*.codex-review.runstate.json`.** Narrowed by
+  FIX ROUND 2 (b), not fully closed. The ACTUAL duplicate-start *gate* is no longer this runstate
+  file -- it's `claimReviewSlot`'s `launchReservation.js` lease, which IS reclaimable from a dead
+  owner pid (§8b), so a crashed review no longer strands the card behind an ungated stale runstate
+  the way the pre-FIX-ROUND-2 mechanism could. `writeRunState`/`clearRunState` under
+  `reviewRunStateKey` are still written in parallel, for observability parity with every other
+  phase's liveness bookkeeping -- but they no longer gate anything, and nothing sweeps that
+  runstate file either if a process hard-crashes before clearing it; `orphanReaper.js` still only
+  sweeps real board cards, not this synthetic key. The remaining gap is strictly cosmetic (a stale
+  observability file, not a stuck gate) but is still named here rather than silently closed.
+- **Dispatch-level exclusivity via `boardOwnership.js`, and the live orchestrator's own dispatch
+  table.** Still deliberately not taken. FIX ROUND 2 (b) DOES wire `launchReservation.js` in for
+  this one job's own single-flight exclusivity (one review of one card at a time) -- see §8b/§9 --
+  but `boardOwnership.js`'s cross-process ownership and `runOrchestrator.js`'s dispatch table are
+  untouched; nothing here proves a `CodexCliRunner` behaves correctly inside the live orchestrator's
+  own phase sequencing or scheduler-driven dispatch.
+- **Pid-recycling.** Both `publishEntryExactlyOnce`'s and `claimReviewSlot`'s staleness checks
+  reduce to `isPidAlive(pid)` alone, not corroborated against a second signal the way
+  `runState.js`'s `isRunLive` corroborates a not-alive pid verdict against the run log's own mtime
+  before trusting it (see that module's own docstring on why pid-existence alone was previously
+  implicated in false reaps, T-0276/T-0287). The card's own edge case names this directly: "a
+  claim whose recorded pid has been recycled by the OS onto an unrelated live process" would read
+  as `isPidAliveFn(pid) === true` and be treated as a genuine live claimant forever, even though
+  the actual claimant died. Not fixed in this round -- named here as a gap, not solved, since
+  neither marker shape currently records anything (a process start time, a heartbeat) a corroborating
+  check could compare against.
 - **Author-vs-reviewer identity.** Mechanism named in §12 (commit-range authorship via `git log
   --format=%ae` compared against the card's `agent:` frontmatter) and directly instantiated by
   this spike's own self-review -- not built.
@@ -739,14 +825,21 @@ that would make it a reviewer the board actually depends on day to day.
 
 ## 14. Test/suite status and gitleaks
 
-- `npx vitest run` (`npm test`) from `tools/board/`: **230 test files, 4590 tests, all passing**
+- `npx vitest run` (`npm test`) from `tools/board/`: **230 test files, 4602 tests, all passing**
   (includes this card's 6 test files: `codexVerdictSchema.test.js`, `codexCliRunner.test.js`
-  (covering the token-budget ceiling, §11), `codexVerdictPublisher.test.js` (now also covering the
-  recoverable-delivery fix, §8b FIX ROUND (a), and the acceptance-criteria-version identity check,
-  §7 FIX ROUND (b)), `codexResultExtractor.test.js`, `codexBoardKillRecovery.test.js` (§8b), and
-  the new `runCodexReviewJob.test.js` (§8b FIX ROUND (c): the two preconditions, the separate
-  review-job liveness key, durable streaming, and the `budgetExceeded`/timeout branches), plus
-  every pre-existing test in the suite -- no regressions).
+  (covering the token-budget ceiling, §11), `codexVerdictPublisher.test.js` (covering the
+  recoverable-delivery fix, the acceptance-criteria-version identity check, and now FIX ROUND 2
+  (a)'s single-marker collapse -- no second `.takeover` file, a dead claim left by a crashed
+  RECOVERY attempt still recovers, two/three simultaneous recoverers still leave exactly one
+  archive entry, and the archive is re-checked as authoritative before any append during
+  recovery), `codexResultExtractor.test.js`, `codexBoardKillRecovery.test.js` (§8b), and
+  `runCodexReviewJob.test.js` (the two preconditions, durable streaming, the
+  `budgetExceeded`/timeout branches, and now FIX ROUND 2 (b)'s atomic `launchReservation.js` claim:
+  refusal without constructing a runner, claim-before-`createRunner` ordering, release on both the
+  happy path and a thrown `start()`, a dedicated `claimReviewSlot`/`releaseOwnedReviewSlot` unit
+  block against a real temp dir, and a real-concurrency block driving two simultaneous
+  `runCodexReviewJob` calls against the genuine atomic primitive), plus every pre-existing test in
+  the suite -- no regressions).
 - `npm run lint` (`eslint .`) from `tools/board/`: clean.
 - `git status --porcelain`: empty at the end of this run (confirmed before stopping).
 - **gitleaks: not run.** The `infra` persona (and no persona checked) holds a grant to execute
