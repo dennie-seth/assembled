@@ -15,7 +15,7 @@ import {
   DEFAULT_MERGE_RECONCILE_INTERVAL_MS,
   DEFAULT_RECONCILE_CONCURRENCY
 } from "../../src/runner/mergeReconciler.js";
-import { StaleWriteError } from "../../src/lib/taskStore.js";
+import { StaleWriteError, hashBody, findMismatchedExpectedFields } from "../../src/lib/taskStore.js";
 
 function task(overrides = {}) {
   return {
@@ -42,9 +42,12 @@ function makeStore(tasks) {
       const t = tasks.find((x) => x.id === id);
       if (!t) throw new Error(`not found: ${id}`);
       if (opts.expected) {
-        const mismatches = Object.entries(opts.expected).filter(([key, value]) => t[key] !== value);
+        // Mirrors fsTaskStore.js/dbTaskStore.js's own `assertExpectedMatches`: the real guard
+        // against stale writes, including the `bodyHash` special-case -- not a simplified
+        // per-key `!==` a production store would never actually run.
+        const mismatches = findMismatchedExpectedFields(opts.expected, t);
         if (mismatches.length > 0) {
-          throw new StaleWriteError(id, opts.expected, t, mismatches.map(([key]) => key));
+          throw new StaleWriteError(id, opts.expected, t, mismatches);
         }
       }
       Object.assign(t, patch);
@@ -83,6 +86,10 @@ describe("reconcileCard", () => {
 
   it("transitions a card whose linked PR is observed MERGED to done, reading state via getPrStateFn", async () => {
     const t = task();
+    // Captured before the call: the store mock mutates `t` in place on a successful write
+    // (same object the reconciler reads from), so `t.body`/`t.status` no longer reflect the
+    // pre-write snapshot once `reconcileCard` has resolved.
+    const preWrite = { pr: t.pr, branch: t.branch, requires_approval: t.requires_approval, approved_by: t.approved_by, bodyHash: hashBody(t.body) };
     const store = makeStore([t]);
     const getPrStateFn = mergedPr();
 
@@ -93,7 +100,7 @@ describe("reconcileCard", () => {
     expect(store.update).toHaveBeenCalledWith(
       "T-0434",
       expect.objectContaining({ status: "done" }),
-      { expected: { status: "review" } }
+      { expected: { status: "review", ...preWrite } }
     );
   });
 
@@ -287,6 +294,90 @@ describe("reconcileCard", () => {
 
     await expect(reconcileCard({ store, task: t, getPrStateFn, logger })).resolves.toBeNull();
     expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("skipped, no conflicting write"));
+  });
+
+  // PR #451 FIX ROUND: the compare-and-swap previously guarded `status` only. These three pin
+  // that a concurrent change to anything else this decision was actually based on -- the linked
+  // PR, the approval gate, the body -- is caught at write time too, and that `reconcileCard`
+  // re-checks the FRESH record rather than forcing the pre-lookup snapshot's verdict through.
+  // Each uses a separate pre-lookup `task` snapshot from the live, mutable store row `t` (exactly
+  // how `reconcileAll` really obtains it, via `store.list()`'s cloned copies) so the "concurrent
+  // edit" can land on the live row while `reconcileCard`'s own `task` argument stays stale --
+  // otherwise there would be nothing to race.
+  describe("stale-snapshot guard (PR #451 FIX ROUND)", () => {
+    it("does not complete when the linked PR is replaced during the lookup -- retries against the fresh snapshot and reaches the correct (not-merged) outcome", async () => {
+      const t = task({ pr: "https://github.com/example/repo/pull/444" });
+      const snapshot = { ...t };
+      const store = makeStore([t]);
+      const getPrStateFn = vi.fn(async ({ prUrl }) => {
+        if (prUrl === snapshot.pr) {
+          // Concurrent edit: a human repoints the card at a different PR mid-lookup.
+          t.pr = "https://github.com/example/repo/pull/555";
+          return { url: prUrl, state: "MERGED", headRefName: snapshot.branch, number: 444 };
+        }
+        // The fresh PR is still open -- the correct outcome of the retry is "stays in review".
+        return { url: prUrl, state: "OPEN", headRefName: snapshot.branch, number: 555 };
+      });
+
+      const updated = await reconcileCard({ store, task: snapshot, getPrStateFn, logger });
+
+      expect(updated).toBeNull();
+      expect(t.status).toBe("review");
+      expect(t.pr).toBe("https://github.com/example/repo/pull/555");
+      expect(store.update).toHaveBeenCalledTimes(1);
+      expect(getPrStateFn).toHaveBeenCalledTimes(2);
+      expect(getPrStateFn).toHaveBeenNthCalledWith(2, {
+        worktreeDir: null,
+        prUrl: "https://github.com/example/repo/pull/555"
+      });
+      expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("re-checking the fresh record"));
+    });
+
+    it("does not complete when requires_approval is set during the lookup -- retries and stays parked for a human", async () => {
+      const t = task({ pr: "https://github.com/example/repo/pull/444" });
+      const snapshot = { ...t };
+      const store = makeStore([t]);
+      const getPrStateFn = vi.fn(async ({ prUrl }) => {
+        if (!t.requires_approval) {
+          // Concurrent edit: a human gates this card mid-lookup.
+          t.requires_approval = true;
+        }
+        return { url: prUrl, state: "MERGED", headRefName: snapshot.branch, number: 444 };
+      });
+
+      const updated = await reconcileCard({ store, task: snapshot, getPrStateFn, logger });
+
+      expect(updated).toBeNull();
+      expect(t.status).toBe("review");
+      expect(t.requires_approval).toBe(true);
+      expect(store.update).toHaveBeenCalledTimes(1);
+      expect(getPrStateFn).toHaveBeenCalledTimes(2);
+      expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("re-checking the fresh record"));
+      expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("requires human approval"));
+    });
+
+    it("does not stamp a completion note onto a stale body when the body is edited during the lookup -- retries against the fresh body and completes correctly", async () => {
+      const t = task({ pr: "https://github.com/example/repo/pull/444", body: "old body" });
+      const snapshot = { ...t };
+      const store = makeStore([t]);
+      const getPrStateFn = vi.fn(async ({ prUrl }) => {
+        if (t.body === "old body") {
+          // Concurrent edit: a human edits the card's body mid-lookup.
+          t.body = "new body";
+        }
+        return { url: prUrl, state: "MERGED", headRefName: snapshot.branch, number: 444 };
+      });
+
+      const updated = await reconcileCard({ store, task: snapshot, getPrStateFn, logger });
+
+      expect(updated).not.toBeNull();
+      expect(updated.status).toBe("done");
+      expect(updated.body).toContain("new body");
+      expect(updated.body).not.toContain("old body");
+      expect(store.update).toHaveBeenCalledTimes(2);
+      expect(getPrStateFn).toHaveBeenCalledTimes(2);
+      expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("re-checking the fresh record"));
+    });
   });
 
   it("commits the done transition for an fs-mode card", async () => {
