@@ -72,7 +72,7 @@
       104,
       112
     ],
-    "part": "shoulder_R"
+    "part": "shoulder_L"
   },
   {
     "backdrop_rgb": [
@@ -97,7 +97,7 @@
       113,
       184
     ],
-    "part": "shoulder_L"
+    "part": "shoulder_R"
   },
   {
     "backdrop_rgb": [
@@ -122,7 +122,7 @@
       107,
       211
     ],
-    "part": "forearm_R"
+    "part": "forearm_L"
   },
   {
     "backdrop_rgb": [
@@ -147,7 +147,7 @@
       88,
       200
     ],
-    "part": "forearm_L"
+    "part": "forearm_R"
   },
   {
     "backdrop_rgb": [
@@ -172,7 +172,7 @@
       175,
       257
     ],
-    "part": "thigh_R"
+    "part": "thigh_L"
   },
   {
     "backdrop_rgb": [
@@ -197,7 +197,7 @@
       187,
       257
     ],
-    "part": "thigh_L"
+    "part": "thigh_R"
   },
   {
     "backdrop_rgb": [
@@ -222,7 +222,7 @@
       175,
       344
     ],
-    "part": "calf_R"
+    "part": "calf_L"
   },
   {
     "backdrop_rgb": [
@@ -247,6 +247,6 @@
       130,
       266
     ],
-    "part": "calf_L"
+    "part": "calf_R"
   }
 ]

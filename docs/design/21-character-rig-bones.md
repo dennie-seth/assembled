@@ -1,7 +1,23 @@
 # 21 — Character rig: the canonical bone list
 
-**Status:** authoritative. This is the reference every character's cut parts must match,
-for every character, not just the player.
+> **Superseded, T-0436 (2026-10-08).** `docs/design/23-canonical-rig.md` is now the
+> rig authority. This document's single-hip/single-shoulder attach and flat-side-view
+> framing are contradicted by @DennieSeth's canonical skeleton reference on
+> structure, proportion and projection — see 23- §0–§3. §1 (COCO-18), §2 (the bone
+> tree), §4 (pivot convention) and §9 (cutting checklist) are carried forward
+> **unchanged** into 23-'s own §1; this document is kept, not deleted, as the record
+> of the bone tree's own derivation. Do not treat anything below as the current word
+> on shoulder/hip attach geometry.
+>
+> **§6 (layer order) is REPLACED, not carried forward — fix round, 2026-10-08T21:08.**
+> The order below (`leg.L → arm.L → torso → head → leg.R → arm.R`) is superseded by
+> @DennieSeth's own front-to-back order in 23- §3d, which reverses two of this
+> section's relationships: head now draws in front of torso (not behind it), and the
+> near arm now draws in front of the near leg (not behind it). Do not use the order
+> below for any part composited through the committed rig's own `rig.*.z` values.
+
+**Status:** superseded (see above) — formerly authoritative. This is the reference every
+character's cut parts must match, for every character, not just the player.
 
 Parts are cut by hand from hi-res source art and composited onto a pose rig by script
 (`docs/design/13-asset-pipeline.md`: *master sheets at 1024, motion composited by script*).
@@ -133,9 +149,13 @@ elbow bend. It does for a walk.
 6. Name files `<part>.<side>.png` for sided parts, `<part>.png` otherwise: `head.png`,
    `torso.png`, `arm.R.png`, `leg.L.png`.
 
-## 6. Layer order
+## 6. Layer order — REPLACED, see `docs/design/23-canonical-rig.md` §3d
 
-Back to front, for a right-facing side view:
+> **Superseded, T-0436 fix round (2026-10-08T21:08).** The order below is no longer
+> the rig's layer order. See the file banner above and 23- §3d for the order that
+> replaces it and the reasoning (@DennieSeth's own front-to-back spec).
+
+Back to front, for a right-facing side view (historical, no longer applied):
 
 ```
 leg.L  →  arm.L  →  torso  →  head  →  leg.R  →  arm.R
