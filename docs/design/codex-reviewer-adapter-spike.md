@@ -368,11 +368,21 @@ never matches `/no findings/i`, i.e. it never silently degrades into looking lik
 
 `publishCodexVerdict` (`codexVerdictPublisher.js`) is ordinary async JS -- no model call inside
 it, called *after* the child process has already exited and its stdout has already been fully
-captured and parsed by `codexResultExtractor.js`. It validates, in order: exactly-once delivery
-claim (§8b), cancellation, process/parse failure -> BLOCKED, schema (§5) -> BLOCKED,
-identity (`job.jobId`/`ticketId`/`sprintId` and `reviewedSha` all matching what was dispatched) ->
-reject if not, current head vs. dispatched sha -> superseded if moved (§8a), and only then
-appends via `verdictArchive.appendVerdictEntry` (§9). Its return shape is asserted (test: "never
+captured and parsed by `codexResultExtractor.js`. It validates, in order: cancellation,
+process/parse failure -> BLOCKED, schema (§5) -> BLOCKED, identity (`job.jobId`/`ticketId`/
+`sprintId`, `reviewedSha`, and -- as of this fix round -- `acceptanceCriteriaVersion`, all
+matching what was dispatched) -> reject if not, current head vs. dispatched sha -> superseded if
+moved (§8a), and only then reaches the exactly-once delivery claim (§8b) that actually appends via
+`verdictArchive.appendVerdictEntry` (§9). **FIX ROUND finding (b):** a schema-valid,
+identity-matching payload naming the right job/ticket/sprint/sha but a STALE
+`acceptanceCriteriaVersion` used to publish as `PASS` against a superseded contract for the same
+commit, because the identity check never compared it. `dispatchedJob.acceptanceCriteriaVersion` is
+now a required field (same enforcement tier as `jobId`/`dispatchedSha` -- a caller that omits it
+gets a thrown error, not a silent skip) and is part of the identity comparison; a mismatch rejects
+the same way a wrong `sprintId` already did, and the verified value is persisted on the entry
+itself (`entry.acceptanceCriteriaVersion`) rather than only living in the rendered text. Tested in
+`codexVerdictPublisher.test.js`'s "rejects a result whose acceptanceCriteriaVersion doesn't match"
+and "requires dispatchedJob.acceptanceCriteriaVersion" cases. Its return shape is asserted (test: "never
 mutates or returns anything granting merge authority...") to contain only
 `status/outcome/entry/reason/errors/freshReviewRequested/currentHead` -- no `merge`, no
 `approved`, nothing a caller could misread as authority to do anything beyond recording a
@@ -424,6 +434,44 @@ the new "exactly-once under real concurrency, not just sequential retries" block
 one `published` + one `duplicate`, one archive entry. **The mechanism that makes this exactly-once
 is the exclusive-create marker, not timing** -- the test proves it holds even when both calls are
 racing in the same event-loop tick.
+
+**FIX ROUND finding (a), P2 (Dennie, review of #452): a failed append used to permanently consume
+the delivery.** The marker above was a one-shot flag: its mere existence was read as "already
+published," but existence only ever proved a claim was *made*, not that it *finished*. Dennie's
+review reproduced it directly against the real filesystem claim and archive reader: fail only the
+first `appendEntryFn` call, and the retry read back `{ status: "duplicate", entry: null }` --
+nothing was ever actually published, forever. Deleting the marker in a `catch` would not have
+fixed this either, since a real process death (not an in-process throw) never reaches a `catch` at
+all.
+
+The fix makes the marker a durable, recoverable delivery record (`publishEntryExactlyOnce` in
+`codexVerdictPublisher.js`, exported path via `deliveryMarkerPath`):
+- A fresh claim writes `{ pid, claimedAt }` (atomically, via the same temp-file-then-`fs.link`
+  technique `launchReservation.js` uses), then appends, then overwrites the marker to
+  `{ completed: true, entry }`. An append that throws **releases** the claim (deletes the marker)
+  before re-throwing, so a sequential retry in the same still-alive process redoes the whole
+  attempt from scratch rather than reading back a permanently stuck claim.
+- A claim that already exists is resolved by reading it, not trusted blindly: `completed: true`
+  means genuinely already published (return the stored entry); not completed but the archive
+  (checked directly, never just the marker) already has this `deliveryId` means the append landed
+  but the process died before marking completion -- repair the marker, do not append a second
+  time; not completed, no archive entry, and the recorded `pid` is still alive means a genuinely
+  concurrent in-flight delivery, not a crash -- defer to it rather than race its own append; not
+  completed, no archive entry, and the recorded `pid` is dead means a stale claim left by a
+  process that died before finishing -- take it over through a SECOND exclusive marker
+  (`<marker>.takeover`) so two simultaneous recoverers of the same stale claim still append
+  exactly once between them.
+
+All four cases Dennie's review named are each their own test in
+`codexVerdictPublisher.test.js`'s "recoverable delivery, not a one-shot claim that can strand a
+delivery forever" block: append failure (a `vi.fn` that throws once then succeeds, retried in the
+same process), process death before append (a marker pre-written by hand with a dead `pid`,
+recovered and actually published), process death after append but before completion marking (same
+dead-`pid` marker, but the archive already has the entry -- recovery must not double-append), and
+simultaneous retry of the same stale claim (`Promise.all` against the same dead-`pid` marker,
+still exactly one append). `isPidAliveFn` defaults to the real `isPidAlive`
+(`tools/board/src/runner/runState.js`) -- reused, not reinvented, the same staleness idiom
+`boardOwnership.js`'s `acquireBoardOwnership` already applies to a different lock.
 
 This same mechanism is what "restart recovery" (the card's edge case) reduces to: a board process
 that crashes mid-review and restarts, then replays a persisted result (from `tasks/.runs/<id>.jsonl`,
@@ -479,6 +527,64 @@ every other phase already does. What the board saw: `reapOnStartup`'s existing l
 unmodified. What the subject card was left showing: `in-progress` (readopted) or `blocked`
 (reaped), per the two cases above.
 
+**FIX ROUND correction (Dennie, review of #452, finding (c)):** `codexBoardKillRecovery.test.js`
+above writes its mocked runstate under the SUBJECT CARD's own bare `taskId` -- it demonstrates
+that a card's own in-progress run survives a board restart via the existing reaper, which is real
+and still correct, but it is **not** a demonstration of what happens when the *review job itself*
+(not the subject's own implementer/reviewer phase) dies mid-review. Before this fix round,
+`runCodexReview.js` wrote its OWN liveness under that exact same bare `taskId` key -- the same key
+the subject card's own implementation run uses -- so starting a review while the card's real run
+was active stomped that run's pid, and a review-job crash would have `orphanReaper.js` reap the
+*subject card* to `blocked` with a "run did not complete" note over a smoke-test review dying, not
+the card's own work. `runCodexReview.js` now writes/reads/clears its own liveness under
+`reviewRunStateKey(taskId)` (`${taskId}.codex-review`, `scripts/runCodexReview.js`'s
+`reviewRunStateKey`) -- a key `orphanReaper.js` never looks at, because it only iterates real board
+cards by their real id. This is a deliberate, simpler answer than reusing orphanReaper for the
+review job's own crash: **the subject card is left completely untouched by a review-job crash**
+(correct, since the review is not part of the subject's own lifecycle), and the review job's own
+staleness is instead self-resolved the next time `runCodexReviewJob` runs -- see the two
+precondition checks below. No orphanReaper-style sweep exists for a permanently-stale
+`*.codex-review.runstate.json` file left by a process that both wrote it and then hard-crashed
+before any later invocation ever re-checked it; that gap is named here, not solved, since this
+spike's own review was never run twice back-to-back against a real crash.
+
+**Two preconditions are now code-enforced, not just named (closing the §12 "not checked" gap and
+the acceptance item "the duplicate-start case being refused rather than overwriting a runstate"):**
+`runCodexReviewJob` (`scripts/runCodexReview.js`) calls, in order:
+
+1. `readRunState({ runsDir, taskId })` + `isRunLive(...)` against the **subject's own bare
+   `taskId`** -- read-only, never written by this script. A live result means the card's own
+   implementer/reviewer run is still writing to the worktree; the job refuses to start and
+   publishes an immediate `BLOCKED` verdict (`reason: "subject-mid-run"`) through the same
+   publisher path §6 describes, rather than reviewing a moving tree.
+2. `readRunState({ runsDir, taskId: reviewRunStateKey(taskId) })` + `isRunLive(...)` against the
+   **review job's own key**. A live result means a review of this same card is already in flight;
+   the job refuses to start (`reason: "review-already-in-flight"`) and -- critically -- never
+   calls `writeRunState` in this path, so the in-flight review's own runstate is never overwritten.
+
+Both are exercised directly with mocked children in `test/runner/runCodexReviewJob.test.js`
+("the subject card being mid-run (precondition)" and "duplicate-start refusal" blocks), including
+a test that asserts the two `readRunState` calls use two different keys and a test that asserts
+`writeRunState` is never called on the refusal path. The happy-path lifecycle calls are: mint
+`createRunLog` -> check precondition 1 -> check precondition 2 -> `runner.start()` ->
+`writeRunState` (review key) -> stream the child's stdout into the run log as it arrives (durably;
+see the finding below) -> `publishCodexVerdict` -> `clearRunState` (review key). No board
+ownership/reservation claim (`launchReservation.js`/`boardOwnership.js`) is taken anywhere in this
+path -- see §9's "named but not wired in" note, unchanged by this fix round: a single
+deliberately-triggered smoke job still does not need dispatch-level exclusivity, only the two
+liveness preconditions above.
+
+**FIX ROUND finding, same round: streamed evidence is now durable, not buffered until exit.**
+Before this fix round, `runCodexReview.js` only called `runLog.append()` in a loop over the
+fully-buffered `stdout` string *after* the child had already exited -- a crash between the last
+flushed chunk and that post-hoc loop lost every event collected so far, since none of it had
+reached disk yet. `runCodexReviewJob` now feeds each `stdout` chunk into a `NdjsonEventParser`
+(`src/runner/streamParser.js`, the same line-buffering parser `ClaudeCliRunner`'s own stream
+consumer uses) whose `onEvent` callback calls `runLog.append()` immediately, chunk by chunk, as
+data arrives -- proven in `runCodexReviewJob.test.js`'s "streams NDJSON events into the run log
+durably" test, which asserts an event appended to the log *before* the child's `exit` event ever
+fires.
+
 ## 9. Reuses the board's existing machinery
 
 | What | File:line / module | How this spike uses it |
@@ -486,7 +592,8 @@ unmodified. What the subject card was left showing: `in-progress` (readopted) or
 | `AgentRunner` interface | `tools/board/src/runner/agentRunner.js` | `CodexCliRunner extends AgentRunner`, the same `start/observe/kill` contract `ClaudeCliRunner` implements -- a second sibling, not a second coordinator |
 | Per-run audit log + `BOARD_RUN_ID` minting | `tools/board/src/runner/runLog.js`'s `createRunLog` | `runCodexReview.js` calls it identically to how `runOrchestrator._runPhase` does, and threads the same `runId` into the child's env as `BOARD_RUN_ID`, matching `ClaudeCliRunner`'s own convention |
 | Verdict archive (exactly-once-per-card append store) | `tools/board/src/lib/verdictArchive.js`'s `appendVerdictEntry`/`readVerdictEntries` | `codexVerdictPublisher.js` calls these directly -- the same store `runOrchestrator._handlePass`/`_handleFailValidation` already write to for Claude verdicts |
-| Atomic exclusive-create as the concurrency primitive | pattern from `tools/board/src/runner/launchReservation.js` (`fs.link`) | `defaultClaimDelivery` uses the same idea via `fs.open(path, "wx")` (§8b) |
+| Atomic exclusive-create as the concurrency primitive | pattern from `tools/board/src/runner/launchReservation.js` (temp-file + `fs.link`) | `publishEntryExactlyOnce`'s delivery/takeover markers use the identical temp-file-then-`fs.link` technique (§8b, FIX ROUND (a)) |
+| Pid-liveness staleness check | `tools/board/src/runner/runState.js`'s `isPidAlive`, the same idiom `boardOwnership.js`'s `acquireBoardOwnership` applies to its own lock | `publishEntryExactlyOnce` uses it to tell a genuinely concurrent in-flight claim apart from a stale one left by a dead process (§8b, FIX ROUND (a)) |
 | Process-group kill/escalation constant | `tools/board/src/runner/runState.js`'s `DEFAULT_KILL_ESCALATION_MS` | `CodexCliRunner.kill()` uses it exactly as `ClaudeCliRunner.kill()` does |
 | Liveness runstate + crash-recovery sweep | `tools/board/src/runner/runState.js`'s `writeRunState`/`clearRunState`, `tools/board/src/runner/orphanReaper.js`'s `reapOnStartup`/`sweepOnce` | `runCodexReview.js` writes/clears a runstate record the same way `runOrchestrator.js`'s `_runPhase` does for every phase -- a board restart mid-review is recovered by the existing reaper, zero Codex-specific recovery code (see §8b's "kill the board mid-review" fix and `codexBoardKillRecovery.test.js`) |
 
@@ -545,6 +652,21 @@ it is now a real enforced bound: `codexCliRunner.test.js`'s "token budget" block
 synthetic `turn.completed` events and asserts the kill actually fires, including a case proving a
 run that stays within budget is never killed and one proving a breach doesn't double-kill.
 
+**FIX ROUND finding (d) (Dennie, review of #452):** `run.budgetExceeded` was set correctly by
+`CodexCliRunner.start()` but `runCodexReview.js` never read it -- a budget kill fell through to
+the generic non-zero-exit branch and lost the actual reason a human reading the verdict would need
+to size the ceiling correctly. `runCodexReviewJob` now checks `run.budgetExceeded` explicitly,
+before the generic exit-code branch, and publishes `BLOCKED`/`budget-exceeded` with the configured
+`maxTotalTokens` in the detail -- tested in `runCodexReviewJob.test.js`'s "inspects
+run.budgetExceeded" case (mocked: no real review was run over budget to test this; the one real
+review in §4 used ~110k of the 500k ceiling). **To restate plainly, since the card's own wording
+must not overstate this: the 500,000-token figure is a REACTIVE bound, not a guaranteed maximum.**
+It can only kill the run *after* a `turn.completed` event reports the breach -- it cannot prevent
+the single turn that pushes the cumulative total over the line from completing and being billed,
+it can only stop any *subsequent* turn. Whether a reactive-only bound is acceptable for this spike,
+or whether a pre-spend ceiling is needed before any further slice, is a scope decision for
+@DennieSeth, not something this fix round settles by rewording.
+
 ## 12. Edge cases from the card, mapped to what actually happened
 
 | Edge case | What happened |
@@ -554,7 +676,7 @@ run that stays within budget is never killed and one proving a breach doesn't do
 | A verdict that cannot be parsed | `codexResultExtractor.js` returns `parse-failure` (never an empty/default payload) for missing, truncated, or invalid-JSON output -- 8 test cases, including "tolerates stray non-JSON lines" (the literal "Reading additional input from stdin..." line this CLI emits) |
 | Two invocations racing on one card | Delivery-level race fixed and proven (§8b). Dispatch-level race (two independent launches of a review for the same card) is explicitly **out of scope for this spike** -- it belongs to `launchReservation.js`, not reimplemented here, and nothing in this spike's code assumes exclusivity at that level |
 | Auth working interactively but not under the board's restricted env | `DEFAULT_ENV_ALLOWLIST` is the enforced list (§2); `CODEX_HOME` is in it deliberately, as the one Codex-specific var this adapter actually needs -- proven live, since the real review authenticated using only that allowlisted env, not an inherited developer shell |
-| The subject card being mid-run | **Not checked, but the mechanism is named.** The precondition is: the reviewed card has no other active run. How it would be checked: before `runCodexReview.js` invokes `CodexCliRunner`, call `readRunState({ runsDir, taskId: ticketId })` (`tools/board/src/runner/runState.js:54`) and pass the result to `isRunLive` (`tools/board/src/runner/runState.js:135`) -- the identical liveness check `orphanReaper.js`'s `checkRunStatus` (`tools/board/src/runner/orphanReaper.js:290`) already runs on every sweep. A live result means the card's own implementer run is still writing to the worktree; the adapter would refuse to start (resolve to `BLOCKED`, same as any other pre-flight rejection in §6) rather than review a moving tree. `runCodexReview.js` does not call `readRunState`/`isRunLive` today -- no code exists for this precondition, only the named mechanism, which reuses existing machinery rather than inventing a new liveness check |
+| The subject card being mid-run | **FIX ROUND: now checked, not just named.** `runCodexReviewJob` (`scripts/runCodexReview.js`) calls `readRunState({ runsDir, taskId })` (`tools/board/src/runner/runState.js:54`) against the subject's own bare `taskId` and passes the result to `isRunLive` (`tools/board/src/runner/runState.js:135`) -- the identical liveness check `orphanReaper.js`'s `checkRunStatus` (`tools/board/src/runner/orphanReaper.js:290`) already runs on every sweep -- before ever constructing a `CodexCliRunner`. A live result refuses to start and publishes `BLOCKED`/`subject-mid-run` through the same publisher path §6 describes, rather than reviewing a moving tree. See §8b's "two preconditions are now code-enforced" paragraph and `test/runner/runCodexReviewJob.test.js`'s "the subject card being mid-run (precondition)" block (mocked: no real concurrent implementer run was started against a real subject card) |
 | A reviewer reviewing its own work | **Happened here, knowingly, and the mechanism for knowing is named.** The one real review reviewed T-0460's own in-progress changes -- there was no other real card available in this session to demonstrate against without fabricating one. This is exactly the author-as-reviewer conflict the working agreement forbids. How the adapter would know whose change it is looking at: extract the reviewed range's commit authorship via `git log <baseSha>..<reviewedSha> --format=%ae` (every commit in this repo carries a `Co-authored-by:` trailer per `.claude/rules/conduct.md`, so this reads as a real identity, not an anonymous diff) and compare it against the card's own `agent:` frontmatter field (e.g. `agent: "infra"` in `tasks/T-NNNN.md`, read the same way `runOrchestrator.js` already reads it to pick an implementer persona) -- the persona recorded as the card's author. If the two match, or if the review was dispatched from inside the same session that produced the commits (no separate dispatch identity recorded at all, which is what actually happened here), the adapter would reject dispatch before ever invoking Codex, the same way `codexVerdictPublisher.js`'s identity gate (§7) rejects a job/ticket/sprint/sha mismatch after the fact. Nothing in this spike's code performs that comparison -- `runCodexReview.js` has no author-identity check and no separate "who dispatched this review" field to compare against -- this is a named mechanism, not a solved gap |
 | A verdict that validates but describes a different job | Identity check (job/ticket/sprint/sha, §7) rejects without publishing -- 4 test cases, including the sprintId gap the real review found and this card then fixed (§8b intro) |
 | A result arriving after cancellation | `cancelled: true` → rejected, zero appends, tested directly (§8b) |
@@ -584,8 +706,18 @@ run that stays within budget is never killed and one proving a breach doesn't do
 - **A writable scratch path for test execution.** The real review's own limitation (§4): a
   read-only reviewer cannot run `npx vitest` if the test runner needs any scratch write (Vite's
   temp config, in this case). No fix for this was attempted.
-- **"The subject card is mid-run" precondition.** Mechanism named in §12 (`readRunState` +
-  `isRunLive`, the same liveness check `orphanReaper.js` already runs) -- not built.
+- **A review-job crash leaving a permanently-stale `*.codex-review.runstate.json`.** FIX ROUND:
+  the subject-mid-run precondition and the duplicate-start refusal are now built and tested (§8b,
+  §12) under the review job's own `reviewRunStateKey`, deliberately kept apart from the subject
+  card's own runstate so a review-job crash never gets misread as the subject's own run failing.
+  But nothing cleans up that key's runstate file if the process that wrote it hard-crashes before
+  a later invocation ever re-checks it -- `orphanReaper.js` only sweeps real board cards, not this
+  synthetic key, so there is no reaper-equivalent for it. Not exercised; named here as a gap for
+  whichever slice wires this into a real scheduler (T-0454).
+- **Dispatch-level exclusivity via `launchReservation.js`/`boardOwnership.js`.** Still
+  deliberately not taken (§9's "named but not wired in") -- the two liveness preconditions above
+  are sufficient for one deliberately-triggered smoke job, but not a substitute for real
+  reservation-based exclusivity once this is wired into a scheduler.
 - **Author-vs-reviewer identity.** Mechanism named in §12 (commit-range authorship via `git log
   --format=%ae` compared against the card's `agent:` frontmatter) and directly instantiated by
   this spike's own self-review -- not built.
@@ -607,11 +739,14 @@ that would make it a reviewer the board actually depends on day to day.
 
 ## 14. Test/suite status and gitleaks
 
-- `npx vitest run` (`npm test`) from `tools/board/`: **229 test files, 4577 tests, all passing**
-  (includes this card's 5 test files: `codexVerdictSchema.test.js`, `codexCliRunner.test.js`
-  (now also covering the token-budget ceiling, §11), `codexVerdictPublisher.test.js`,
-  `codexResultExtractor.test.js`, and `codexBoardKillRecovery.test.js` (§8b), plus every
-  pre-existing test in the suite -- no regressions).
+- `npx vitest run` (`npm test`) from `tools/board/`: **230 test files, 4590 tests, all passing**
+  (includes this card's 6 test files: `codexVerdictSchema.test.js`, `codexCliRunner.test.js`
+  (covering the token-budget ceiling, §11), `codexVerdictPublisher.test.js` (now also covering the
+  recoverable-delivery fix, §8b FIX ROUND (a), and the acceptance-criteria-version identity check,
+  §7 FIX ROUND (b)), `codexResultExtractor.test.js`, `codexBoardKillRecovery.test.js` (§8b), and
+  the new `runCodexReviewJob.test.js` (§8b FIX ROUND (c): the two preconditions, the separate
+  review-job liveness key, durable streaming, and the `budgetExceeded`/timeout branches), plus
+  every pre-existing test in the suite -- no regressions).
 - `npm run lint` (`eslint .`) from `tools/board/`: clean.
 - `git status --porcelain`: empty at the end of this run (confirmed before stopping).
 - **gitleaks: not run.** The `infra` persona (and no persona checked) holds a grant to execute
