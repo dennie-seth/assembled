@@ -332,7 +332,22 @@ function commentsSectionFor(task, onAddComment) {
     input.value = "";
   });
 
-  wrap.append(input, addBtn);
+  // T-0462 FIX ROUND 2: the composer *section target* is this group wrapper, not the textarea
+  // itself. Landing sequential/direct navigation inside a real <textarea> made every subsequent
+  // Alt+Arrow a dead stop -- shouldIgnoreDetailNavKey (app.js) correctly treats text-entry focus
+  // as "the user is typing" and suppresses further shortcuts (criterion 3 requires exactly that).
+  // A non-text-entry group landmark that *contains* the textarea gives navigation a real,
+  // substantial, visibly-focusable target (so keyboard users still see where they landed) while
+  // leaving the textarea itself one plain Tab away to actually start typing -- and leaving its
+  // own suppression behaviour, once real focus is in it, completely untouched.
+  const composerLandmark = document.createElement("div");
+  composerLandmark.className = "detail-composer-landmark";
+  composerLandmark.tabIndex = -1;
+  composerLandmark.setAttribute("role", "group");
+  composerLandmark.setAttribute("aria-label", "Comment composer");
+  composerLandmark.append(input, addBtn);
+
+  wrap.append(composerLandmark);
   return wrap;
 }
 
@@ -408,11 +423,21 @@ function attachmentsSectionFor(task, onUploadAttachment, onRemoveAttachment) {
 //
 // On a long card (T-0436: 13 comments, several multi-screen) the compose box and the
 // attachments were reachable only by scrolling the entire comment thread. These functions
-// discover a fixed set of named landmarks already present in the rendered panel -- the title
-// (top), the markdown body preview, the Acceptance heading inside that rendered markdown (if
-// any), the latest comment, the composer, and the attachments heading -- and move focus
-// directly to one of them. A section with no corresponding element for this task (no
-// comments yet, no attachments callback) is simply absent from the list, never a dead stop.
+// discover a fixed set of named landmarks already present in the rendered panel -- a group
+// wrapping the title (top), the markdown body preview, the Acceptance heading inside that
+// rendered markdown (if any), the latest comment, a group wrapping the composer, and the
+// attachments heading -- and move focus directly to one of them. A section with no
+// corresponding element for this task (no comments yet, no attachments callback) is simply
+// absent from the list, never a dead stop.
+//
+// "top" and "composer" land on a *wrapping group*, not the title <input>/comment <textarea>
+// themselves (FIX ROUND 2): real focus inside a text-entry element correctly suppresses every
+// further navigation keystroke (shouldIgnoreDetailNavKey in app.js, required by this card's own
+// "never fire while typing" criterion), so targeting the input/textarea directly made the very
+// first sequential step -- nothing focused yet -> lands on "top" -- a permanent dead end. The
+// group is a real, visible, substantial focus target (so a sighted keyboard user still sees
+// where they landed) that *contains* the input; the input itself is still one plain Tab away,
+// unchanged, for actually typing.
 //
 // Deliberately stateless: "current position" is read from document.activeElement every call
 // rather than tracked separately, so switching to a different, already-rendered task can never
@@ -459,10 +484,12 @@ function findLatestComment(root) {
   return latest;
 }
 
-function findComposer(root) {
-  const el = root.querySelector(".detail-comment-input");
-  if (el) el.setAttribute("aria-label", "Comment composer");
-  return el;
+function findComposerLandmark(root) {
+  return root.querySelector(".detail-composer-landmark");
+}
+
+function findTopLandmark(root) {
+  return root.querySelector(".detail-top-landmark");
 }
 
 function findAttachmentsLandmark(root) {
@@ -476,11 +503,11 @@ function findAttachmentsLandmark(root) {
 }
 
 const SECTION_FINDERS = [
-  ["top", (root) => root.querySelector(".detail-title")],
+  ["top", findTopLandmark],
   ["body", findBodyLandmark],
   ["acceptance", findAcceptanceHeading],
   ["comments", findLatestComment],
-  ["composer", findComposer],
+  ["composer", findComposerLandmark],
   ["attachments", findAttachmentsLandmark]
 ];
 
@@ -719,6 +746,19 @@ export function renderDetailPanel(
   titleInput.value = dirty.title !== undefined ? dirty.title : task.title;
   titleInput.dataset.detailField = "title";
 
+  // T-0462 FIX ROUND 2: same reasoning as the composer landmark below -- "top" used to target
+  // this input directly, so the very first Alt+ArrowDown of any session (nothing focused yet ->
+  // lands on "top") immediately dead-ended every subsequent shortcut, because real focus in a
+  // text input correctly suppresses further navigation (criterion 3). The landmark wraps the
+  // existing Title <label> without changing what it displays; the input is still reachable and
+  // editable by Tab or click exactly as before.
+  const topLandmark = document.createElement("div");
+  topLandmark.className = "detail-top-landmark";
+  topLandmark.tabIndex = -1;
+  topLandmark.setAttribute("role", "group");
+  topLandmark.setAttribute("aria-label", "Card top");
+  topLandmark.appendChild(labeledField("Title", titleInput));
+
   const prioritySelect = selectFor(PRIORITIES, dirty.priority !== undefined ? dirty.priority : task.priority);
   prioritySelect.className = "detail-priority";
 
@@ -813,7 +853,7 @@ export function renderDetailPanel(
   panel.append(
     detailNavBarFor(root),
     closeBtn,
-    labeledField("Title", titleInput),
+    topLandmark,
     labeledField("Priority", prioritySelect),
     labeledField("Status", statusSelect),
     labeledField("Agent", agentSelect),
