@@ -168,16 +168,23 @@ describe("accessibility: section landmarks are focusable and have accessible nam
     expect(latest.getAttribute("aria-label")).toMatch(/comment/i);
   });
 
-  it("the composer textarea has an explicit accessible name, not just a placeholder", () => {
+  it("the composer target is a group landmark (not the textarea itself) with an explicit accessible name", () => {
     renderDetailPanel(root, task(), baseOpts());
     const composer = listDetailSections(root).find((s) => s.key === "composer").element;
+    expect(composer.tabIndex).toBe(-1);
+    expect(composer.getAttribute("role")).toBe("group");
     expect(composer.getAttribute("aria-label")).toBeTruthy();
+    // The real textarea is still reachable/editable one Tab away -- just not the nav target.
+    expect(composer.querySelector(".detail-comment-input")).not.toBeNull();
   });
 
-  it("the top target (title input) already has an accessible name via its existing <label>", () => {
+  it("the top target is a group landmark wrapping the title field, with its own accessible name", () => {
     renderDetailPanel(root, task(), baseOpts());
     const top = listDetailSections(root).find((s) => s.key === "top").element;
-    expect(top.closest("label")?.textContent).toContain("Title");
+    expect(top.tabIndex).toBe(-1);
+    expect(top.getAttribute("role")).toBe("group");
+    expect(top.getAttribute("aria-label")).toBeTruthy();
+    expect(top.querySelector("label")?.textContent).toContain("Title");
   });
 });
 
@@ -194,7 +201,7 @@ describe("stepDetailSection: bidirectional navigation", () => {
     renderDetailPanel(root, task({ comments: manyComments(13) }), baseOpts());
     const key = stepDetailSection(root, 1);
     expect(key).toBe("top");
-    expect(document.activeElement).toBe(root.querySelector(".detail-title"));
+    expect(document.activeElement).toBe(root.querySelector(".detail-top-landmark"));
   });
 
   it("repeated forward steps walk every section in order", () => {
@@ -228,7 +235,7 @@ describe("stepDetailSection: bidirectional navigation", () => {
     stepDetailSection(root, 1); // top
     const key = stepDetailSection(root, -1);
     expect(key).toBe("top");
-    expect(document.activeElement).toBe(root.querySelector(".detail-title"));
+    expect(document.activeElement).toBe(root.querySelector(".detail-top-landmark"));
   });
 
   it("returns null and does nothing when there are no sections at all", () => {
@@ -250,7 +257,7 @@ describe("focusDetailSection: direct jump -- reaching composer/attachments witho
     renderDetailPanel(root, task({ comments: manyComments(13) }), baseOpts());
     const ok = focusDetailSection(root, "composer");
     expect(ok).toBe(true);
-    expect(document.activeElement).toBe(root.querySelector(".detail-comment-input"));
+    expect(document.activeElement).toBe(root.querySelector(".detail-composer-landmark"));
   });
 
   it("jumps straight to attachments on the same long card", () => {
@@ -295,7 +302,7 @@ describe("switching cards mid-navigation resets position", () => {
     );
 
     expect(() => stepDetailSection(root, 1)).not.toThrow();
-    expect(document.activeElement).toBe(root.querySelector(".detail-title"));
+    expect(document.activeElement).toBe(root.querySelector(".detail-top-landmark"));
     document.body.removeChild(root);
   });
 });
@@ -324,13 +331,13 @@ describe("the nav bar UI (sticky jump control)", () => {
     const select = root.querySelector(".detail-nav-jump");
     select.value = "composer";
     select.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(document.activeElement).toBe(root.querySelector(".detail-comment-input"));
+    expect(document.activeElement).toBe(root.querySelector(".detail-composer-landmark"));
   });
 
   it("clicking Next/Prev steps through sections the same way the keyboard does", () => {
     renderDetailPanel(root, task({ comments: manyComments(5) }), baseOpts());
     root.querySelector(".detail-nav-next").dispatchEvent(new Event("click", { bubbles: true }));
-    expect(document.activeElement).toBe(root.querySelector(".detail-title"));
+    expect(document.activeElement).toBe(root.querySelector(".detail-top-landmark"));
     root.querySelector(".detail-nav-next").dispatchEvent(new Event("click", { bubbles: true }));
     expect(document.activeElement).toBe(root.querySelector(".detail-body-preview"));
   });

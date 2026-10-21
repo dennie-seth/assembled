@@ -89,6 +89,15 @@ function plainKeydown(target, key) {
   return event;
 }
 
+// FIX ROUND 2: a real keydown's `event.target` is whatever element currently has focus
+// (`document.activeElement`), NOT the element the previous test happened to dispatch on. Firing
+// every event on `document.body` regardless of where focus actually moved masked the exact bug
+// this round fixes -- see detailPanel.js's FIX ROUND 2 comments for the dead-end it caused. This
+// helper dispatches on the real current focus target, the way a browser actually does.
+function altKeydownOnActive(key) {
+  return altKeydown(document.activeElement ?? document.body, key);
+}
+
 afterEach(() => {
   document.body.innerHTML = "";
 });
@@ -106,39 +115,58 @@ describe("detail panel section-navigation keyboard shortcuts", () => {
 
   it("Alt+ArrowDown moves focus to the first section when nothing is focused yet", () => {
     altKeydown(document.body, "ArrowDown");
-    expect(document.activeElement).toBe(detailRoot.querySelector(".detail-title"));
+    expect(document.activeElement).toBe(detailRoot.querySelector(".detail-top-landmark"));
   });
 
-  it("Alt+ArrowDown repeatedly walks every named section in order", () => {
+  // FIX ROUND 2: this is the test that catches the real bug. Each keydown now fires on
+  // `document.activeElement` -- wherever the *previous* step actually left focus -- exactly like
+  // a browser does, instead of always on `document.body` (which bypassed shouldIgnoreDetailNavKey
+  // entirely and hid the dead-end: landing on "top", a real <input>, made every following
+  // Alt+ArrowDown a no-op because real text-entry focus correctly suppresses the shortcut).
+  it("Alt+ArrowDown repeatedly walks every named section in order, even through the top and composer landmarks", () => {
     const seenClasses = [];
     for (let i = 0; i < 6; i++) {
-      altKeydown(document.body, "ArrowDown");
+      altKeydownOnActive("ArrowDown");
       seenClasses.push(document.activeElement.className || document.activeElement.tagName);
     }
-    expect(seenClasses[0]).toContain("detail-title");
+    expect(seenClasses[0]).toContain("detail-top-landmark");
     expect(seenClasses[1]).toContain("detail-body-preview");
     expect(seenClasses[2]).toMatch(/^H[1-6]$/);
-    expect(seenClasses[4]).toContain("detail-comment-input");
+    expect(seenClasses[4]).toContain("detail-composer-landmark");
     expect(seenClasses[5]).toContain("detail-attachments");
   });
 
   it("Alt+ArrowUp moves backward", () => {
-    altKeydown(document.body, "ArrowDown");
-    altKeydown(document.body, "ArrowDown");
-    altKeydown(document.body, "ArrowUp");
-    expect(document.activeElement).toBe(detailRoot.querySelector(".detail-title"));
+    altKeydownOnActive("ArrowDown");
+    altKeydownOnActive("ArrowDown");
+    altKeydownOnActive("ArrowUp");
+    expect(document.activeElement).toBe(detailRoot.querySelector(".detail-top-landmark"));
   });
 
   it("Alt+C jumps straight to the composer regardless of current position", () => {
-    altKeydown(document.body, "ArrowDown"); // sits on "top"
-    altKeydown(document.body, "c");
-    expect(document.activeElement).toBe(detailRoot.querySelector(".detail-comment-input"));
+    altKeydownOnActive("ArrowDown"); // sits on "top" (a non-text-entry landmark, not a dead end)
+    altKeydownOnActive("c");
+    expect(document.activeElement).toBe(detailRoot.querySelector(".detail-composer-landmark"));
   });
 
   it("Alt+A jumps straight to attachments regardless of current position", () => {
-    altKeydown(document.body, "ArrowDown"); // sits on "top"
-    altKeydown(document.body, "a");
+    altKeydownOnActive("ArrowDown"); // sits on "top"
+    altKeydownOnActive("a");
     expect(document.activeElement.closest(".detail-attachments")).not.toBeNull();
+  });
+
+  it("Alt+ArrowDown past the composer landmark reaches attachments next -- composer does not swallow further steps", () => {
+    for (let i = 0; i < 5; i++) altKeydownOnActive("ArrowDown"); // top, body, acceptance, comments, composer
+    expect(document.activeElement).toBe(detailRoot.querySelector(".detail-composer-landmark"));
+    altKeydownOnActive("ArrowDown");
+    expect(document.activeElement.closest(".detail-attachments")).not.toBeNull();
+  });
+
+  it("Tab out of the top landmark reaches the real title input one step away, unchanged", () => {
+    altKeydownOnActive("ArrowDown"); // sits on the "top" landmark
+    const landmark = document.activeElement;
+    expect(landmark.className).toContain("detail-top-landmark");
+    expect(landmark.querySelector(".detail-title")).toBe(detailRoot.querySelector(".detail-title"));
   });
 
   it("a bare ArrowDown (no Alt) does not navigate -- native scrolling/select behaviour is left alone", () => {
@@ -229,14 +257,14 @@ describe("switching cards mid-navigation resets the section position", () => {
     await app.init();
 
     app.handleCardClick("T-0001");
-    altKeydown(document.body, "ArrowDown");
-    altKeydown(document.body, "ArrowDown");
-    altKeydown(document.body, "ArrowDown"); // somewhere mid-card-A
+    altKeydownOnActive("ArrowDown");
+    altKeydownOnActive("ArrowDown");
+    altKeydownOnActive("ArrowDown"); // somewhere mid-card-A
 
     app.handleCardClick("T-0002");
-    altKeydown(document.body, "ArrowDown");
+    altKeydownOnActive("ArrowDown");
 
-    expect(document.activeElement).toBe(detailRoot.querySelector(".detail-title"));
+    expect(document.activeElement).toBe(detailRoot.querySelector(".detail-top-landmark"));
     expect(detailRoot.dataset.taskId).toBe("T-0002");
   });
 });
