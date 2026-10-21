@@ -40,7 +40,13 @@ import { extractCodexResult } from "../src/runner/codexResultExtractor.js";
 import { publishCodexVerdict } from "../src/runner/codexVerdictPublisher.js";
 import { createRunLog } from "../src/runner/runLog.js";
 import { NdjsonEventParser } from "../src/runner/streamParser.js";
-import { writeRunState, readRunState, clearRunState, isRunLive } from "../src/runner/runState.js";
+import { writeRunState, readRunState, clearRunState, isRunLive, isPidAlive } from "../src/runner/runState.js";
+import {
+  reserveLaunchSlot,
+  releaseReservation,
+  reservationLeasePath,
+  DuplicateReservationError
+} from "../src/runner/launchReservation.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -83,6 +89,106 @@ export function buildReviewPrompt({ taskId, reviewedSha, acceptanceCriteriaVersi
   ].join("\n");
 }
 
+/** The fixed (executionId, invocationId) launchReservation.js key for "one review in flight at a
+ * time" per card -- `cardId` (the review job's own `reviewRunStateKey`) is what distinguishes one
+ * card's slot from another's; these two never vary. */
+export const REVIEW_SLOT_EXECUTION_ID = "codex-review";
+export const REVIEW_SLOT_INVOCATION_ID = "lock";
+
+/**
+ * Atomically claims the single "one review in flight at a time" slot for `cardId` (the review
+ * job's OWN reservation key, `reviewRunStateKey(taskId)` -- never the subject's bare taskId),
+ * reusing launchReservation.js's own `link()`-based exclusivity (`reserveLaunchSlot`,
+ * `DuplicateReservationError`) in place of the read-then-write runstate check this replaces (FIX
+ * ROUND 2, human comment (b)): that guard read "not live" and only later wrote a runstate, with a
+ * real window between the two where a second caller could read the identical "not live" answer
+ * and also pass -- the kind of race `runCodexReview.js` could never close by itself. Two callers
+ * racing to reserve the IDENTICAL `(cardId, executionId, invocationId)` key are arbitrated by the
+ * filesystem's own atomic `link`, not by either caller's own bookkeeping; losing that race is a
+ * real `EEXIST`, not a stale read.
+ *
+ * `launchReservation.js` never deletes a lease file itself (by design -- see its own docstring:
+ * leases are an append-only ledger), so reusing the identical key for every review of this card
+ * needs its own recycling step once a prior review has finished: on `DuplicateReservationError`,
+ * the existing lease is read directly and reclaimed -- the stale file removed, then a single
+ * retry -- when it is already marked `released`, or when its recorded owner `pid` is no longer
+ * alive. The pid-liveness check is the same `isPidAlive` primitive every other recovery path in
+ * this codebase already uses (`runState.js`, `codexVerdictPublisher.js`'s own claim recovery), so
+ * a review that was killed outright -- not merely one that threw and released cleanly -- still
+ * frees the slot for the next attempt rather than stranding the card behind a dead claim forever
+ * (the card's own edge case: "state explicitly how the claim becomes reclaimable").
+ */
+export async function claimReviewSlot({
+  runsDir,
+  cardId,
+  owner,
+  reserveLaunchSlotFn = reserveLaunchSlot,
+  readFileFn = (p) => fs.readFile(p, "utf8"),
+  unlinkFn = fs.unlink,
+  isPidAliveFn = isPidAlive,
+  now = () => new Date()
+}) {
+  const executionId = REVIEW_SLOT_EXECUTION_ID;
+  const invocationId = REVIEW_SLOT_INVOCATION_ID;
+
+  // Bounded to two attempts: the first either succeeds outright or finds a lease to inspect; the
+  // second only runs after that lease was proven stale and removed, so it either claims the now-
+  // free slot or discovers a genuinely live concurrent claimant that won the removal-then-reclaim
+  // race -- never a third generation within one call.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await reserveLaunchSlotFn({ runsDir, cardId, executionId, invocationId, owner, reservedCostUsd: 0, now });
+      return { claimed: true, executionId, invocationId };
+    } catch (err) {
+      if (!(err instanceof DuplicateReservationError)) throw err;
+      const leasePath = reservationLeasePath(runsDir, { cardId, executionId, invocationId });
+      let existing;
+      try {
+        existing = JSON.parse(await readFileFn(leasePath));
+      } catch {
+        continue; // raced with a concurrent reclaim removing the lease -- retry the reserve
+      }
+      const ownerPid = existing.owner && typeof existing.owner.pid === "number" ? existing.owner.pid : null;
+      const stillLive = existing.released !== true && ownerPid !== null && isPidAliveFn(ownerPid);
+      if (stillLive) {
+        return { claimed: false, reason: "review-already-in-flight", existing };
+      }
+      await unlinkFn(leasePath).catch(() => {});
+    }
+  }
+  return { claimed: false, reason: "review-slot-contended" };
+}
+
+/**
+ * Releases a review slot lease only when the CURRENT lease on disk is still the one `owner`
+ * itself reserved (same pid) -- never a lease some other process now owns, whether a foreign
+ * claim this process never held, or one reclaimed out from under a run that still thought it
+ * owned it. A no-op (returns `null`) on any mismatch, rather than releasing someone else's claim.
+ */
+export async function releaseOwnedReviewSlot({
+  runsDir,
+  cardId,
+  executionId,
+  invocationId,
+  owner,
+  outcome,
+  releaseReservationFn = releaseReservation,
+  readFileFn = (p) => fs.readFile(p, "utf8")
+}) {
+  const leasePath = reservationLeasePath(runsDir, { cardId, executionId, invocationId });
+  let existing;
+  try {
+    existing = JSON.parse(await readFileFn(leasePath));
+  } catch {
+    return null;
+  }
+  const ownerPid = existing.owner && typeof existing.owner.pid === "number" ? existing.owner.pid : null;
+  if (ownerPid !== owner.pid) {
+    return null;
+  }
+  return releaseReservationFn({ runsDir, cardId, executionId, invocationId, outcome });
+}
+
 /**
  * Publishes an immediate BLOCKED verdict for a precondition that refused to even start the
  * review -- reuses the publisher's own BLOCKED path (same as a real process failure) rather than
@@ -120,6 +226,8 @@ export async function runCodexReviewJob({
   isRunLiveFn = isRunLive,
   writeRunStateFn = writeRunState,
   clearRunStateFn = clearRunState,
+  claimReviewSlotFn = claimReviewSlot,
+  releaseReviewSlotFn = releaseOwnedReviewSlot,
   extractCodexResultFn = extractCodexResult,
   publishCodexVerdictFn = publishCodexVerdict,
   createRunner = (opts) => new CodexCliRunner(opts),
@@ -156,11 +264,16 @@ export async function runCodexReviewJob({
     return { jobId, refused: "subject-mid-run", publishResult };
   }
 
-  // Precondition 2 (acceptance: "duplicate-start case ... refused rather than overwriting a
-  // runstate"): a second invocation while a review of the same card is already in flight must
-  // not stomp the in-flight review's own runstate with a new pid.
-  const reviewState = await readRunStateFn({ runsDir, taskId: reviewKey });
-  if (await isRunLiveFn({ state: reviewState })) {
+  // Precondition 2 (acceptance: "the duplicate-start claim is taken atomically BEFORE
+  // runner.start() is called"): a second invocation while a review of the same card is already in
+  // flight must be refused atomically, never merely overwrite the in-flight review's own
+  // bookkeeping. FIX ROUND 2 (Dennie, human comment (b)) replaces the read-then-write runstate
+  // check that used to live here with `claimReviewSlotFn` -- launchReservation.js's own atomic
+  // `link()`-based exclusivity (see its own docstring above) -- keyed by the review job's OWN
+  // reservation cardId (`reviewKey`), never the subject's bare taskId.
+  const reviewOwner = { pid: process.pid, jobId };
+  const claim = await claimReviewSlotFn({ runsDir, cardId: reviewKey, owner: reviewOwner });
+  if (!claim.claimed) {
     await runLog.close();
     const publishResult = await publishPreflightBlock({
       tasksDir: path.join(worktreeDir, "tasks"),
@@ -169,27 +282,44 @@ export async function runCodexReviewJob({
       sprintId,
       acceptanceCriteriaVersion,
       reviewedSha,
-      reason: "review-already-in-flight",
-      detail: { reviewRunState: reviewState },
+      reason: claim.reason,
+      detail: { existingLease: claim.existing ?? null },
       publishCodexVerdictFn,
       gitHeadFn,
       worktreeDir
     });
-    return { jobId, refused: "review-already-in-flight", publishResult };
+    return { jobId, refused: claim.reason, publishResult };
   }
 
   const prompt = buildReviewPrompt({ taskId, reviewedSha, acceptanceCriteriaVersion, sprintId, jobId });
 
   const runner = createRunner({ command: codexBin, hostEnv: { ...process.env, CODEX_HOME: codexHome } });
   const startedAt = now();
-  const run = await runner.start({
-    task: { id: taskId },
-    prompt,
-    worktreeDir,
-    boardRunId: runLog.runId,
-    timeoutMs,
-    maxTotalTokens
-  });
+  let run;
+  try {
+    run = await runner.start({
+      task: { id: taskId },
+      prompt,
+      worktreeDir,
+      boardRunId: runLog.runId,
+      timeoutMs,
+      maxTotalTokens
+    });
+  } catch (err) {
+    // Edge case: "runner.start() throwing after the claim is taken -- the claim must be released
+    // on that path." A thrown start() never produced a child to track, so there is nothing else
+    // to clean up -- just free the slot for the next attempt before propagating the failure.
+    await releaseReviewSlotFn({
+      runsDir,
+      cardId: reviewKey,
+      executionId: claim.executionId,
+      invocationId: claim.invocationId,
+      owner: reviewOwner,
+      outcome: { status: "failed", reason: "start-threw" }
+    }).catch(() => {});
+    await runLog.close();
+    throw err;
+  }
 
   // Same liveness bookkeeping runOrchestrator.js's _runPhase writes for every other agent, right
   // after runner.start() returns -- but under `reviewKey`, never the subject's own `taskId` (see
@@ -286,6 +416,18 @@ export async function runCodexReviewJob({
   // review job's own runstate, the same way runOrchestrator.js's runCard() clears its own on the
   // way out. Never touches the subject card's own runstate, which this script never wrote.
   await clearRunStateFn({ runsDir, taskId: reviewKey });
+
+  // Free the atomic reservation claimed above -- ownership-checked (never releases a claim this
+  // process doesn't actually hold, see `releaseOwnedReviewSlot`'s own docstring), so the next
+  // review of this card can claim the slot fresh.
+  await releaseReviewSlotFn({
+    runsDir,
+    cardId: reviewKey,
+    executionId: claim.executionId,
+    invocationId: claim.invocationId,
+    owner: reviewOwner,
+    outcome: { status: "completed" }
+  }).catch(() => {});
 
   return { jobId, durationMs, exitCode, timedOut: run.timedOut, budgetExceeded: run.budgetExceeded, publishResult, evidencePath };
 }
