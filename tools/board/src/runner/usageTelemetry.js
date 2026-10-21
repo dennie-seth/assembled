@@ -444,11 +444,22 @@ export function revalidateReadingAt({ reading, now }) {
   return { ...reading, ageMs };
 }
 
-/** Applies `revalidateReadingAt` to every window in a `readUsageTelemetry()`-shaped result. */
+/**
+ * Applies `revalidateReadingAt` to every window in a `readUsageTelemetry()`-shaped result. A
+ * window missing from `readings` entirely (never produced by the real `readUsageTelemetry`,
+ * which always returns every `WINDOW_KINDS` entry as a reading object -- but not guaranteed by
+ * every caller's own decide()-shaped value, e.g. a timeout/error fallback or a test double)
+ * revalidates to a real `unavailable` reading object, matching every other "no data" case in this
+ * module -- never a bare `null`, which every per-window consumer (`classifyWindowCapacity`,
+ * `evaluateWindowAdmission`) dereferences unconditionally.
+ */
 export function revalidateTelemetryReadingsAt({ readings, now }) {
   const result = {};
   for (const windowKind of WINDOW_KINDS) {
-    result[windowKind] = revalidateReadingAt({ reading: readings?.[windowKind] ?? null, now });
+    const reading = readings?.[windowKind] ?? null;
+    result[windowKind] = reading
+      ? revalidateReadingAt({ reading, now })
+      : unavailableReading(windowKind, `no ${windowKind} reading to revalidate`, DEFAULT_MAX_STALENESS_MS[windowKind]);
   }
   return result;
 }
