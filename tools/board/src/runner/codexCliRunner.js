@@ -19,6 +19,22 @@ export const DEFAULT_ENV_ALLOWLIST = ["PATH", "HOME", "LANG", "LC_ALL", "TERM", 
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
+ * Spend ceiling (cumulative input+output+reasoning tokens across every `turn.completed` event
+ * in one run) if the caller doesn't override it. `codex exec --help` has no `--max-cost`/
+ * `--max-tokens` flag in this version (see docs/design/codex-reviewer-adapter-spike.md's
+ * "bounded runtime and budget" section) -- there is no pre-spend cap to configure, only a
+ * reactive one this adapter can enforce itself by reading usage off the NDJSON stream it already
+ * parses. 500k tokens is comfortably above the one real review's actual usage (~110k) while
+ * still being a real ceiling, not a number so large it can never fire.
+ */
+export const DEFAULT_MAX_TOTAL_TOKENS = 500_000;
+
+/** Sums the token fields `turn.completed`'s `usage` object carries -- never throws on a missing field. */
+function sumUsageTokens(usage) {
+  return (usage.input_tokens || 0) + (usage.output_tokens || 0) + (usage.reasoning_output_tokens || 0);
+}
+
+/**
  * Spawns `codex exec` read-only and non-interactively per review. Mirrors ClaudeCliRunner's
  * shape (buildInvocation is pure; start()/kill() are the only methods touching spawnFn) so this
  * is a second AgentRunner sibling, not a parallel coordinator -- see agentRunner.js.
@@ -90,7 +106,15 @@ export class CodexCliRunner extends AgentRunner {
     return { command: this.command, args, cwd: worktreeDir, env, prompt };
   }
 
-  async start({ task, prompt, worktreeDir, boardRunId, outputSchemaPath, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+  async start({
+    task,
+    prompt,
+    worktreeDir,
+    boardRunId,
+    outputSchemaPath,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    maxTotalTokens = DEFAULT_MAX_TOTAL_TOKENS
+  }) {
     const invocation = this.buildInvocation({ task, prompt, worktreeDir, boardRunId, outputSchemaPath });
     let child;
     try {
@@ -106,7 +130,7 @@ export class CodexCliRunner extends AgentRunner {
       return { runId: task.id, child: null, invocation, spawnError: err, timedOut: false };
     }
 
-    const run = { runId: task.id, child, invocation, spawnError: null, timedOut: false };
+    const run = { runId: task.id, child, invocation, spawnError: null, timedOut: false, budgetExceeded: false };
 
     child.on("error", (err) => {
       run.spawnError = err;
@@ -115,6 +139,41 @@ export class CodexCliRunner extends AgentRunner {
       child.stdin.on("error", () => {});
       child.stdin.write(invocation.prompt);
       child.stdin.end();
+    }
+
+    // Spend ceiling (T-0460 acceptance: "the one real review is bounded in runtime AND budget,
+    // and both bounds are enforced"). Reactive, not preventative -- see DEFAULT_MAX_TOTAL_TOKENS's
+    // docstring for why that's the only kind available from this CLI -- but it does take effect:
+    // cumulative usage is tallied off the same NDJSON stream the caller reads for its own
+    // purposes (multiple 'data' listeners on one stream coexist fine), and a breach kills the run
+    // the identical way the wall-clock timeout above does.
+    if (typeof maxTotalTokens === "number" && maxTotalTokens > 0 && child.stdout && typeof child.stdout.on === "function") {
+      let buffer = "";
+      let cumulativeTokens = 0;
+      child.stdout.on("data", (chunk) => {
+        if (run.budgetExceeded) return;
+        buffer += chunk.toString();
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+          if (line.trim().length === 0) continue;
+          let event;
+          try {
+            event = JSON.parse(line);
+          } catch {
+            continue; // a stray non-JSON line -- same tolerance as codexResultExtractor.js
+          }
+          if (event && event.type === "turn.completed" && event.usage) {
+            cumulativeTokens += sumUsageTokens(event.usage);
+            if (cumulativeTokens > maxTotalTokens) {
+              run.budgetExceeded = true;
+              this.kill(run);
+              return;
+            }
+          }
+        }
+      });
     }
 
     // Bounded runtime (T-0460 acceptance: "the one real review is bounded in runtime ... and
