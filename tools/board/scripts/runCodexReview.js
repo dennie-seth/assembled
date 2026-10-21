@@ -26,6 +26,7 @@ import { CodexCliRunner, DEFAULT_TIMEOUT_MS } from "../src/runner/codexCliRunner
 import { extractCodexResult } from "../src/runner/codexResultExtractor.js";
 import { publishCodexVerdict } from "../src/runner/codexVerdictPublisher.js";
 import { createRunLog } from "../src/runner/runLog.js";
+import { writeRunState, clearRunState } from "../src/runner/runState.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -89,6 +90,15 @@ async function main() {
     boardRunId: runLog.runId,
     timeoutMs
   });
+
+  // Same liveness bookkeeping runOrchestrator.js's _runPhase writes for every other agent, right
+  // after runner.start() returns (see its own writeRunStateFn call) -- so a board process that
+  // dies mid-review leaves the exact same evidence on disk any other in-flight phase would, and
+  // the existing orphanReaper.js crash-recovery sweep (reapOnStartup/sweepOnce) picks this run up
+  // on the next board restart with zero Codex-specific recovery code. See
+  // test/runner/codexBoardKillRecovery.test.js for the exercised (mocked) scenario.
+  const runPid = run.child ? run.child.pid : null;
+  await writeRunState({ runsDir, taskId, pid: runPid, runLogPath: runLog.path });
 
   let stdout = "";
   let stderr = "";
@@ -156,6 +166,12 @@ async function main() {
   const evidencePath = path.join(worktreeDir, "tasks", ".verdicts", `${taskId}.spike-evidence.json`);
   await fs.mkdir(path.dirname(evidencePath), { recursive: true });
   await fs.writeFile(evidencePath, JSON.stringify(evidence, null, 2), "utf8");
+
+  // This run's span is over (published, or evidence-recorded-as-failed) -- clear the runstate the
+  // same way runOrchestrator.js's runCard() does on its own way out, so a dead record never
+  // outlives the run it described (see clearRunState's own docstring on why that matters for
+  // every liveness check after it).
+  await clearRunState({ runsDir, taskId });
 
   process.stdout.write(`${JSON.stringify({ jobId, durationMs, exitCode, timedOut: run.timedOut, publishResult }, null, 2)}\n`);
   process.stdout.write(`evidence written to ${evidencePath}\n`);
