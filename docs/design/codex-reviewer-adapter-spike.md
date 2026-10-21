@@ -455,11 +455,29 @@ in §4 finished in 44.7s, nowhere near the 8-minute budget it ran under
 process in this spike -- only by the fake-timer unit test.
 
 **"Kill the board mid-review" (an actual process kill, not a timeout or cancellation signal) --
-mocked only.** No test in this spike sends a real `SIGKILL` to a live `codex exec` child and
-checks what the board sees afterward; `codexCliRunner.test.js`'s existing `kill()`/process-group
-tests (mirroring `ClaudeCliRunner`'s own, already-proven process-group behavior) cover "the
-adapter's own kill() works," not "the whole board process died and something else noticed." This
-is the one item from that edge case this spike did not exercise at all, mocked or real -- see §13.
+exercised, mocked.** A real VALIDATION round correctly flagged the original version of this
+section: nothing in this spike exercised "the whole board process died and something else
+noticed," only "the adapter's own `kill()` works" (`codexCliRunner.test.js`'s process-group
+tests). Fixed two ways:
+
+1. `runCodexReview.js` now calls `writeRunState`/`clearRunState` around the review exactly the
+   way `runOrchestrator.js`'s `_runPhase` does for every other agent's phase (right after
+   `runner.start()` returns, and on the way out once the run's span ends) -- so a Codex review in
+   flight when the board dies leaves the identical liveness evidence on disk any other phase
+   would, and needs zero Codex-specific recovery code to be found by...
+2. ...the board's *existing* `orphanReaper.js` sweep, exercised directly in
+   `test/runner/codexBoardKillRecovery.test.js` against that exact runstate shape, mocked via the
+   same `isPidAliveFn`-injection pattern `orphanReaper.test.js` already uses (no real board process
+   was killed): one case where the detached `codex` child outlives the dead board (pid still
+   alive) -> `reapOnStartup` re-adopts the card, leaving it `in-progress`, untouched; one case
+   where the child died along with the board (pid confirmed dead, stale heartbeat, no
+   corroborating fresh log) -> `reapOnStartup` reaps it to `blocked` with the standard recovery
+   note, the same outcome any other crashed phase gets.
+
+What the adapter did: nothing Codex-specific -- it participates in the same runstate bookkeeping
+every other phase already does. What the board saw: `reapOnStartup`'s existing liveness verdict,
+unmodified. What the subject card was left showing: `in-progress` (readopted) or `blocked`
+(reaped), per the two cases above.
 
 ## 9. Reuses the board's existing machinery
 
@@ -470,6 +488,7 @@ is the one item from that edge case this spike did not exercise at all, mocked o
 | Verdict archive (exactly-once-per-card append store) | `tools/board/src/lib/verdictArchive.js`'s `appendVerdictEntry`/`readVerdictEntries` | `codexVerdictPublisher.js` calls these directly -- the same store `runOrchestrator._handlePass`/`_handleFailValidation` already write to for Claude verdicts |
 | Atomic exclusive-create as the concurrency primitive | pattern from `tools/board/src/runner/launchReservation.js` (`fs.link`) | `defaultClaimDelivery` uses the same idea via `fs.open(path, "wx")` (§8b) |
 | Process-group kill/escalation constant | `tools/board/src/runner/runState.js`'s `DEFAULT_KILL_ESCALATION_MS` | `CodexCliRunner.kill()` uses it exactly as `ClaudeCliRunner.kill()` does |
+| Liveness runstate + crash-recovery sweep | `tools/board/src/runner/runState.js`'s `writeRunState`/`clearRunState`, `tools/board/src/runner/orphanReaper.js`'s `reapOnStartup`/`sweepOnce` | `runCodexReview.js` writes/clears a runstate record the same way `runOrchestrator.js`'s `_runPhase` does for every phase -- a board restart mid-review is recovered by the existing reaper, zero Codex-specific recovery code (see §8b's "kill the board mid-review" fix and `codexBoardKillRecovery.test.js`) |
 
 **Named but not wired in** (deliberately, for a spike -- see §13): `runOrchestrator.js`'s
 `_runPhase` (the one call site that invokes `this.runner.start(...)` for every phase) is where a
@@ -510,15 +529,21 @@ that kills the process group if it fires (§8b) -- shown taking effect under `vi
 in `codexCliRunner.test.js`. The real review ran under an 8-minute (`480000`ms) budget and
 finished in 44.7s, well inside it.
 
-**Spend ceiling**: enforced reactively, not preventatively, and this is an honest limitation, not
-a claimed capability this spike doesn't have. `codex exec --help` (full output captured during
-this spike's probing) has no `--max-cost`/`--max-tokens` flag or `-c` config key for a hard
-pre-spend cap in this version -- the only ceiling available from the CLI itself is the wall-clock
-one above. A dollar/token ceiling here can only be checked *after* a turn completes, from its
-`usage` event, same as §10's numbers -- i.e., the spend has already happened by the time it could
-be "enforced." This spike does not implement even that reactive check in code (no test asserts a
-run over some token threshold gets flagged); it is named here as the next concrete thing to add,
-not claimed as already working.
+**Spend ceiling**: enforced reactively, not preventatively -- and now actually implemented, not
+just named as a gap. `codex exec --help` (full output captured during this spike's probing) has
+no `--max-cost`/`--max-tokens` flag or `-c` config key for a hard pre-spend cap in this version --
+the only *preventative* ceiling available from the CLI itself is the wall-clock one above. A
+real VALIDATION round correctly flagged the first version of this section for claiming this as
+only "the next concrete thing to add" rather than building it. Fixed: `CodexCliRunner.start()`
+now parses `turn.completed` events off the same NDJSON stdout stream it already reads for the
+wall-clock path, sums each turn's `input_tokens`/`output_tokens`/`reasoning_output_tokens`, and
+calls the same process-group `kill()` the timeout path uses the instant the running total crosses
+`maxTotalTokens` (default `DEFAULT_MAX_TOTAL_TOKENS`, 500,000 -- comfortably above the one real
+review's ~110k actual usage). This is still reactive, not preventative -- the spend that triggers
+the breach has already happened by the time it's checked, same honest limitation as before -- but
+it is now a real enforced bound: `codexCliRunner.test.js`'s "token budget" block drives it with
+synthetic `turn.completed` events and asserts the kill actually fires, including a case proving a
+run that stays within budget is never killed and one proving a breach doesn't double-kill.
 
 ## 12. Edge cases from the card, mapped to what actually happened
 
@@ -564,11 +589,13 @@ not claimed as already working.
   own self-review -- not built.
 
 **Explicitly mocked, per the card's own allowance, and said so:** restart recovery (via the
-exactly-once concurrency test, §8b) and job cancellation (via the direct `cancelled: true` test,
-§8b) were exercised through their real code paths with synthetic triggers, not a real board
-process crash or a real cancel signal from a live orchestrator. **Not exercised at all, mocked or
-real:** a real external kill of the board process mid-review and observing what's left on the
-subject card afterward (§8b, end).
+exactly-once concurrency test, §8b), job cancellation (via the direct `cancelled: true` test,
+§8b), and "kill the board mid-review" (via `codexBoardKillRecovery.test.js` against the existing
+`orphanReaper.js` sweep, §8b) were all exercised through their real code paths with synthetic
+triggers -- an injected `isPidAliveFn`, a constructed runstate, a direct `cancelled: true` call --
+not a real board process crash, a real cancel signal from a live orchestrator, or a real
+`SIGKILL` sent to a live `codex exec` child. Nothing in this spike's own list of edge cases is
+left unexercised, mocked or real, as of this round.
 
 **Per the working agreement's own framing (as described in this card, since the doc itself isn't
 readable here): a working adapter is milestone 1, not readiness.** This spike establishes that
@@ -578,10 +605,12 @@ that would make it a reviewer the board actually depends on day to day.
 
 ## 14. Test/suite status and gitleaks
 
-- `npx vitest run` from `tools/board/`: **228 test files, 4569 tests, all passing** (includes this
-  card's 4 new test files: `codexVerdictSchema.test.js`, `codexCliRunner.test.js`,
-  `codexVerdictPublisher.test.js`, `codexResultExtractor.test.js`, plus every pre-existing test in
-  the suite -- no regressions).
+- `npx vitest run` (`npm test`) from `tools/board/`: **229 test files, 4577 tests, all passing**
+  (includes this card's 5 test files: `codexVerdictSchema.test.js`, `codexCliRunner.test.js`
+  (now also covering the token-budget ceiling, §11), `codexVerdictPublisher.test.js`,
+  `codexResultExtractor.test.js`, and `codexBoardKillRecovery.test.js` (§8b), plus every
+  pre-existing test in the suite -- no regressions).
+- `npm run lint` (`eslint .`) from `tools/board/`: clean.
 - `git status --porcelain`: empty at the end of this run (confirmed before stopping).
 - **gitleaks: not run.** The `infra` persona (and no persona checked) holds a grant to execute
   `~/.local/bin/gitleaks` -- confirmed by reading `.claude/agents/infra.md`'s tool list, which has
