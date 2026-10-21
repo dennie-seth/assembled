@@ -150,6 +150,20 @@ describe("revalidateTelemetryReadingsAt -- applies the same check to every windo
     expect(result.five_hour.classification).toBe(READING_STATUS.STALE);
     expect(result.seven_day.classification).toBe(READING_STATUS.UNAVAILABLE);
   });
+
+  it("a window missing from `readings` entirely gets a real unavailable reading object, never a bare null a downstream consumer would crash dereferencing", () => {
+    const result = revalidateTelemetryReadingsAt({ readings: {}, now: NOW_MS });
+
+    expect(result.five_hour).not.toBeNull();
+    expect(result.five_hour.windowKind).toBe("five_hour");
+    expect(result.five_hour.classification).toBe(READING_STATUS.UNAVAILABLE);
+    expect(result.five_hour.utilization).toBeNull();
+
+    expect(result.seven_day).not.toBeNull();
+    expect(result.seven_day.windowKind).toBe("seven_day");
+    expect(result.seven_day.classification).toBe(READING_STATUS.UNAVAILABLE);
+    expect(result.seven_day.utilization).toBeNull();
+  });
 });
 
 function fakeChild({ pid = 4242 } = {}) {
