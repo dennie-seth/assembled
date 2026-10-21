@@ -11,6 +11,17 @@
      tests. */
   --terminal-reserve: 18rem;
   --terminal-reserve-collapsed: 4.25rem;
+  /* T-0462's sticky section-nav bar (below) reserves this much height for its single-line
+     layout -- enough for its 0.375rem top/bottom padding band plus one line of button text.
+     `--detail-nav-scroll-margin` is written as its own literal (not `calc(var(--detail-nav-height)
+     * 2)`) for the same reason `--terminal-reserve` above is a literal rather than a calc() of
+     `--terminal-height`: happy-dom, this project's default test environment, may not resolve
+     `calc()`, and both values are read by tests. It is double `--detail-nav-height` because at a
+     narrow width `.detail-nav`'s `flex-wrap: wrap` promotes it to two lines, roughly doubling its
+     real occupied height -- the reserved scroll margin already covers that worst case up front
+     rather than trying to detect viewport width at scroll time. */
+  --detail-nav-height: 2.5rem;
+  --detail-nav-scroll-margin: 5rem;
 }
 
 /* Full-height flex chain (body -> #board -> .board -> .column -> .column-cards) so each
@@ -325,13 +336,23 @@ body:has(#terminal-panel.collapsed) #side-panel {
   cursor: not-allowed;
 }
 
-/* T-0462: sticky section-nav bar inside #detail. `position: sticky` (never `fixed`) is
-   deliberate: a sticky element still occupies its own box in normal document flow, so every
-   sibling after it (title, body, comments, composer, attachments) is laid out BELOW its
-   reserved space from the very first render -- there is no scroll position at which that
-   content could end up underneath it, the way a `fixed`/`absolute` overlay would need a
-   separate reserved-space rule (like --terminal-reserve above) to avoid. `flex-wrap: wrap`
-   lets it degrade to two lines at a narrow width instead of overlapping anything. */
+/* T-0462: sticky section-nav bar inside #detail. `position: sticky` (never `fixed`) is used
+   so it still occupies a box in normal document flow at its ORIGINAL position -- title and
+   everything after it are laid out below that reserved space from the first render, so there
+   is no "the nav was never in flow at all" gap to account for. But sticky is NOT a free pass
+   against overlap once scrolling starts: once #detail (a real `overflow-y: auto` scroll
+   container, see below) scrolls past the nav's flow position, the nav detaches and stays
+   pinned at `top: 0` while later content keeps scrolling past underneath it -- exactly like a
+   `fixed` header would. A previous version of this comment claimed sticky alone made overlap
+   impossible; that was wrong, and a reviewer caught it (T-0462 FAIL round 1): scroll the
+   composer, the last comment, or the first line of the body to the top of #detail and the nav
+   covers roughly its own height (`--detail-nav-height`, 2.5rem single-line / ~5rem wrapped at a
+   narrow width) of it. The actual mitigation is the `[data-detail-section]` rule below: every
+   landmark `stepDetailSection`/`focusDetailSection` can scroll to gets `scroll-margin-top:
+   var(--detail-nav-scroll-margin)`, so `scrollIntoView()` (which honours scroll-margin per the
+   CSSOM View spec) always leaves that much clearance above the target instead of parking its
+   top edge flush under the bar. `flex-wrap: wrap` lets the bar degrade to two lines at a narrow
+   width instead of overflowing its own box. */
 .detail-nav {
   position: sticky;
   top: 0;
@@ -340,6 +361,7 @@ body:has(#terminal-panel.collapsed) #side-panel {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
+  min-height: var(--detail-nav-height);
   padding: 0.375rem 0;
   margin-bottom: 0.5rem;
   background: Canvas;
@@ -355,6 +377,14 @@ body:has(#terminal-panel.collapsed) #side-panel {
 .detail-nav-next:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* The reserved-clearance half of the mitigation described above -- applied to every landmark
+   `listDetailSections` finds (detailPanel.js tags each with `dataset.detailSection`), not just
+   the composer/comment/body ones called out in the acceptance criteria, so a future section
+   never has to remember to opt in. */
+[data-detail-section] {
+  scroll-margin-top: var(--detail-nav-scroll-margin);
 }
 
 .detail-field {
