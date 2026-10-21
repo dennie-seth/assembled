@@ -349,3 +349,95 @@ class TestFigureHeightMatchesSharedScale:
         assert measured == pytest.approx(38.90609200000001, abs=1e-6)
         assert FIGURE_PX * 0.9 < measured < FIGURE_PX * 1.1
         assert result.character_scale == CHARACTER_SCALE
+
+
+class TestArmsRideTheBreath:
+    """Fix round (2026-10-21): the arms stayed put while the torso rose and fell --
+    `rig_compositor.build_placements` was adding `upper.upper_dy` to
+    `attach_world("shoulder")` but not to a caller-supplied `shoulder_points`, and
+    idle's two-point attach (T-0436/T-0437) always supplies one. The breath-extreme
+    phases are located from `idle_cycle.breath` itself, not hardcoded frame indices
+    -- `breath` rests at both ends of the cycle, so its min/max over the loop's own
+    sampled phases are the two frames that most clearly show (or fail to show) the
+    coupling."""
+
+    @staticmethod
+    def _breath_extreme_phases(frame_count: int = 12) -> tuple[float, float]:
+        phases = [i / frame_count for i in range(frame_count)]
+        breaths = [idle_cycle.breath(p) for p in phases]
+        return phases[breaths.index(min(breaths))], phases[breaths.index(max(breaths))]
+
+    def test_shoulder_and_forearm_move_with_torso_between_breath_extremes(self):
+        low_phase, high_phase = self._breath_extreme_phases()
+        low = {p.name: p for p in idle_cycle.build_placements_at(phase=low_phase)}
+        high = {p.name: p for p in idle_cycle.build_placements_at(phase=high_phase)}
+
+        torso_dy = high["torso"].target_xy[1] - low["torso"].target_xy[1]
+        assert abs(torso_dy) > 0.5, (
+            f"breath extremes should move the torso measurably, got {torso_dy}px"
+        )
+
+        for side in ("R", "L"):
+            sh_name, fa_name = f"shoulder_{side}", f"forearm_{side}"
+            shoulder_dy = high[sh_name].target_xy[1] - low[sh_name].target_xy[1]
+            forearm_dy = high[fa_name].target_xy[1] - low[fa_name].target_xy[1]
+            assert shoulder_dy == pytest.approx(torso_dy, abs=1e-6), (
+                f"{sh_name} moved {shoulder_dy}px between breath extremes, "
+                f"torso moved {torso_dy}px -- arm is not riding the torso"
+            )
+            assert forearm_dy == pytest.approx(torso_dy, abs=1e-6), (
+                f"{fa_name} moved {forearm_dy}px between breath extremes, "
+                f"torso moved {torso_dy}px -- arm is not riding the torso"
+            )
+
+    def test_shoulder_x_and_lateral_offset_are_undisturbed_by_the_breath_term(self):
+        """The breath term is added to y only -- it must not touch the x the lateral
+        offset already resolved, or disturb the one-offset-per-chain rule."""
+        low_phase, high_phase = self._breath_extreme_phases()
+        low = {p.name: p for p in idle_cycle.build_placements_at(phase=low_phase)}
+        high = {p.name: p for p in idle_cycle.build_placements_at(phase=high_phase)}
+        for side in ("R", "L"):
+            sh_name, fa_name = f"shoulder_{side}", f"forearm_{side}"
+            assert low[sh_name].target_xy[0] == pytest.approx(high[sh_name].target_xy[0])
+            assert low[fa_name].target_xy[0] == pytest.approx(high[fa_name].target_xy[0])
+
+    def test_hip_points_not_given_the_breath_term(self):
+        """The hips/feet must stay planted regardless of the shoulder fix -- only
+        `shoulder_points` gets `upper_dy` added, never `hip_points`."""
+        low_phase, high_phase = self._breath_extreme_phases()
+        low = {p.name: p for p in idle_cycle.build_placements_at(phase=low_phase)}
+        high = {p.name: p for p in idle_cycle.build_placements_at(phase=high_phase)}
+        for side in ("R", "L"):
+            th_name = f"thigh_{side}"
+            assert low[th_name].target_xy == high[th_name].target_xy, (
+                f"{th_name} moved between breath extremes -- hips must stay planted"
+            )
+
+    def test_a_zero_breath_frame_does_not_shift_the_arms(self):
+        """Rounding must not let a sub-pixel breath term shift the arms on a frame
+        where the torso itself has not moved -- phase 0.0 has `breath(0.0) == 0.0`
+        exactly, so `upper_dy` is exactly 0.0 and the arms must land exactly where
+        the bare canonical points (no breath term at all) put them."""
+        placements = {p.name: p for p in idle_cycle.build_placements_at(phase=0.0)}
+        shoulder_points, _ = idle_cycle.canonical_points(RIG)
+        assert idle_cycle.breath(0.0) == 0.0
+        # shoulder_R carries no lateral offset (only the far/_L side does), so its
+        # placed target is the raw canonical point, untouched by the breath term.
+        assert placements["shoulder_R"].target_xy == shoulder_points["R"]
+
+
+class TestReferencePoseUnmovedByTheArmBreathFix:
+    """`reference_pose_T0436.upper_pose` always sets `upper_dy=0.0` -- adding a zero
+    term to a caller-supplied `shoulder_points` is a provable no-op, verified here
+    rather than merely assumed."""
+
+    def test_reference_pose_shoulder_targets_equal_the_raw_canonical_points(self):
+        placements = {p.name: p for p in refpose.build_reference_placements()}
+        points = refpose.canonical_world_points(RIG, hip_world=(0.0, 0.0))
+        # shoulder_R carries no lateral offset (the near side) so comparing it
+        # directly against the raw canonical point isolates the breath term alone.
+        assert placements["shoulder_R"].target_xy == points["shoulder_R"]
+
+    def test_reference_render_still_resolves_the_same_shoulder_points(self):
+        upper = refpose.upper_pose(0.0, 257.0)
+        assert upper.upper_dy == 0.0
