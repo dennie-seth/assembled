@@ -962,3 +962,82 @@ exercise the real default safely. This was the one gap.
 an unmet dependency"` dropped from ~5.85s wall to ~1.0s (test itself: ~4ms). Two consecutive full
 `npx vitest run` passes: 226 files / 4514 tests, no failures, no outlier durations
 (~16s wall each, both well under the 10s per-test timeout that previously tripped under load).
+
+### The revalidation itself ran at the wrong point in time (fix round 6)
+
+**The defect (reviewer, 2026-10-21T17:01:51.409Z, correcting an earlier "already fixed" call of
+the reviewer's own).** Fix round 4 made `decideLaunchAdvisory` (`advisoryLogger.js`) revalidate a
+threaded-through `telemetryReadingsHint` for age/reset via `revalidateTelemetryReadingsAtFn` --
+but it does that exactly once, at the very TOP of `buildLaunchDecide`'s `innerDecide`
+(`launchAdvisory.js`), before `listCardUsageEntriesFn`'s own await, before the capacity lock's own
+queue wait (which can hold this turn behind every other concurrent launch's own critical section),
+and before `listActiveReservationsFn`/`sumActiveReservedRemainingCostUsdFn` inside the lock await
+real filesystem I/O. `evaluateAdmissionFn` -- the thing that actually turns a reading into an
+admit/hold -- ran AFTER all of that, still consuming the classification computed before any of it.
+A window that went stale, or whose reset elapsed, strictly BETWEEN that early revalidation and the
+admission evaluation was still evaluated as "fresh", because nothing re-checked it at the later
+point. The reviewer's own instruction from fix round 4 ("validate age and reset at the point of
+consumption, not only at the point of reading") had been implemented at a point that still
+preceded consumption, not at consumption itself.
+
+**The fix.** `buildLaunchDecide` now calls `revalidateTelemetryReadingsAtFn` a SECOND time,
+immediately before `evaluateAdmissionFn`, INSIDE the capacity lock, AFTER
+`listActiveReservationsFn` and `sumActiveReservedRemainingCostUsdFn` have both resolved -- using a
+new `nowMsFn` parameter (a plain ms-number clock, default `Date.now`, deliberately distinct from
+the existing `now` Date-factory used for ISO timestamps elsewhere in this module -- the two have
+different shapes and nothing conflates them). The resulting snapshot
+(`telemetryReadingsAtEvaluation`) is what `evaluateAdmissionFn` actually receives, and it is also
+what gets persisted via `recordAdvisoryDecisionFn` and returned in the `decide()` record -- so the
+decision records the reading it actually used for admission, not the earlier, possibly-superseded
+one. The original early revalidation inside `decideLaunchAdvisory` is left in place (harmless, and
+still correct for its own purpose: it keeps `decideLaunchAdvisory`'s own standalone contract
+intact for any caller that doesn't go through `buildLaunchDecide`'s lock at all) -- this fix adds a
+second check at the point that actually matters, it does not remove the first.
+
+**Test evidence (`launchAdvisory.test.js`, "T-0438 fix round 6" describe block).** Three tests
+drive the real `buildLaunchDecide` with the real `evaluateAdmission` and the real
+`revalidateTelemetryReadingsAt`, injecting a clock (`nowMsFn`) that only advances DURING
+`listActiveReservationsFn`'s or `sumActiveReservedRemainingCostUsdFn`'s own awaited call --
+never before it starts:
+
+- A `measured` five-hour reading that ages past `DEFAULT_MAX_STALENESS_MS.five_hour` while
+  `listActiveReservationsFn` is in flight is downgraded to `stale` (`utilization: null`) by the
+  time `evaluateAdmissionFn` runs; `record.admission.windows.five_hour.holdReason` is
+  `no_measured_window_reading`, not an admit computed against the earlier, now-stale snapshot.
+- A reset (`resetsAtMs`) crossed while `sumActiveReservedRemainingCostUsdFn` is in flight
+  downgrades the same reading to `unavailable` by evaluation time, same hold reason.
+- A reading still genuinely within bound at the moment of evaluation is unaffected --
+  `evaluateCall.telemetryReadings.five_hour` stays `measured`/`0.37`, holding only on the already-
+  documented, separately out-of-scope `units_not_comparable` (T-0402), proving this fix is
+  one-directional (downgrade-only), same as `revalidateReadingAt` itself already guarantees.
+
+Before this fix, all three of the first two tests' assertions failed with `classification:
+"measured"` where `"stale"`/`"unavailable"` was expected -- i.e. `evaluateAdmissionFn` was handed
+the pre-awaits snapshot. After the fix, all three pass.
+
+**A second, previously latent defect surfaced while wiring this in.** `revalidateTelemetryReadingsAt`
+mapped a window absent from its `readings` argument to a bare `null` (`readings?.[windowKind] ??
+null`, then passed straight through since `revalidateReadingAt` early-returns `null` unchanged).
+Every real caller of `readUsageTelemetry` always gets both `WINDOW_KINDS` keys populated, so this
+never showed up in production -- but `cardLaunch.test.js`'s "a terminal marker never outlives its
+use ... a NORMAL (non-fallback) decision write" test uses a `decideLaunchAdvisoryFn` double that
+legitimately resolves (not throws) with `telemetryReadings: {}`, and once that object started
+flowing through the new before-evaluation revalidation call, `recordAdvisoryDecisionFn`'s real
+`buildTelemetryFreshness` -> `classifyWindowCapacity` crashed dereferencing `reading.windowKind` on
+that `null`. Fixed in `usageTelemetry.js`: a missing window now revalidates to a real `unavailable`
+reading object (same shape `unavailableReading` already produces for every other "no data" case in
+this module), never a bare `null`. Pinned by a new test in
+`usageTelemetryDecisionCarryover.test.js` ("a window missing from `readings` entirely gets a real
+unavailable reading object, never a bare null a downstream consumer would crash dereferencing").
+
+**Cost: zero.** This round is a pure restructuring of when an already-computed, in-memory
+revalidation function runs -- no new probe, no new scan, no new filesystem or process I/O of any
+kind. `revalidateTelemetryReadingsAtFn` is a synchronous, pure function; calling it twice instead
+of once costs CPU cycles on an already-in-memory object, not a new I/O round trip.
+
+**The bound and cadence, reconciled -- unchanged, and still correctly unchanged.** This fix does
+not touch `DEFAULT_MAX_STALENESS_MS.five_hour`, and does not need to: the problem was never that
+the bound was wrong, it was that the bound was being checked against the wrong instant. Checking
+it again, correctly, immediately before the value is consumed, is what "The bound and the cadence,
+reconciled" (above) already argued for -- this round makes that argument true in the one place it
+previously wasn't.
