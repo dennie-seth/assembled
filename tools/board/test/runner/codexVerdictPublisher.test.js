@@ -516,6 +516,105 @@ describe("publishCodexVerdict -- recoverable delivery, not a one-shot claim that
     expect(statuses).toEqual(["duplicate", "published"]);
     expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
     expect(archive.store.get("T-0460")).toHaveLength(1);
+
+    // FIX ROUND 2 (Dennie, human comment (a)): the pre-fix mechanism arbitrated a stale claim's
+    // recovery through a SECOND exclusive marker file (`<marker>.takeover`). That file must never
+    // exist with the collapsed single-marker design -- there is exactly one claim/publication
+    // state machine, not two cooperating ones.
+    await expect(fs.access(`${markerPath}.takeover`)).rejects.toThrow();
+  });
+
+  // FIX ROUND 2 (Dennie, human comment (a), P2): the pre-fix `.takeover` marker had the exact
+  // defect the FIRST marker was fixed for, one level up -- its mere existence proved a takeover
+  // was CLAIMED, never that it FINISHED. A crash after creating `.takeover` but before its own
+  // append returned left it behind forever, and every later attempt lost the race to a dead pid's
+  // marker and returned duplicate/empty permanently. With the collapsed single-marker design,
+  // "crash during a recovery attempt" and "crash during the very first claim" are the identical
+  // code path: there is no second-generation marker shape to get stuck behind at all.
+  it("a dead claim left behind by a crashed RECOVERY attempt (not the original claimant) is still recovered through the same single marker, not a second one", async () => {
+    const archive = makeFakeArchive();
+    const deliveryId = "crashed-during-recovery-itself";
+    const markerPath = deliveryMarkerPath(tasksDir, "T-0460", deliveryId);
+    await fs.mkdir(path.dirname(markerPath), { recursive: true });
+    // Simulates the state left behind the instant a PREVIOUS recovery attempt (pid 222222, itself
+    // recovering an earlier dead claim) died before its own append returned: the marker now shows
+    // a second dead pid, uncompleted, no archive entry -- there is no separate `.takeover` file to
+    // inspect, because the collapsed design never wrote one.
+    await fs.writeFile(markerPath, JSON.stringify({ pid: 222222, claimedAt: new Date().toISOString() }), "utf8");
+
+    const result = await publishCodexVerdict({
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId,
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A,
+      isPidAliveFn: (pid) => pid !== 222222,
+      ...archive
+    });
+
+    expect(result.status).toBe("published");
+    expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
+    expect(archive.store.get("T-0460")).toHaveLength(1);
+
+    const markerAfter = JSON.parse(await fs.readFile(markerPath, "utf8"));
+    expect(markerAfter.completed).toBe(true);
+    await expect(fs.access(`${markerPath}.takeover`)).rejects.toThrow();
+  });
+
+  it("two simultaneous recovery attempts against the same stuck (dead-pid) claim still leave exactly one archive entry, with no second marker file ever created", async () => {
+    const archive = makeFakeArchive();
+    const deliveryId = "two-simultaneous-recoveries";
+    const markerPath = deliveryMarkerPath(tasksDir, "T-0460", deliveryId);
+    await fs.mkdir(path.dirname(markerPath), { recursive: true });
+    await fs.writeFile(markerPath, JSON.stringify({ pid: 999999, claimedAt: new Date().toISOString() }), "utf8");
+
+    const args = {
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId,
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A,
+      isPidAliveFn: (pid) => pid !== 999999,
+      ...archive
+    };
+
+    const results = await Promise.all([publishCodexVerdict(args), publishCodexVerdict(args), publishCodexVerdict(args)]);
+
+    const publishedCount = results.filter((r) => r.status === "published").length;
+    expect(publishedCount).toBe(1);
+    expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
+    expect(archive.store.get("T-0460")).toHaveLength(1);
+    await expect(fs.access(`${markerPath}.takeover`)).rejects.toThrow();
+  });
+
+  it("after winning recovery of a stale claim, the archive is re-read and treated as authoritative BEFORE appending -- an entry already present is never appended a second time even though the marker never got marked completed", async () => {
+    const archive = makeFakeArchive();
+    const deliveryId = "archive-authoritative-on-recovery";
+    const markerPath = deliveryMarkerPath(tasksDir, "T-0460", deliveryId);
+    await fs.mkdir(path.dirname(markerPath), { recursive: true });
+    // The dead claimant's marker never got marked `completed: true` -- exactly the shape a crash
+    // right after `appendEntryFn` resolved (but before the completion overwrite) leaves behind.
+    await fs.writeFile(markerPath, JSON.stringify({ pid: 999999, claimedAt: new Date().toISOString() }), "utf8");
+    const preExisting = { deliveryId, jobId: "job-1", ticketId: "T-0460", sprintId: "sprint-7", dispatchedSha: SHA_A, heading: "Codex Review: PASS", timestamp: "2026-10-21T00:00:00.000Z", outcome: "PASS", text: "..." };
+    await archive.appendEntryFn(tasksDir, "T-0460", preExisting);
+
+    const result = await publishCodexVerdict({
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId,
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A,
+      isPidAliveFn: (pid) => pid !== 999999,
+      ...archive
+    });
+
+    expect(result.status).toBe("duplicate");
+    expect(result.entry).toEqual(preExisting);
+    expect(archive.appendEntryFn).toHaveBeenCalledTimes(1); // only the pre-seeded call -- never a second append
+    expect(archive.store.get("T-0460")).toHaveLength(1);
   });
 });
 
