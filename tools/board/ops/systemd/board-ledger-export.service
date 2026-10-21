@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh and push the assembled board approval ledger when it changed or is about to go stale
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/board-ledger-export.sh

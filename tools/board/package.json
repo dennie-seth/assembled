@@ -22,6 +22,7 @@
     "check:live-run": "node scripts/checkLiveRun.js",
     "check:comfyui-regime": "node scripts/checkComfyUiRegime.js",
     "vet:ready": "node ops/vetAndReady.js",
+    "export:ledger:scheduled": "node ops/exportApprovalLedgerScheduled.js",
     "deploy": "bash scripts/deploy.sh",
     "backup:db": "node scripts/backupDb.js",
     "import:db": "node scripts/importTasksToDb.js"
