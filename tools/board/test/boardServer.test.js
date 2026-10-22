@@ -3,6 +3,21 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
+
+// Every path to `done` (a PATCH, a comment-approval, and now the merge reconciler below) ends
+// in httpApi.js's applyTerminalStatusEffects, which fire-and-forgets a REAL `pullDevelop` --
+// `git fetch origin develop` + a merge -- against whatever `repoRoot` it's given. boardServer.js
+// always wires that to this process's own REPO_ROOT (the actual worktree this test file lives
+// in), so leaving it real here would mean every test that reaches `done` fires a real network
+// git operation against this checkout's own branch. Only `pullDevelop` is faked (same technique
+// `httpApi.done.test.js` already uses) -- every other gitOps export (commitTaskFile, etc.) stays
+// real, since nothing else in this file depends on faking them.
+vi.mock("../src/runner/gitOps.js", async () => {
+  const actual = await vi.importActual("../src/runner/gitOps.js");
+  return { ...actual, pullDevelop: vi.fn().mockResolvedValue({ advanced: false, before: "x", after: "x" }) };
+});
+
+import { pullDevelop } from "../src/runner/gitOps.js";
 import { startBoardServer } from "../src/server/boardServer.js";
 import { serializeTask } from "../src/lib/taskParser.js";
 import { FsTaskStore } from "../src/lib/fsTaskStore.js";
@@ -641,5 +656,152 @@ describe("usage-ledger drain on shutdown (T-0367 fix round 3)", () => {
 
     warnSpy.mockRestore();
     await rmTemp(localTasksDir);
+  });
+});
+
+// T-0434 sat in `review` with its PR already merged because the merge happened while the board
+// was down -- a live-event listener alone would have missed it too. These tests exercise the
+// actual fix through `startBoardServer` itself (never by calling the reconciler's own methods
+// directly, which is the exact gap a prior review round flagged: nothing proved the wiring in
+// boardServer.js -- as opposed to the reconciler module in isolation -- actually runs). Each test
+// drives a real `gh` invocation through a fake `gh` on PATH, the same technique githubOps.test.js
+// uses, so this is a genuine end-to-end path: card file on disk -> startBoardServer -> real
+// (faked-transport) `gh pr view` -> card flips to done, observed back through the REST API.
+describe("merge reconciler wiring (T-0458) -- recovers a merge missed while the board was down, through startBoardServer itself", () => {
+  const FAKE_GH_PR_VIEW = `#!/usr/bin/env bash
+set -e
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  cat "$FAKE_GH_STATE/pr-view-result.json"
+  exit 0
+fi
+echo "unknown gh invocation: $@" >&2
+exit 1
+`;
+
+  let mergeBinDir;
+  let mergeStateDir;
+  let mergeTmpRoot;
+  let originalPath;
+  let originalState;
+  let envBackup;
+
+  beforeEach(async () => {
+    pullDevelop.mockClear();
+    mergeTmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-mergewiring-"));
+    mergeBinDir = path.join(mergeTmpRoot, "bin");
+    mergeStateDir = path.join(mergeTmpRoot, "state");
+    await fs.mkdir(mergeBinDir, { recursive: true });
+    await fs.mkdir(mergeStateDir, { recursive: true });
+    await fs.writeFile(path.join(mergeBinDir, "gh"), FAKE_GH_PR_VIEW, { mode: 0o755 });
+
+    originalPath = process.env.PATH;
+    originalState = process.env.FAKE_GH_STATE;
+    process.env.PATH = `${mergeBinDir}:${originalPath}`;
+    process.env.FAKE_GH_STATE = mergeStateDir;
+    envBackup = {};
+  });
+
+  afterEach(async () => {
+    process.env.PATH = originalPath;
+    process.env.FAKE_GH_STATE = originalState;
+    for (const [key, value] of Object.entries(envBackup)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rmTemp(mergeTmpRoot);
+  });
+
+  function setEnv(key, value) {
+    if (!(key in envBackup)) envBackup[key] = process.env[key];
+    process.env[key] = value;
+  }
+
+  async function writeMergedPrFixture({ headRefName }) {
+    await fs.writeFile(
+      path.join(mergeStateDir, "pr-view-result.json"),
+      JSON.stringify({
+        url: "https://github.com/example/repo/pull/477",
+        state: "MERGED",
+        headRefName,
+        number: 477
+      }),
+      "utf8"
+    );
+  }
+
+  async function waitForTaskStatus(port, id, status, { timeoutMs = 2000, intervalMs = 20 } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    let last;
+    while (Date.now() < deadline) {
+      const res = await fetch(`http://127.0.0.1:${port}/api/tasks`);
+      const tasks = await res.json();
+      last = tasks.find((t) => t.id === id);
+      if (last && last.status === status) return last;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    throw new Error(`timed out waiting for ${id} to reach "${status}" (last seen: ${JSON.stringify(last)})`);
+  }
+
+  it("startup reconciliation alone flips a card to done on boot, with the periodic sweep disabled", async () => {
+    setEnv("BOARD_MERGE_RECONCILE_SWEEP", "0");
+    await writeMergedPrFixture({ headRefName: "feature/T-0477" });
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-mergewiring-startup-"));
+    await fs.writeFile(
+      path.join(dir, "T-0477.md"),
+      makeTaskRaw({
+        id: "T-0477",
+        status: "review",
+        title: "Stranded by a merge missed while the board was down",
+        branch: "feature/T-0477",
+        pr: "https://github.com/example/repo/pull/477"
+      }),
+      "utf8"
+    );
+
+    const mergeBoard = await startBoardServer({ tasksDir: dir, port: 0 });
+    try {
+      expect(mergeBoard.mergeReconciler.enabled).toBe(true);
+      const task = await waitForTaskStatus(mergeBoard.server.address().port, "T-0477", "done");
+      expect(task.body).toMatch(/PR .*observed MERGED/);
+      // The reconciler is a third route to `done` -- it must fire the exact same terminal-status
+      // follow-through (httpApi.js's applyTerminalStatusEffects) the PATCH and comment-approval
+      // routes already do, not just write the status field. This is the end-to-end proof: no
+      // other code path in this test calls `done` on anything, so a call here can only have come
+      // from the reconciler's own wiring through startBoardServer, not from a stub in isolation.
+      await vi.waitFor(() => expect(pullDevelop).toHaveBeenCalled());
+    } finally {
+      await mergeBoard.close();
+      await rmTemp(dir);
+    }
+  });
+
+  it("the periodic sweep alone flips a card to done, with startup reconciliation disabled", async () => {
+    setEnv("BOARD_MERGE_RECONCILE_STARTUP", "0");
+    setEnv("BOARD_MERGE_RECONCILE_INTERVAL_MS", "30");
+    await writeMergedPrFixture({ headRefName: "feature/T-0478" });
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-server-mergewiring-sweep-"));
+    await fs.writeFile(
+      path.join(dir, "T-0478.md"),
+      makeTaskRaw({
+        id: "T-0478",
+        status: "review",
+        title: "Stranded by a merge missed while the board was down",
+        branch: "feature/T-0478",
+        pr: "https://github.com/example/repo/pull/477"
+      }),
+      "utf8"
+    );
+
+    const mergeBoard = await startBoardServer({ tasksDir: dir, port: 0 });
+    try {
+      // Startup reconciliation is disabled above, so nothing picked this up on boot -- only the
+      // periodic sweep (ticking every 30ms here) can be the thing that flips this card to done.
+      const task = await waitForTaskStatus(mergeBoard.server.address().port, "T-0478", "done");
+      expect(task.body).toMatch(/PR .*observed MERGED/);
+      await vi.waitFor(() => expect(pullDevelop).toHaveBeenCalled());
+    } finally {
+      await mergeBoard.close();
+      await rmTemp(dir);
+    }
   });
 });
