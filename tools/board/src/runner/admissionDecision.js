@@ -145,6 +145,26 @@ export function evaluateWindowAdmission({ windowKind, reading, estimate, reserve
  * exhausted or unreadable one (spec §4). `config` is the `loadAdmissionConfigFromEnv`-shaped
  * object (per-window `externalBurnAllowance`/`uncertaintyReserve`); this function narrows it to
  * each window's own flat values before calling `evaluateWindowAdmission`.
+ *
+ * `unitConversion` (T-0402) is likewise keyed per window -- `{five_hour, seven_day}`, each either
+ * a `usdUtilizationConversion.js`-shaped conversion or `null` -- NEVER one flat rate shared across
+ * both. The two windows are different pools (different sizes, different reset cadence) and the
+ * real recorded evidence (`docs/usd-utilization-conversion.md`) already shows one window can
+ * clear the minimum-evidence bar while the other doesn't; narrowing per window here is what lets
+ * a window with a usable derived rate get a genuine admit/hold while a window with none (or
+ * one too noisy to trust) still, correctly, holds `UNITS_NOT_COMPARABLE` on its own.
+ *
+ * T-0402 fix round (@DennieSeth, PR #449 review, 2026-10-16T17:12): an earlier attempt here
+ * treated `UNITS_NOT_COMPARABLE` as a non-veto, on the theory that a window with no derived rate
+ * yet is a documented evidence gap rather than an active shortage. That measured, in the
+ * reviewer's own numbers, as a fully-consumed `seven_day` window (utilization 1.00) failing to
+ * block a launch whenever `five_hour` happened to fit -- a window whose capacity CANNOT be
+ * compared with the estimate is an unresolved unknown, not an absent window, and treating it as
+ * absent lets a real shortage through undetected. So this stays strict: EVERY window -- whether
+ * its hold is `UNITS_NOT_COMPARABLE` or anything else -- still vetoes the aggregate exactly like
+ * any other hold. Until `seven_day` itself clears the evidence bar (`usdUtilizationConversion.js`),
+ * a real `auto` launch under enforcement is honestly held overall, which is the correct fail-safe
+ * outcome, not a regression -- see `docs/wip-gate-admission.md`'s "how to enable safely" runbook.
  */
 export function evaluateAdmission({ telemetryReadings, estimate, reservedUnspentCostUsd = 0, config, unitConversion = null }) {
   const windows = {};
@@ -159,7 +179,7 @@ export function evaluateAdmission({ telemetryReadings, estimate, reservedUnspent
         externalBurnAllowance: config.externalBurnAllowance?.[windowKind],
         uncertaintyReserve: config.uncertaintyReserve?.[windowKind]
       },
-      unitConversion
+      unitConversion: unitConversion?.[windowKind] ?? null
     });
   }
 

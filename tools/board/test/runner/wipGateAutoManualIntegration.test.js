@@ -19,7 +19,11 @@ import { rmTemp } from "../helpers/rmTemp.js";
  * injected to exercise the fit/no-fit branches at all).
  */
 
-const UNIT_CONVERSION = { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
+// T-0402: `evaluateAdmission`'s `unitConversion` is keyed per window -- a flat rate is no longer
+// a valid shape, even for a test deliberately injecting a stand-in rate (see this file's own
+// header comment on why a stand-in is injected at all).
+const UNIT_CONVERSION_RATE = { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
+const UNIT_CONVERSION = { five_hour: UNIT_CONVERSION_RATE, seven_day: UNIT_CONVERSION_RATE };
 
 function makeTask(overrides = {}) {
   return {
@@ -349,5 +353,77 @@ describe("T-0379 integration: a manual launch (not through the poller), through 
     } finally {
       await rmRetrying(unmeasuredRunsDir);
     }
+  });
+});
+
+describe("T-0402 integration: the REAL default committed conversion, through the REAL launchCardRun -- no evaluateAdmissionFn/unitConversion override at all", () => {
+  it("a representative auto launch's five_hour window gets a genuine admit/hold against the derived budget, never units_not_comparable -- seven_day legitimately still holds the launch overall (no usable evidence yet)", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ id: "T-0001", agent: "infra" })], { runsDir });
+    const readUsageTelemetryFn = telemetry({ fiveHourUtilization: 0.1, sevenDayUtilization: 0.1 });
+    let captured = null;
+    const launchPromise = launchCardRun({
+      orchestrator,
+      id: "T-0001",
+      trigger: LAUNCH_TRIGGERS.AUTO,
+      logger: makeLogger(),
+      enforcementEnabledFn: () => true,
+      // Deliberately the REAL buildLaunchDecide, stubbing ONLY the telemetry read (so the window
+      // readings are deterministic) -- admission, the unit conversion, and everything else go
+      // through cardLaunch.js's own real default wiring (loadUnitConversionFn ->
+      // resolveUnitConversionForAdmission -> DEFAULT_USD_UTILIZATION_CONVERSION).
+      buildLaunchDecideFn: (args) => {
+        const decide = realBuildLaunchDecide({ ...args, readUsageTelemetryFn });
+        return async () => {
+          captured = await decide();
+          return captured;
+        };
+      }
+    });
+
+    // T-0402 fix round (@DennieSeth, PR #449 review, 2026-10-16T17:12): a round-2 attempt treated
+    // seven_day's own, separately honest UNITS_NOT_COMPARABLE hold as a non-veto so this launch
+    // resolved. That let a window whose capacity cannot be compared with the estimate -- which
+    // includes a FULLY CONSUMED window, not just an idle one -- get waved through whenever
+    // five_hour happened to fit. `evaluateAdmission` admits only when EVERY window admits, so
+    // seven_day's hold correctly refuses this AUTO launch overall; what this test actually proves
+    // is captured below: five_hour's OWN window decision is a genuine admit, never
+    // units_not_comparable, so the derived conversion really is wired through end to end.
+    await expect(launchPromise).rejects.toThrow(/WIP gate hold/);
+
+    expect(captured.admission.windows.five_hour.holdReason).not.toBe("units_not_comparable");
+    expect(captured.admission.windows.five_hour.admitted).toBe(true);
+    // Honest, documented gap (docs/usd-utilization-conversion.md): seven_day's real recorded
+    // evidence doesn't clear the minimum-sample bar yet, so it still holds -- never a fabricated
+    // rate forced through to make this look more finished than the evidence supports.
+    expect(captured.admission.windows.seven_day.holdReason).toBe("units_not_comparable");
+    expect(captured.admission.admitted).toBeNull();
+  });
+
+  it("the other direction: a near-exhausted 5-hour window genuinely HOLDS against the real derived budget, naming five_hour", async () => {
+    const orchestrator = makeOrchestrator([makeTask({ id: "T-0001", agent: "infra" })], { runsDir });
+    const readUsageTelemetryFn = telemetry({ fiveHourUtilization: 0.95, sevenDayUtilization: 0.1 });
+    let captured = null;
+    const launchPromise = launchCardRun({
+      orchestrator,
+      id: "T-0001",
+      trigger: LAUNCH_TRIGGERS.AUTO,
+      logger: makeLogger(),
+      enforcementEnabledFn: () => true,
+      buildLaunchDecideFn: (args) => {
+        const decide = realBuildLaunchDecide({ ...args, readUsageTelemetryFn });
+        return async () => {
+          captured = await decide();
+          return captured;
+        };
+      }
+    });
+
+    await expect(launchPromise).rejects.toThrow(/WIP gate hold/);
+
+    expect(captured.admission.windows.five_hour.holdReason).not.toBe("units_not_comparable");
+    expect(captured.admission.windows.five_hour.admitted).toBe(false);
+    expect(captured.admission.windows.five_hour.budget).toBe(0);
+    // A genuine measured shortage in five_hour vetoes the aggregate outright, same as before.
+    expect(captured.admission.admitted).toBe(false);
   });
 });
