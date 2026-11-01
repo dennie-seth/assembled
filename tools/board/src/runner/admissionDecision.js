@@ -50,9 +50,12 @@ function estimateIsKnown(estimate) {
  * Converts a USD amount into `WINDOW_CAPACITY_UNIT`s via a versioned, recorded-evidence
  * conversion (spec §4 / Codex constraint 4: "unless a conversion is derived from recorded
  * evidence (versioned, with its sample count and fit date) the per-window comparison returns an
- * explicit units-not-comparable hold"). `unitConversion` is `null` by default everywhere in this
- * card -- no such fit has been built yet -- so every USD estimate hits `UNITS_NOT_COMPARABLE`
- * until a later card derives and versions one.
+ * explicit units-not-comparable hold"). `unitConversion` defaults to `null` HERE -- this
+ * function itself never assumes a caller supplied one -- but T-0402 derived and wired a real,
+ * per-window conversion (`usdUtilizationConversion.js`'s `DEFAULT_USD_UTILIZATION_CONVERSION`,
+ * resolved via `resolveUnitConversionForAdmission()`) that `cardLaunch.js` now passes by default
+ * for every real caller. See `docs/usd-utilization-conversion.md` for which windows that
+ * conversion actually makes comparable today (`five_hour` does; `seven_day` doesn't yet).
  */
 function convertUsdToWindowUnits(usdAmount, unitConversion) {
   if (!unitConversion || typeof unitConversion.usdPerUtilizationUnit !== "number" || unitConversion.usdPerUtilizationUnit <= 0) {
@@ -73,8 +76,11 @@ function convertUsdToWindowUnits(usdAmount, unitConversion) {
  * reservation ledger's current unspent total (USD, see `launchReservation.js`); `config` carries
  * this window's `externalBurnAllowance`/`uncertaintyReserve` (both in `WINDOW_CAPACITY_UNIT`s)
  * and the overall `dial`. `unitConversion`, when supplied, is the versioned USD-per-utilization-
- * unit rate a later card derives from recorded evidence -- omitted (the default everywhere
- * today), every USD estimate is `UNITS_NOT_COMPARABLE` rather than silently assumed convertible.
+ * unit rate T-0402 derived from recorded evidence (`usdUtilizationConversion.js`); real callers
+ * (`cardLaunch.js`) now pass it by default. This parameter still defaults to `null` HERE, so a
+ * caller that omits it -- or a window whose own rate isn't usable yet (e.g. `seven_day`, see
+ * `docs/usd-utilization-conversion.md`) -- gets an explicit `UNITS_NOT_COMPARABLE` hold rather
+ * than silently assumed convertible.
  */
 export function evaluateWindowAdmission({ windowKind, reading, estimate, reservedUnspentCostUsd = 0, config, unitConversion = null }) {
   if (!reading || reading.classification !== READING_STATUS.MEASURED || typeof reading.utilization !== "number") {
@@ -145,6 +151,26 @@ export function evaluateWindowAdmission({ windowKind, reading, estimate, reserve
  * exhausted or unreadable one (spec §4). `config` is the `loadAdmissionConfigFromEnv`-shaped
  * object (per-window `externalBurnAllowance`/`uncertaintyReserve`); this function narrows it to
  * each window's own flat values before calling `evaluateWindowAdmission`.
+ *
+ * `unitConversion` (T-0402) is likewise keyed per window -- `{five_hour, seven_day}`, each either
+ * a `usdUtilizationConversion.js`-shaped conversion or `null` -- NEVER one flat rate shared across
+ * both. The two windows are different pools (different sizes, different reset cadence) and the
+ * real recorded evidence (`docs/usd-utilization-conversion.md`) already shows one window can
+ * clear the minimum-evidence bar while the other doesn't; narrowing per window here is what lets
+ * a window with a usable derived rate get a genuine admit/hold while a window with none (or
+ * one too noisy to trust) still, correctly, holds `UNITS_NOT_COMPARABLE` on its own.
+ *
+ * T-0402 fix round (@DennieSeth, PR #449 review, 2026-10-16T17:12): an earlier attempt here
+ * treated `UNITS_NOT_COMPARABLE` as a non-veto, on the theory that a window with no derived rate
+ * yet is a documented evidence gap rather than an active shortage. That measured, in the
+ * reviewer's own numbers, as a fully-consumed `seven_day` window (utilization 1.00) failing to
+ * block a launch whenever `five_hour` happened to fit -- a window whose capacity CANNOT be
+ * compared with the estimate is an unresolved unknown, not an absent window, and treating it as
+ * absent lets a real shortage through undetected. So this stays strict: EVERY window -- whether
+ * its hold is `UNITS_NOT_COMPARABLE` or anything else -- still vetoes the aggregate exactly like
+ * any other hold. Until `seven_day` itself clears the evidence bar (`usdUtilizationConversion.js`),
+ * a real `auto` launch under enforcement is honestly held overall, which is the correct fail-safe
+ * outcome, not a regression -- see `docs/wip-gate-admission.md`'s "how to enable safely" runbook.
  */
 export function evaluateAdmission({ telemetryReadings, estimate, reservedUnspentCostUsd = 0, config, unitConversion = null }) {
   const windows = {};
@@ -159,7 +185,7 @@ export function evaluateAdmission({ telemetryReadings, estimate, reservedUnspent
         externalBurnAllowance: config.externalBurnAllowance?.[windowKind],
         uncertaintyReserve: config.uncertaintyReserve?.[windowKind]
       },
-      unitConversion
+      unitConversion: unitConversion?.[windowKind] ?? null
     });
   }
 

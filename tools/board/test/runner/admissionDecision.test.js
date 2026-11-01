@@ -256,7 +256,12 @@ describe("evaluateWindowAdmission -- T-0379: an estimate that could never fit, e
 });
 
 describe("evaluateAdmission -- evaluates both windows independently, in the same verified units", () => {
-  const unitConversion = { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
+  // T-0402: `unitConversion` is keyed per window -- each window's own derived rate (or lack of
+  // one) applies ONLY to that window, never shared across both. These tests give both windows the
+  // identical rate (there's nothing in this describe block exercising a real disagreement between
+  // them); see the next describe block for a per-window conversion that differs or is absent.
+  const perWindowConversion = { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
+  const unitConversion = { five_hour: perWindowConversion, seven_day: perWindowConversion };
   const nestedConfig = {
     dial: 1,
     externalBurnAllowance: { five_hour: 0.05, seven_day: 0.05 },
@@ -321,6 +326,112 @@ describe("evaluateAdmission -- evaluates both windows independently, in the same
     });
     expect(result.admitted).toBeNull();
     expect(result.windows.five_hour.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+  });
+});
+
+describe("evaluateAdmission -- T-0402: a per-window unitConversion, never a shared flat rate", () => {
+  const nestedConfig = {
+    dial: 1,
+    externalBurnAllowance: { five_hour: 0.05, seven_day: 0.05 },
+    uncertaintyReserve: { five_hour: 0.05, seven_day: 0.05 }
+  };
+
+  it("T-0402 fix round (human CHANGES REQUESTED on #449): a window's own UNITS_NOT_COMPARABLE gap still vetoes the aggregate, even when the OTHER window genuinely fits", () => {
+    const result = evaluateAdmission({
+      telemetryReadings: {
+        five_hour: reading({ windowKind: "five_hour", utilization: 0.1 }),
+        seven_day: reading({ windowKind: "seven_day", utilization: 0.1 })
+      },
+      estimate: estimate({ value: 1 }),
+      reservedUnspentCostUsd: 0,
+      config: nestedConfig,
+      unitConversion: { five_hour: { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" }, seven_day: null }
+    });
+    expect(result.windows.five_hour.holdReason).not.toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    expect(result.windows.five_hour.admitted).toBe(true);
+    expect(result.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    // T-0402 fix round: a round-2 attempt treated `UNITS_NOT_COMPARABLE` as a non-veto so this
+    // case returned `admitted: true`. @DennieSeth's #449 review (2026-10-16T17:12) rejected that:
+    // a window whose capacity CANNOT be compared with the estimate is an unresolved unknown, not
+    // an absent window -- the aggregate must stay the documented fail-safe (`null`), exactly as
+    // it did before any conversion existed, until `seven_day` itself clears the evidence bar.
+    expect(result.admitted).toBeNull();
+  });
+
+  it("T-0402 fix round: a fully-exhausted weekly window with no usable conversion must never let a fitting five_hour window admit the aggregate -- the exact scenario from #449's review", () => {
+    // @DennieSeth's review measured this precise pair directly against the committed default:
+    // five_hour utilization 0.10 (fits), seven_day utilization 1.00 (fully consumed), a known
+    // $0.50 estimate, no reservations -- and found the round-2 code returned aggregate
+    // `admitted: true` anyway, because `seven_day`'s only reported problem was
+    // `UNITS_NOT_COMPARABLE`. A fully consumed window must never be waved through just because it
+    // also happens to lack a conversion.
+    const result = evaluateAdmission({
+      telemetryReadings: {
+        five_hour: reading({ windowKind: "five_hour", utilization: 0.1 }),
+        seven_day: reading({ windowKind: "seven_day", utilization: 1 })
+      },
+      estimate: estimate({ value: 0.5 }),
+      reservedUnspentCostUsd: 0,
+      config: nestedConfig,
+      unitConversion: { five_hour: { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" }, seven_day: null }
+    });
+    expect(result.windows.five_hour.admitted).toBe(true);
+    expect(result.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    expect(result.admitted).not.toBe(true);
+    expect(result.admitted).toBeNull();
+  });
+
+  it("T-0402 fix round: the restored guard never overrides an actual measured shortage in the OTHER window either -- a real `false` still vetoes", () => {
+    const result = evaluateAdmission({
+      telemetryReadings: {
+        five_hour: reading({ windowKind: "five_hour", utilization: 0.99 }),
+        seven_day: reading({ windowKind: "seven_day", utilization: 0.1 })
+      },
+      estimate: estimate({ value: 1 }),
+      reservedUnspentCostUsd: 0,
+      config: nestedConfig,
+      unitConversion: { five_hour: { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" }, seven_day: null }
+    });
+    expect(result.windows.five_hour.admitted).toBe(false);
+    expect(result.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    // A real measured `false` always wins over a `null`, regardless of hold reason.
+    expect(result.admitted).toBe(false);
+  });
+
+  it("when NO window has a usable conversion, the aggregate stays the original fail-safe (null), unchanged from before this card", () => {
+    const result = evaluateAdmission({
+      telemetryReadings: {
+        five_hour: reading({ windowKind: "five_hour", utilization: 0.1 }),
+        seven_day: reading({ windowKind: "seven_day", utilization: 0.1 })
+      },
+      estimate: estimate({ value: 1 }),
+      reservedUnspentCostUsd: 0,
+      config: nestedConfig,
+      unitConversion: { five_hour: null, seven_day: null }
+    });
+    expect(result.windows.five_hour.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    expect(result.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    expect(result.admitted).toBeNull();
+  });
+
+  it("two windows with very different per-window rates each apply only to their own window, never averaged or shared", () => {
+    const cheapFiveHour = { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
+    const expensiveSevenDay = { usdPerUtilizationUnit: 1000, sampleCount: 20, fitDate: "2026-09-01", version: "v1" };
+    const result = evaluateAdmission({
+      telemetryReadings: {
+        five_hour: reading({ windowKind: "five_hour", utilization: 0.1 }),
+        seven_day: reading({ windowKind: "seven_day", utilization: 0.1 })
+      },
+      // 5usd: comfortably inside five_hour's (10usd/unit) budget, but 5usd/1000usd-per-unit is a
+      // vanishingly small ask of seven_day's budget too -- both windows admit, each against its
+      // OWN rate, never the other's.
+      estimate: estimate({ value: 5 }),
+      reservedUnspentCostUsd: 0,
+      config: nestedConfig,
+      unitConversion: { five_hour: cheapFiveHour, seven_day: expensiveSevenDay }
+    });
+    expect(result.windows.five_hour.predictedRemainingCostUpperBound).toBeCloseTo(0.5); // 5usd / 10usd-per-unit
+    expect(result.windows.seven_day.predictedRemainingCostUpperBound).toBeCloseTo(0.005); // 5usd / 1000usd-per-unit
   });
 });
 
