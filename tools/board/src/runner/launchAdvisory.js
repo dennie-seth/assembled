@@ -1,6 +1,6 @@
 import { decideLaunchAdvisory, recordAdvisoryDecision } from "./advisoryLogger.js";
 import { estimateCost, DEFAULT_COVERAGE_TARGET, indeterminateEstimate } from "./costEstimator.js";
-import { readUsageTelemetry, WINDOW_KINDS } from "./usageTelemetry.js";
+import { readUsageTelemetry, WINDOW_KINDS, revalidateTelemetryReadingsAt } from "./usageTelemetry.js";
 import { evaluateAdmission as defaultEvaluateAdmission } from "./admissionDecision.js";
 import { listCardUsageEntries, executionTotal } from "./usageLedger.js";
 import { listActiveReservations, remainingReservedCostUsd, reserveLaunchSlot, releaseReservation } from "./launchReservation.js";
@@ -232,6 +232,23 @@ export function buildLaunchDecide({
   timeoutMs = DEFAULT_ADVISORY_TIMEOUT_MS,
   logger = console,
   now = () => new Date(),
+  // T-0438 fix round 4: a `readUsageTelemetry()`-shaped reading the caller already obtained this
+  // same launch decision (the auto-launch poller's own decision-time probe, see
+  // autoLaunchPoller.js's `tick()`) -- threaded straight to `decideLaunchAdvisoryFn`, which
+  // re-validates it for age/reset rather than trusting it blindly. `null` (the default) preserves
+  // the original behavior exactly: a fresh scan via `readUsageTelemetryFn`.
+  telemetryReadingsHint = null,
+  // T-0438 fix round 6 (reviewer, 2026-10-21T17:01:51.409Z): `decideLaunchAdvisoryFn` already
+  // revalidates `telemetryReadingsHint` once, at the top of this function, but `evaluateAdmissionFn`
+  // below runs much later -- after `listCardUsageEntriesFn`, the capacity lock's own queue wait,
+  // `listActiveReservationsFn` and `sumActiveReservedRemainingCostUsdFn` have all awaited real I/O.
+  // A reading revalidated only at the top can be stale or reset by the time it is actually
+  // consumed. `nowMsFn` (a plain ms-number clock, separate from `now` above -- which stamps
+  // ISO timestamps, not telemetry ages) and `revalidateTelemetryReadingsAtFn` let `innerDecide`
+  // revalidate AGAIN immediately before `evaluateAdmissionFn`, inside the lock, after those awaits
+  // -- see the revalidation call site below for why that position matters.
+  nowMsFn = Date.now,
+  revalidateTelemetryReadingsAtFn = revalidateTelemetryReadingsAt,
   readUsageTelemetryFn = readUsageTelemetry,
   listCardUsageEntriesFn = listCardUsageEntries,
   listActiveReservationsFn = listActiveReservations,
@@ -251,7 +268,8 @@ export function buildLaunchDecide({
       coverageTarget,
       fitDate,
       listCardUsageEntriesFn,
-      readUsageTelemetryFn
+      readUsageTelemetryFn,
+      telemetryReadingsHint
     });
 
     const reviewEstimate = estimateCostFn({ type: "review", observations: [], coverageTarget });
@@ -285,7 +303,7 @@ export function buildLaunchDecide({
     // A pool-listing failure or an unreadable per-reservation ledger spend makes
     // `reservedUnspentCostUsd` `null` (never a fabricated `0`), which `evaluateAdmission` already
     // turns into an explicit `RESERVED_COST_UNKNOWN` hold (finding 6).
-    const { reservedUnspentCostUsd, admission } = await withCapacityLock(async () => {
+    const { reservedUnspentCostUsd, admission, telemetryReadingsAtEvaluation } = await withCapacityLock(async () => {
       // T-0370 fix round (Codex review, finding 5): a timeout/error already resolved the caller
       // with a durably-persisted fallback by the time this turn reaches the front of the lock --
       // writing a lease now would only orphan it (nothing will ever release it, since
@@ -293,7 +311,7 @@ export function buildLaunchDecide({
       // for yet).
       if (cancelToken?.cancelled) {
         logger.log(`wip-gate advisory: decide() for ${cardId}/${executionId}/${invocationId} already timed out/failed -- skipping the late reservation write`);
-        return { reservedUnspentCostUsd: null, admission: null };
+        return { reservedUnspentCostUsd: null, admission: null, telemetryReadingsAtEvaluation: null };
       }
 
       let otherActiveReservations;
@@ -314,8 +332,23 @@ export function buildLaunchDecide({
       // already charged (spec §4: "predicted_remaining_cost_upper_bound is FUTURE consumption").
       const candidateEstimate = typeof reservedCostUsd === "number" ? { ...reservedCycle, value: reservedCostUsd } : reservedCycle;
 
+      // T-0438 fix round 6 (reviewer, 2026-10-21T17:01:51.409Z): "validate age and reset at the
+      // point of consumption, not only at the point of reading ... move or repeat the
+      // revalidation so it runs immediately before evaluation, inside the lock, after the awaited
+      // reads." `implementerAdvisory.telemetryReadings` was already revalidated once, at the TOP
+      // of this function (inside `decideLaunchAdvisoryFn`) -- but `listActiveReservationsFn` and
+      // `sumActiveReservedRemainingCostUsdFn` just awaited real I/O, on top of whatever this
+      // launch already waited for the capacity lock itself. Revalidating AGAIN right here, with
+      // `now` as of THIS instant, is what makes the classification `evaluateAdmissionFn` actually
+      // consumes describe the reading as it stands at evaluation time, not as it stood before
+      // those awaits.
+      const telemetryReadingsAtEvaluation = revalidateTelemetryReadingsAtFn({
+        readings: implementerAdvisory.telemetryReadings,
+        now: nowMsFn()
+      });
+
       const admission = evaluateAdmissionFn({
-        telemetryReadings: implementerAdvisory.telemetryReadings,
+        telemetryReadings: telemetryReadingsAtEvaluation,
         estimate: candidateEstimate,
         reservedUnspentCostUsd,
         config: admissionConfig
@@ -325,7 +358,7 @@ export function buildLaunchDecide({
       // still in flight.
       if (cancelToken?.cancelled) {
         logger.log(`wip-gate advisory: decide() for ${cardId}/${executionId}/${invocationId} timed out/failed while evaluating admission -- skipping the late reservation write`);
-        return { reservedUnspentCostUsd, admission: { ...admission, reservationPublished: false } };
+        return { reservedUnspentCostUsd, admission: { ...admission, reservationPublished: false }, telemetryReadingsAtEvaluation };
       }
 
       // T-0370 fix round 2 findings 4/5: "a reservation that fails to publish is visible in the
@@ -365,8 +398,14 @@ export function buildLaunchDecide({
         logger.log(`wip-gate advisory: reservation failed for ${cardId}/${executionId}/${invocationId} -- launch proceeds unaffected: ${err.message}`);
       }
 
-      return { reservedUnspentCostUsd, admission: { ...admission, reservationPublished } };
+      return { reservedUnspentCostUsd, admission: { ...admission, reservationPublished }, telemetryReadingsAtEvaluation };
     });
+
+    // T-0438 fix round 6: whatever the lock actually evaluated against (or, on the
+    // cancelled-before-revalidation path just below, the best information available) is what gets
+    // persisted and returned -- never the pre-lock, pre-awaits snapshot `implementerAdvisory`
+    // captured before `decideLaunchAdvisoryFn` even resolved.
+    const telemetryReadingsForRecord = telemetryReadingsAtEvaluation ?? implementerAdvisory.telemetryReadings;
 
     // The timeout/error fallback already recorded (and persisted) ITS OWN decision for this
     // launch identity -- a late write here would either orphan a second, outcome-less record or
@@ -375,7 +414,7 @@ export function buildLaunchDecide({
       logger.log(`wip-gate advisory: decide() for ${cardId}/${executionId}/${invocationId} timed out/failed before persisting -- the fallback record already covers it`);
       return {
         estimate: reservedCycle,
-        telemetryReadings: implementerAdvisory.telemetryReadings,
+        telemetryReadings: telemetryReadingsForRecord,
         type,
         fitDate,
         reservedUnspentCostUsd,
@@ -390,7 +429,7 @@ export function buildLaunchDecide({
 
     const record = {
       estimate: reservedCycle,
-      telemetryReadings: implementerAdvisory.telemetryReadings,
+      telemetryReadings: telemetryReadingsForRecord,
       type,
       fitDate,
       reservedUnspentCostUsd,
@@ -405,7 +444,7 @@ export function buildLaunchDecide({
     // reserving or LOGGING"), so it happens inside this same envelope, ahead of `launch()` --
     // never after, and never able to throw or hang past `withBoundedDecide`'s own timeout.
     try {
-      await recordAdvisoryDecisionFn({ runsDir, cardId, executionId, invocationId, type, fitDate, estimate: reservedCycle, telemetryReadings: implementerAdvisory.telemetryReadings, reason: record.reason, logger });
+      await recordAdvisoryDecisionFn({ runsDir, cardId, executionId, invocationId, type, fitDate, estimate: reservedCycle, telemetryReadings: telemetryReadingsForRecord, reason: record.reason, logger });
     } catch (err) {
       logger.log(`wip-gate advisory: failed to record advisory decision for ${cardId}/${executionId}/${invocationId} -- launch proceeds unaffected: ${err.message}`);
     }

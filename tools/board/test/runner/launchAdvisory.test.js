@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { READING_STATUS } from "../../src/runner/usageTelemetry.js";
+import { READING_STATUS, DEFAULT_MAX_STALENESS_MS, revalidateTelemetryReadingsAt } from "../../src/runner/usageTelemetry.js";
 import { DEFAULT_ADMISSION_CONFIG, HOLD_REASON, evaluateAdmission } from "../../src/runner/admissionDecision.js";
 import { decideLaunchAdvisory } from "../../src/runner/advisoryLogger.js";
 import {
@@ -542,6 +542,117 @@ describe("buildLaunchDecide -- composes T-0367 telemetry, T-0369 estimation, and
       const reserveCall = deps.reserveLaunchSlotFn.mock.calls[0][0];
       expect(reserveCall.reservedCostUsd).toBeNull();
       expect(record.estimate.value).toBeNull();
+    });
+  });
+
+  describe("T-0438 fix round 6 (reviewer, 2026-10-21T17:01:51.409Z) -- revalidates the telemetry reading immediately before evaluateAdmissionFn, INSIDE the capacity lock, AFTER the awaited reservation-pool reads", () => {
+    const NOW_MS = 1_800_000_000_000;
+
+    function measuredFiveHourReading(overrides = {}) {
+      return {
+        windowKind: "five_hour",
+        classification: READING_STATUS.MEASURED,
+        utilization: 0.37,
+        status: "allowed_warning",
+        rateLimitType: "five_hour",
+        resetsAtMs: NOW_MS + 3_600_000,
+        resetsAtIso: new Date(NOW_MS + 3_600_000).toISOString(),
+        resetElapsed: false,
+        observedAtMs: NOW_MS,
+        ageMs: 0,
+        maxStalenessMs: DEFAULT_MAX_STALENESS_MS.five_hour,
+        logPath: "probe",
+        foundVia: "probe",
+        timingTrusted: true,
+        reason: "status=allowed_warning rateLimitType=five_hour (probe)",
+        ...overrides
+      };
+    }
+
+    function depsWithHintReading(fiveHourReading, overrides = {}) {
+      return baseDeps({
+        decideLaunchAdvisoryFn: vi.fn(async () => ({
+          estimate: { value: 0.5, unit: "usd", classification: "prior", estimatorVersion: "v1" },
+          telemetryReadings: telemetryReadings({ five_hour: fiveHourReading }),
+          type: "infra-small",
+          fitDate: null,
+          reason: "estimate for T-0001 (infra-small) from 0 prior observation(s)"
+        })),
+        revalidateTelemetryReadingsAtFn: revalidateTelemetryReadingsAt,
+        ...overrides
+      });
+    }
+
+    it("a reading still fresh when scanned, but aged past its own bound WHILE listActiveReservationsFn's own await is in flight, is STALE by the time evaluateAdmissionFn actually runs -- never evaluated against the earlier, now-outdated classification", async () => {
+      let clockMs = NOW_MS;
+      const deps = depsWithHintReading(measuredFiveHourReading(), {
+        nowMsFn: () => clockMs,
+        listActiveReservationsFn: vi.fn(async () => {
+          // Real time passes while this reservation-pool read is in flight -- well past the
+          // five_hour staleness bound -- before admission is ever evaluated. If revalidation ran
+          // only once, at the top of decideLaunchAdvisory (before this await started), it would
+          // never see this.
+          clockMs = NOW_MS + DEFAULT_MAX_STALENESS_MS.five_hour + 60_000;
+          return [];
+        })
+      });
+
+      const record = await buildLaunchDecide(deps)();
+
+      // The admission formula itself must never be handed the stale-by-now classification as if
+      // it were still current.
+      const evaluateCall = deps.evaluateAdmissionFn.mock.calls[0][0];
+      expect(evaluateCall.telemetryReadings.five_hour.classification).toBe(READING_STATUS.STALE);
+      expect(evaluateCall.telemetryReadings.five_hour.utilization).toBeNull();
+
+      // The outcome, not only the classification: a reading that is actually stale by the time of
+      // evaluation must hold on NO_MEASURED_READING, same as if it had never been measured at all.
+      expect(record.admission.windows.five_hour.holdReason).toBe(HOLD_REASON.NO_MEASURED_READING);
+      expect(record.admission.admitted).not.toBe(true);
+
+      // The persisted decision records the reading it ACTUALLY used for the admission outcome,
+      // not the earlier, now-superseded measured snapshot.
+      expect(record.telemetryReadings.five_hour.classification).toBe(READING_STATUS.STALE);
+      const persisted = deps.recordAdvisoryDecisionFn.mock.calls[0][0];
+      expect(persisted.telemetryReadings.five_hour.classification).toBe(READING_STATUS.STALE);
+    });
+
+    it("a window reset crossed WHILE sumActiveReservedRemainingCostUsdFn's own await is in flight is never carried forward as current admission input", async () => {
+      let clockMs = NOW_MS;
+      const resetsAtMs = NOW_MS + 30_000;
+      const deps = depsWithHintReading(measuredFiveHourReading({ resetsAtMs, resetsAtIso: new Date(resetsAtMs).toISOString() }), {
+        nowMsFn: () => clockMs,
+        sumActiveReservedRemainingCostUsdFn: vi.fn(async () => {
+          // Past the reset, well inside the staleness bound otherwise -- this is a RESET crossing,
+          // not an age-limit crossing, and it happens during this await, not before it.
+          clockMs = NOW_MS + 45_000;
+          return 0;
+        })
+      });
+
+      const record = await buildLaunchDecide(deps)();
+
+      const evaluateCall = deps.evaluateAdmissionFn.mock.calls[0][0];
+      expect(evaluateCall.telemetryReadings.five_hour.classification).toBe(READING_STATUS.UNAVAILABLE);
+      expect(evaluateCall.telemetryReadings.five_hour.utilization).toBeNull();
+
+      expect(record.admission.windows.five_hour.holdReason).toBe(HOLD_REASON.NO_MEASURED_READING);
+      expect(record.telemetryReadings.five_hour.classification).toBe(READING_STATUS.UNAVAILABLE);
+    });
+
+    it("a reading still within bound at the moment evaluateAdmissionFn actually runs is unaffected -- revalidation only ever downgrades, never holds a reading that is genuinely still fresh", async () => {
+      const deps = depsWithHintReading(measuredFiveHourReading(), {
+        nowMsFn: () => NOW_MS + 60_000
+      });
+
+      const record = await buildLaunchDecide(deps)();
+
+      const evaluateCall = deps.evaluateAdmissionFn.mock.calls[0][0];
+      expect(evaluateCall.telemetryReadings.five_hour.classification).toBe(READING_STATUS.MEASURED);
+      expect(evaluateCall.telemetryReadings.five_hour.utilization).toBe(0.37);
+      // No USD-to-utilization conversion has shipped yet (T-0402, out of scope here) -- the window
+      // still can't admit, but for a DIFFERENT reason than "no reading at all".
+      expect(record.admission.windows.five_hour.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
     });
   });
 });

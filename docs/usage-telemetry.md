@@ -595,3 +595,449 @@ See `boardServer.test.js`'s "usage-ledger drain on shutdown" suite and `server/i
 tokens/outcome/`complete` flag by the time `close()` resolves; a drain held open past its bound
 still lets `close()` finish within that bound; a rejecting drain never throws out of `close()`; and
 both signal handlers call `close()` then exit, including when `close()` itself rejects.
+
+## Decision-time freshness (T-0438)
+
+T-0367/T-0369/T-0370/T-0379 built the reader and the admission formula; neither gave the gate
+anything fresh to read. 48 hours of live poller logs showed both windows `unknown` on every tick:
+
+```
+auto-launch: usage gate comparison -- legacy(newest-event)=0
+  window-aware=[five_hour=unknown(stale) seven_day=unknown(unavailable)]
+```
+
+Telemetry only ever arrives as a byproduct of a real card run (the `claude` CLI's own
+`rate_limit_event`, emitted during a run and stamped with `receivedAtMs` by `runOrchestrator.js`'s
+`_runPhase`). On an idle board, or one ticking every `AUTO_LAUNCH_INTERVAL_MS` (30 minutes on the
+live board) with no card having run recently, there is nothing fresher than whatever the last real
+run happened to leave behind -- and that can be minutes, hours, or (crossing an overnight gap) most
+of a day old. The two windows fail for two different reasons, addressed separately below.
+
+### Why widening `MAX_STALENESS_MS` does not work
+
+The acceptance bar for this card requires evidence, not a wider constant asserted to be safe.
+Checking the actual gaps between runs on this board's own `tasks/.runs/*.jsonl` (484 `five_hour`-
+bearing logs as of 2026-10-16) shows runs clustering every 30 minutes to a few hours while the
+poller is busy, then overnight/idle gaps of many hours to a full day (e.g. a `five_hour` reading in
+`T-0269-2026-10-07T12-08-42-472Z.jsonl` and the next one in `T-0268-2026-10-08T12-02-21-827Z.jsonl`
+-- essentially 24 hours apart). No constant this card could truthfully widen `five_hour`'s 15-minute
+bound to would cover that gap without also covering the "a lot could have changed, including usage
+from outside this board" case the bound exists to catch -- the 48 hours of real `unknown(stale)`
+log lines already prove the actual gaps exceed anything a wider-but-still-honest bound could claim.
+Widening is rejected on this evidence, not on principle alone.
+
+### `five_hour`: a decision-time probe, not a wider bound
+
+`usageTelemetry.js`'s `readWindowUsage`/`readUsageTelemetry` accept an optional `probeFn`. When the
+log-scan reading for a window in `PROBEABLE_WINDOW_KINDS` (`five_hour` only -- see below) is not
+already fresh (`measured`/`estimated`), `probeFn({windowKind, now})` is tried once; a successful
+result (`{rateLimitInfo}` whose `rateLimitType` matches the requested window) is classified through
+the exact same `classifyReading` every scanned reading goes through, with `timingTrusted: true` and
+`observedAtMs: now` -- the caller received this reading at this instant, so there is nothing to
+distrust about its age the way a historical log record can be untimed. Omitting `probeFn` (the
+default everywhere this card does not explicitly wire one in) reproduces the exact pre-T-0438
+scan-only behavior; a probe that throws, resolves with nothing usable, or reports the wrong
+`rateLimitType` leaves the scan's own (possibly `stale`/`unavailable`) classification standing --
+fail-safe, same contract as the rest of this module.
+
+The real mechanism (`usageProbe.js`'s `spawnUsageProbe`/`defaultUsageProbeFn`) is a minimal
+`claude -p --output-format stream-json --verbose` invocation -- no `--allowedTools`, no
+`--settings`, no `--model`, no card body -- killed the instant its first `rate_limit_event` line
+arrives on stdout. That event arrives BEFORE the costly part of a real turn: this card's own run
+log, `tasks/.runs/T-0438-2026-10-16T13-25-15-109Z.jsonl`, shows the `rate_limit_event` at line 1 and
+the first `assistant` event (33,544 `cache_creation_input_tokens`) at line 4, so killing the child
+the moment the event arrives avoids whatever that real turn's own system-prompt/tool-definition
+cache creation would have cost.
+
+**That ordering is not itself proof the preflight exchange is free (fix round 4 correction).** A
+prior round of this document claimed killing the child "bounds the probe's cost to whatever that
+preflight exchange alone costs" -- the reviewer (2026-10-16T17:12:25.400Z, the "also" item)
+correctly called this out: arrival of `rate_limit_event` before the first `assistant` message
+proves the costly real-turn work was avoided, but it does NOT prove the preflight exchange up to
+that event was itself free, or establish any dollar ceiling. The CLI could still perform some
+inference before ever emitting the event, and this session has no grant to invoke `claude` directly
+and measure a single preflight exchange in isolation to check either way. What is actually
+established, and no more: no card body, no tool list, and no system prompt are supplied to this
+invocation (`buildProbeArgs` carries neither `--allowedTools` nor `--settings`), so the preflight is
+strictly cheaper than a real card run's own first turn would have been -- a relative floor on cost,
+not a measured dollar figure or a proven zero.
+
+**Cost, stated from what was actually observed.** The probe is charged against the same
+`five_hour` window it measures (the edge case "a probe that itself consumes the window it
+measures" in this card's acceptance criteria) -- it is a real, if minimal, request. It runs at
+most once per poller tick (`AUTO_LAUNCH_INTERVAL_MS`, 30 minutes on the live board = up to 48/day),
+and only when the scan result is not already fresh, so a board where real cards are already
+running every few minutes pays nothing extra -- the scan stays fresh on its own and
+`withFreshProbe` never calls `probeFn` at all. The worst case (a fully idle board, every tick
+stale) is 48 minimal single-exchange CLI invocations/day; this is deliberately not reduced
+further, since the whole point is a reading at every decision point, not a sampled one. This
+session cannot measure the exact dollar cost of one such preflight exchange (no `claude` CLI
+invocation grant here), so the bound above is stated as a request-count ceiling, not a dollar
+figure, and that ceiling is a count of REQUESTS, not a claim about how much each one costs. This
+cost is only ever incurred once a human has already set `AUTO_LAUNCH_ENABLED` (the poller does not
+tick at all otherwise, see below) -- "up to 48 minimal preflight exchanges/day, each cheaper than a
+real card run's first turn but of otherwise unmeasured cost" is what whoever flips that flag in
+production should weigh, not an assumed-negligible cost.
+
+**Wired in by default, once auto-launch itself is running.** `createAutoLaunchPoller`'s
+`usageProbeFn` constructor option defaults to `defaultUsageProbeFn` unless `USAGE_PROBE_DISABLED`
+is set (`usageProbeDisabledFromEnv()` in `autoLaunchPoller.js`) -- the OPPOSITE default from the
+first round of this card. The first round gated the probe behind its own separate opt-in
+(`USAGE_PROBE_ENABLED`, default off), reasoning by analogy to `AUTO_LAUNCH_ENABLED`'s "deploying
+the code must not be what switches it on" posture. On review (FAIL, 2026-10-16T13:56:39.202Z,
+criterion 1) that reasoning doesn't hold: `AUTO_LAUNCH_ENABLED` is already the real "a human must
+opt in before anything spends" gate here -- `usageProbeFn` is never even consulted unless
+`tick()` is already running, which requires a human to have set it. A SECOND opt-in behind that
+one does not add any additional safety; it just reproduces, by default, the exact 48-hour-stale
+bug this card exists to fix for anyone who flips `AUTO_LAUNCH_ENABLED` without separately knowing
+to flip `USAGE_PROBE_ENABLED` too -- which is what the live board's own history did. The
+window-aware comparison `tick()` already logs on every tick regardless of configuration (T-0367/
+T-0369, "evidence-collection only by default") specifically so the difference could be judged
+before enforcement is ever turned on; a probe that is itself opt-in defeats that purpose by
+leaving the evidence permanently uninformative.
+
+No persona in this runner (implementer or reviewer) holds a grant to invoke `claude` directly, so
+`spawnUsageProbe`'s actual child-process spawn/kill path has never been exercised against a live
+CLI in any session that could have written or reviewed this card -- that remains true under
+either default. It is tested exactly the way `claudeCliRunner.js`'s own spawn-based runner already
+is: an injected `spawnFn` (`usageProbe.test.js`), and the "end to end" demonstration below mocks
+only the OS-level `node:child_process.spawn` call, exercising every other line of the real default
+path (`createAutoLaunchPoller` -> `readUsageTelemetry` -> `readWindowUsage` -> `withFreshProbe` ->
+`defaultUsageProbeFn` -> `spawnUsageProbe`) unmodified. A human turning `AUTO_LAUNCH_ENABLED` on in
+production is still the point at which `spawnUsageProbe` gets its first live exercise against a
+real `claude` process; a human who wants the old scan-only behavior once auto-launch is already on
+sets `USAGE_PROBE_DISABLED=1` explicitly.
+
+### Carrying the reading to the actual decision, not just the comparison log (fix round 4)
+
+**The defect (reviewer, 2026-10-16T17:12:25.400Z): "the fresh reading never reaches the launch
+decision."** Round 3 of this card made `autoLaunchPoller.js`'s `tick()` read telemetry WITH the
+probe wired in, and that value fed the `usage gate comparison` log line fine -- but the log line
+was the ONLY consumer. The actual launch call, `launchFn({orchestrator, id, logger, trigger})`,
+carried no telemetry of its own, so the real admission pipeline (`launchCardRun` ->
+`buildLaunchDecide` -> `decideLaunchAdvisory`) read telemetry a SECOND time, with no `probeFn`,
+rescanning the exact same stale/absent logs the probe exists to route around. The reviewer's own
+reproduction made this concrete:
+
+```
+poller read with probe : five_hour = measured, utilization 0.37, age 0
+subsequent default read: five_hour = unavailable, utilization null
+```
+
+So on the idle-board case this card exists to fix, the comparison log looked fixed while the
+admission formula `evaluateAdmission` (`admissionDecision.js`) -- the thing that actually matters
+once `WIP_GATE_ENFORCEMENT_ENABLED` is eventually flipped -- still saw nothing. A regression that
+only showed up once something downstream of the log line was actually inspected.
+
+**The fix: thread the SAME reading through, re-validated at the point it is actually used.**
+`tick()` already computes `telemetryReadings` before the comparison log; that value is now also
+passed to `launchFn` as `telemetryReadingsHint` (`autoLaunchPoller.js`), threaded unchanged through
+`launchCardRun` -> `buildLaunchDecide` -> `decideLaunchAdvisory` (`cardLaunch.js`,
+`launchAdvisory.js`, `advisoryLogger.js` each gained one new, default-`null` parameter of the same
+name). `decideLaunchAdvisory` uses the hint INSTEAD OF a second scan whenever one is given -- never
+a second probe, never a second directory scan, so this fix spends nothing beyond what the
+comparison log's own read already paid for (see "Cost" below).
+
+Blindly trusting the hint would violate the reviewer's own instruction ("validate age and reset at
+the point of consumption, not only at the point of reading -- a value fresh when probed can be
+stale by the time admission uses it") and this document's own "never silently read unknown/stale
+capacity as current" rule: real I/O happens between the poller's scan (`readUsage`, the
+comparison-log `readUsageTelemetry` call) and the eventual launch (`store.list()`, the idle gate,
+`ensureExecutionId`, the admission/reservation critical section's own lock wait) -- a reading
+classified fresh at the SCAN instant is not guaranteed fresh at the CONSUME instant. `usageTelemetry.js`'s
+new `revalidateReadingAt`/`revalidateTelemetryReadingsAt` re-run the exact same two checks
+`classifyReading` already applies -- staleness against `maxStalenessMs`, and "has the window
+reset since this reading was taken" -- but evaluated against `now` as of the LATER call inside
+`decideLaunchAdvisory`, not the earlier one inside `tick()`. Both checks are strictly
+one-directional: a reading can only ever be downgraded toward `stale`/`unavailable` by
+revalidation, never upgraded, so this can never manufacture a measured reading revalidation didn't
+already have good reason to trust. `usageTelemetryDecisionCarryover.test.js` pins both halves:
+the revalidation function's own age/reset rules in isolation, and an end-to-end case that drives
+the REAL poller `tick()` through the REAL `launchCardRun` (never a mocked `launchFn`) with only
+`node:child_process.spawn` mocked, asserting the probed `0.37` reading lands inside the actual
+admission record `evaluateAdmission` produced (`err.admission.windows.five_hour.holdReason` moves
+from `no_measured_window_reading` to `units_not_comparable` -- the latter being the already-known,
+separately out-of-scope absence of a USD-to-utilization conversion, T-0402 -- and
+`err.telemetryReadings.five_hour` carries the exact `{classification: "measured", utilization:
+0.37}` the probe produced), not merely a log line that looks fixed.
+
+**Cost of this fix specifically: zero, and it removes work rather than adding any.** Before this
+round, EVERY launch attempt paid for two telemetry reads per tick: the comparison log's own
+(possibly probing) read, and a second, always probe-less scan inside `decideLaunchAdvisory`. After
+this round, whenever a hint is available, the second read is skipped entirely -- no extra probe,
+no extra directory scan, one fewer `fs.readdir`/`fs.open` pass per launch attempt than before. A
+manual (Run-button) launch never threads a hint through (`launchCardRun`'s own default stays
+`null`), so that path is byte-for-byte unchanged by this fix.
+
+### `seven_day`: resolved from evidence -- not reliably obtainable this way
+
+No `seven_day` `rate_limit_event` appears anywhere in `tasks/.runs/*.jsonl` after
+`T-0403-2026-09-23T06-11-11-963Z.jsonl`. Checked directly in this session (`grep -l` over every
+`*.jsonl` in `tasks/.runs/`, 2026-10-16): 150 files carry a `seven_day` reading, none newer than
+2026-09-23, while 484 files carry a `five_hour` reading with the newest being this very card's own
+run log (`T-0438-2026-10-16T13-25-15-109Z.jsonl`). That is 23+ days and hundreds of intervening runs
+with zero weekly readings, while `five_hour` fires on essentially every run in that same stretch.
+The CLI evidently does not emit a weekly reading on an ordinary turn in this operating setup (it did
+twice, historically -- `T-0221-2026-08-23T12-26-17-498Z.jsonl:724` and
+`T-0367-2026-09-11T22-06-33-812Z.jsonl:1`, both cited earlier in this document -- but not since).
+
+Given that, probing for `seven_day` the same way as `five_hour` would spend a real request with no
+realistic chance of producing the reading it's looking for -- this is not a staleness problem a
+probe (or a wider bound) can fix, it is "this setup's CLI does not produce this signal on demand".
+`PROBEABLE_WINDOW_KINDS` therefore names `five_hour` only; `seven_day` is deliberately left on the
+existing scan-only path. Its existing fail-safe behavior is already the right answer for a window
+that cannot be measured: `unavailable` -> `utilization: null` -> `evaluateWindowAwareUsageGate`
+reports `blocked: null` for it, which the gate never treats as a block (and, just as importantly,
+never treats as "fine to launch on" either) -- a window that cannot be measured stays honestly
+unknown, forever, until the CLI starts emitting the signal again on its own. No code change was
+needed here; the finding is the fix.
+
+### The bound and the cadence, reconciled
+
+`DEFAULT_MAX_STALENESS_MS.five_hour` (15 minutes) is unchanged by this card, and stays correct for
+what it was always measuring: how old a *scanned* log reading can be before its timing can no longer
+be trusted, calibrated against real inter-event gaps during an active session (see the "Per-window
+record" table above). It was never truthful against the *decision* cadence (`AUTO_LAUNCH_INTERVAL_MS`,
+30 minutes on the live board, let alone a longer idle gap), and this card does not pretend otherwise.
+
+What makes the bound irrelevant to the DECISION, not what widens it: when `usageProbeFn` is wired
+in, a reading obtained via the probe always has `observedAtMs: now` and `ageMs: 0` by construction
+(`withFreshProbe` stamps it at the instant it's received, exactly like the probe's own caller
+receiving it just now) -- so it is always within bound, regardless of how long the poller has gone
+since the last real run's scan-sourced reading. The 15-minute bound keeps meaning exactly what it
+always meant for the scan path (used whenever probing is off, fails, or isn't wired in); it simply
+stops being the thing standing between the live board and a fresh reading once a probe is enabled.
+
+### Edge cases
+
+- **Idle board, default configuration (`AUTO_LAUNCH_ENABLED` set, `USAGE_PROBE_DISABLED` unset).**
+  After an hour of idleness the scan result is stale/unavailable (same as the 48-hour log excerpt
+  above), so `withFreshProbe` tries the probe every tick; a successful probe reading is
+  `measured`/`estimated` with `ageMs: 0`, independent of how long the board has been idle. This is
+  the default once this card lands -- see "Demonstrated end to end" below for the real log line.
+- **Idle board, `USAGE_PROBE_DISABLED=1`.** The gate sees exactly what it saw in the 48-hour log
+  excerpt above: `five_hour=unknown(stale) seven_day=unknown(unavailable)` -- the explicit opt-out
+  reproduces the pre-T-0438 behavior exactly, with nothing else changed.
+- **`AUTO_LAUNCH_ENABLED` unset (the poller's own default).** `tick()` never runs at all
+  (`effectivelyEnabled` is `false`), so `usageProbeFn`'s own default is moot -- nothing spends
+  anything until a human opts into auto-launch in the first place.
+- **A window that has reset since the last reading.** Two distinct points this applies at, both
+  covered. At SCAN time, unchanged: `classifyReading`'s existing `resetElapsed` handling applies
+  identically to a probe-obtained reading (see "a probe reading still honors an elapsed reset
+  window" in `usageTelemetryFreshness.test.js`) -- a probe reading with `resetsAt` already in the
+  past reads `estimated`/`0`, never the old window's stale pressure. At CONSUMPTION time (fix
+  round 4), a reading carried forward via `telemetryReadingsHint` whose window reset AFTER it was
+  scanned but BEFORE the launch decision actually used it is caught by
+  `revalidateReadingAt`/`revalidateTelemetryReadingsAt` (usageTelemetry.js) and downgraded to
+  `unavailable` -- never carried forward describing a window that no longer exists. See
+  "Carrying the reading to the actual decision" above.
+- **A log with no receive timestamp.** Unaffected -- this path only concerns the scan, not the
+  probe; `usageTelemetry.js:205`'s existing conservative handling is untouched.
+- **The CLI changing its payload.** `withFreshProbe` reuses `classifyReading`, so a probe reading
+  that happens to carry a real numeric `utilization` is still preferred over the status-only
+  estimate, exactly as the scan path already does.
+- **A probe that itself consumes the window it measures.** Addressed under "Cost" above: the probe
+  is one real, minimal request, charged against the same window, run at most once per tick and only
+  when needed.
+- **Making the gate more permissive to "make it work."** Not done: `withFreshProbe` can only
+  replace a reading with a fresher one of the *same* window via `classifyReading`'s existing rules
+  (status-only is never `measured`, stale/unavailable still withholds `utilization`, an unmatched
+  `rateLimitType` is discarded) -- there is no new path by which `null` becomes a number other than
+  an honestly obtained one, and no change to what `stale`/`unavailable` mean. `revalidateReadingAt`
+  (fix round 4) is strictly one-directional too: it can only ever downgrade a carried-forward
+  reading toward stale/unavailable, never upgrade one.
+- **The reading reaching the comparison log but not the decision it is supposed to inform (fix
+  round 4).** This was a real, shipped regression, not a hypothetical: see "Carrying the reading
+  to the actual decision" above for the reviewer's own reproduction and the fix.
+
+### Demonstrated end to end
+
+**Round 1 evidence (superseded).** The first round of this card demonstrated the probe only with
+`usageProbeFn` itself injected as a double standing in for the live `claude` CLI call -- it proved
+the wiring *works*, but since the default was `null` unless `USAGE_PROBE_ENABLED` was explicitly
+set, it never proved the BRANCH HEAD's own default behavior changed. Reviewer FAIL
+(2026-10-16T13:56:39.202Z, criterion 1) correctly called this out: on the branch head as shipped,
+`five_hour` was still `unknown(stale)` at decision time, by default.
+
+**Round 2 evidence (current).** `usageProbeDefaultWiring.test.js` mocks ONLY the OS-level
+`node:child_process.spawn` call -- not `usageProbeFn`, not `readUsageTelemetryFn` -- and drives
+`createAutoLaunchPoller` with `usageProbeFn` *omitted entirely*, i.e. its own real default. Every
+other line of the real path runs unmodified: `tick()` -> `readUsageTelemetry` ->
+`readWindowUsage` (real filesystem scan of an empty `runsDir`, same as an idle live board) ->
+`withFreshProbe` -> `defaultUsageProbeFn` -> `spawnUsageProbe` -> the (mocked) `spawn("claude",
+["-p", "--output-format", "stream-json", "--verbose"], ...)` call -> a fed-in `rate_limit_event`
+line on the fake child's stdout. The poller's own logged line, captured directly from that test
+run (`npx vitest run test/runner/usageProbeDefaultWiring.test.js`, branch head):
+
+```
+assembled-board: auto-launch: usage gate comparison -- legacy(newest-event)=unknown window-aware=[five_hour=ok(0.37) seven_day=unknown(unavailable)]
+```
+
+`five_hour` is `ok(0.37)` -- a real, non-null utilization -- with NOTHING overridden except the
+OS-level spawn call itself, which is the one piece no persona in this runner holds a grant to
+exercise live (see above). The reading's own `ageMs` is `0` by construction (`withFreshProbe`
+stamps `observedAtMs: now`), so it is always within `DEFAULT_MAX_STALENESS_MS.five_hour` (15
+minutes) regardless of how long the poller has been idle; see "The bound and the cadence,
+reconciled" below for why that makes the bound irrelevant to this decision rather than requiring
+it to be widened. `seven_day` stays honestly `unknown(unavailable)`, per the evidence above --
+unchanged, since `PROBEABLE_WINDOW_KINDS` never includes it.
+
+The same test file also pins the explicit opt-out: with `USAGE_PROBE_DISABLED=1` set, `spawn` is
+never called and the gate reproduces the exact pre-T-0438 all-unknown line. See
+`usageTelemetryFreshness.test.js`'s "createAutoLaunchPoller -- decision-time probe wiring,
+demonstrated end to end" suite for the lower-level wiring assertions (probe called with the right
+arguments, bound widened correctly, etc.) with an injected `usageProbeFn` double -- useful for
+pinning those specific mechanics, but `usageProbeDefaultWiring.test.js` is the one that proves the
+BRANCH HEAD's own default, unmodified, produces this line.
+
+**Fix round 4 evidence (current -- the comparison log alone is not enough).** Round 2's evidence
+above proves the probed reading reaches the `usage gate comparison` LOG LINE by default. It does
+not prove the reading reaches the admission decision `launchCardRun` -> `buildLaunchDecide` ->
+`decideLaunchAdvisory` actually computes -- the reviewer's own reproduction
+(2026-10-16T17:12:25.400Z) showed exactly this gap: the log line showed `measured`/`0.37` while a
+SECOND, probe-less read inside the real launch call still saw `unavailable`/`null`.
+`usageTelemetryDecisionCarryover.test.js` closes that gap end to end: it drives the REAL
+`createAutoLaunchPoller.tick()` through the REAL `launchCardRun` (never a mocked `launchFn`, never
+a mocked `buildLaunchDecide`/`decideLaunchAdvisory`), with only the OS-level
+`node:child_process.spawn` call mocked -- identical mocking discipline to round 2's own test.
+Captured directly from that test run (`npx vitest run
+test/runner/usageTelemetryDecisionCarryover.test.js`, branch head), the actual admission record
+`evaluateAdmission` produced for the card under test:
+
+```
+admission.windows.five_hour.holdReason = "units_not_comparable"   (was "no_measured_window_reading" before this fix)
+telemetryReadings.five_hour = { classification: "measured", utilization: 0.37 }
+```
+
+`units_not_comparable` is itself an existing, already-documented, separately out-of-scope hold
+(no USD-to-utilization conversion has shipped yet -- T-0402; the per-window admission formula
+itself, `admissionDecision.js`, is out of scope for this card) -- the point of this evidence is
+that the window cleared the earlier "is there a reading at all" gate at all, which it did not
+before this fix. A manual (Run-button) launch never threads a hint through
+(`launchCardRun`'s `telemetryReadingsHint` stays at its `null` default on that path), so the same
+test file also pins that this fix changes nothing there -- `spawn` is never called and the
+pre-existing probe-less scan behavior is reproduced exactly.
+
+### The test suite itself was spending real CLI invocations (fix round 5)
+
+**The defect (reviewer, 2026-10-16T17:47:30.356Z).** One test in `autoLaunchPoller.test.js`
+("does NOT start a card with an unmet dependency...") built `createAutoLaunchPoller` directly,
+bypassing the file's own `makePoller` helper, and supplied neither `readUsageTelemetryFn` nor
+`usageProbeFn`. Both default parameters then applied for real: `readUsageTelemetryFn` fell
+through to the real `readUsageTelemetry` (a harmless scan of a nonexistent `/runs`), which then
+called the real default `usageProbeFn` -- `defaultUsageProbeFn` -- which spawns an actual `claude`
+CLI child process and waits (bounded by `DEFAULT_PROBE_BOUND_MS`, 20s) for its first
+`rate_limit_event`. Measured directly: that one test took ~5.3s in isolation versus ~4ms for an
+otherwise-identical telemetry-stubbed test, and exceeded Vitest's 10s per-test timeout under
+full-suite parallel load -- a real, reviewer-observed flake, not a hypothetical one. Every
+`npx vitest run` of this file, including every one the implementer ran locally before committing,
+was quietly spawning a live `claude` session.
+
+**Why this also undermines the cost accounting above, not just the test's reliability.** The
+"Cost, stated from what was actually observed" section bounds production spend at "at most once
+per poller tick... up to 48/day", scoped to a running board with `AUTO_LAUNCH_ENABLED` set. That
+accounting said nothing about, and did not budget for, spend incurred by *running the test suite*
+-- which is a cost nobody intended, is not bounded by the poller's own interval at all (every test
+run pays it again), and would recur on every CI run and every local `npx vitest run` indefinitely
+had it gone unnoticed. Fixing the test closes this gap at the source rather than widening the
+stated bound to account for it: the test suite now spawns zero live `claude` processes (confirmed
+below), so the production-only "up to 48/day, only once `AUTO_LAUNCH_ENABLED` is set" accounting
+is what actually governs spend, with no silent test-time addition to it.
+
+**The fix.** Gave that one test the same `readUsageTelemetryFn` stub `makePoller`'s own default
+already uses (`autoLaunchPoller.test.js`, "does NOT start a card with an unmet dependency" test)
+-- a `measured`/`0`-utilization stub that never consults `probeFn` at all, so `defaultUsageProbeFn`
+is never reached regardless of what `usageProbeFn` resolves to. No production code changed; this
+was a test-setup defect, not a defect in `usageTelemetry.js`/`usageProbe.js`/`autoLaunchPoller.js`
+themselves. Checked every other direct (non-`makePoller`) `createAutoLaunchPoller` call site in the
+suite for the same gap (`wipGateAutoManualIntegration.test.js`, `usageProbeDefaultWiring.test.js`,
+`usageTelemetryDecisionCarryover.test.js`, `usageTelemetryFreshness.test.js`, and the
+restart-fixture helper later in `autoLaunchPoller.test.js` itself) -- every one of those already
+either stubs `readUsageTelemetryFn` or passes `usageProbeFn` explicitly (including explicitly
+`null`), or mocks the OS-level `node:child_process.spawn` call the way
+`usageProbeDefaultWiring.test.js`/`usageTelemetryDecisionCarryover.test.js` deliberately do to
+exercise the real default safely. This was the one gap.
+
+**Verified.** `npx vitest run test/runner/autoLaunchPoller.test.js -t "does NOT start a card with
+an unmet dependency"` dropped from ~5.85s wall to ~1.0s (test itself: ~4ms). Two consecutive full
+`npx vitest run` passes: 226 files / 4514 tests, no failures, no outlier durations
+(~16s wall each, both well under the 10s per-test timeout that previously tripped under load).
+
+### The revalidation itself ran at the wrong point in time (fix round 6)
+
+**The defect (reviewer, 2026-10-21T17:01:51.409Z, correcting an earlier "already fixed" call of
+the reviewer's own).** Fix round 4 made `decideLaunchAdvisory` (`advisoryLogger.js`) revalidate a
+threaded-through `telemetryReadingsHint` for age/reset via `revalidateTelemetryReadingsAtFn` --
+but it does that exactly once, at the very TOP of `buildLaunchDecide`'s `innerDecide`
+(`launchAdvisory.js`), before `listCardUsageEntriesFn`'s own await, before the capacity lock's own
+queue wait (which can hold this turn behind every other concurrent launch's own critical section),
+and before `listActiveReservationsFn`/`sumActiveReservedRemainingCostUsdFn` inside the lock await
+real filesystem I/O. `evaluateAdmissionFn` -- the thing that actually turns a reading into an
+admit/hold -- ran AFTER all of that, still consuming the classification computed before any of it.
+A window that went stale, or whose reset elapsed, strictly BETWEEN that early revalidation and the
+admission evaluation was still evaluated as "fresh", because nothing re-checked it at the later
+point. The reviewer's own instruction from fix round 4 ("validate age and reset at the point of
+consumption, not only at the point of reading") had been implemented at a point that still
+preceded consumption, not at consumption itself.
+
+**The fix.** `buildLaunchDecide` now calls `revalidateTelemetryReadingsAtFn` a SECOND time,
+immediately before `evaluateAdmissionFn`, INSIDE the capacity lock, AFTER
+`listActiveReservationsFn` and `sumActiveReservedRemainingCostUsdFn` have both resolved -- using a
+new `nowMsFn` parameter (a plain ms-number clock, default `Date.now`, deliberately distinct from
+the existing `now` Date-factory used for ISO timestamps elsewhere in this module -- the two have
+different shapes and nothing conflates them). The resulting snapshot
+(`telemetryReadingsAtEvaluation`) is what `evaluateAdmissionFn` actually receives, and it is also
+what gets persisted via `recordAdvisoryDecisionFn` and returned in the `decide()` record -- so the
+decision records the reading it actually used for admission, not the earlier, possibly-superseded
+one. The original early revalidation inside `decideLaunchAdvisory` is left in place (harmless, and
+still correct for its own purpose: it keeps `decideLaunchAdvisory`'s own standalone contract
+intact for any caller that doesn't go through `buildLaunchDecide`'s lock at all) -- this fix adds a
+second check at the point that actually matters, it does not remove the first.
+
+**Test evidence (`launchAdvisory.test.js`, "T-0438 fix round 6" describe block).** Three tests
+drive the real `buildLaunchDecide` with the real `evaluateAdmission` and the real
+`revalidateTelemetryReadingsAt`, injecting a clock (`nowMsFn`) that only advances DURING
+`listActiveReservationsFn`'s or `sumActiveReservedRemainingCostUsdFn`'s own awaited call --
+never before it starts:
+
+- A `measured` five-hour reading that ages past `DEFAULT_MAX_STALENESS_MS.five_hour` while
+  `listActiveReservationsFn` is in flight is downgraded to `stale` (`utilization: null`) by the
+  time `evaluateAdmissionFn` runs; `record.admission.windows.five_hour.holdReason` is
+  `no_measured_window_reading`, not an admit computed against the earlier, now-stale snapshot.
+- A reset (`resetsAtMs`) crossed while `sumActiveReservedRemainingCostUsdFn` is in flight
+  downgrades the same reading to `unavailable` by evaluation time, same hold reason.
+- A reading still genuinely within bound at the moment of evaluation is unaffected --
+  `evaluateCall.telemetryReadings.five_hour` stays `measured`/`0.37`, holding only on the already-
+  documented, separately out-of-scope `units_not_comparable` (T-0402), proving this fix is
+  one-directional (downgrade-only), same as `revalidateReadingAt` itself already guarantees.
+
+Before this fix, all three of the first two tests' assertions failed with `classification:
+"measured"` where `"stale"`/`"unavailable"` was expected -- i.e. `evaluateAdmissionFn` was handed
+the pre-awaits snapshot. After the fix, all three pass.
+
+**A second, previously latent defect surfaced while wiring this in.** `revalidateTelemetryReadingsAt`
+mapped a window absent from its `readings` argument to a bare `null` (`readings?.[windowKind] ??
+null`, then passed straight through since `revalidateReadingAt` early-returns `null` unchanged).
+Every real caller of `readUsageTelemetry` always gets both `WINDOW_KINDS` keys populated, so this
+never showed up in production -- but `cardLaunch.test.js`'s "a terminal marker never outlives its
+use ... a NORMAL (non-fallback) decision write" test uses a `decideLaunchAdvisoryFn` double that
+legitimately resolves (not throws) with `telemetryReadings: {}`, and once that object started
+flowing through the new before-evaluation revalidation call, `recordAdvisoryDecisionFn`'s real
+`buildTelemetryFreshness` -> `classifyWindowCapacity` crashed dereferencing `reading.windowKind` on
+that `null`. Fixed in `usageTelemetry.js`: a missing window now revalidates to a real `unavailable`
+reading object (same shape `unavailableReading` already produces for every other "no data" case in
+this module), never a bare `null`. Pinned by a new test in
+`usageTelemetryDecisionCarryover.test.js` ("a window missing from `readings` entirely gets a real
+unavailable reading object, never a bare null a downstream consumer would crash dereferencing").
+
+**Cost: zero.** This round is a pure restructuring of when an already-computed, in-memory
+revalidation function runs -- no new probe, no new scan, no new filesystem or process I/O of any
+kind. `revalidateTelemetryReadingsAtFn` is a synchronous, pure function; calling it twice instead
+of once costs CPU cycles on an already-in-memory object, not a new I/O round trip.
+
+**The bound and cadence, reconciled -- unchanged, and still correctly unchanged.** This fix does
+not touch `DEFAULT_MAX_STALENESS_MS.five_hour`, and does not need to: the problem was never that
+the bound was wrong, it was that the bound was being checked against the wrong instant. Checking
+it again, correctly, immediately before the value is consumed, is what "The bound and the cadence,
+reconciled" (above) already argued for -- this round makes that argument true in the one place it
+previously wasn't.

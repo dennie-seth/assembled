@@ -14,6 +14,18 @@ import { readTailLines, readHeadLines, numericUtilization, DEFAULT_TAIL_BYTES, D
 export const WINDOW_KINDS = Object.freeze(["five_hour", "seven_day"]);
 
 /**
+ * T-0438: windows a decision-time probe (see `readWindowUsage`'s `probeFn`) is ever tried for.
+ * `five_hour` only -- deliberately excludes `seven_day`. Evidence (docs/usage-telemetry.md): no
+ * `seven_day` `rate_limit_event` appears anywhere in `tasks/.runs/*.jsonl` after
+ * `T-0403-2026-09-23T06-11-11-963Z.jsonl` -- 23+ days and hundreds of runs with zero weekly
+ * readings, while `five_hour` fires on essentially every run in that same window, including this
+ * card's own. The CLI evidently does not emit a weekly reading on an ordinary turn in this setup,
+ * so spending a probe on it would not reliably produce one; the existing fail-safe (`unavailable`
+ * -> `utilization: null`, never blocking, never admitting) is left standing for that window.
+ */
+export const PROBEABLE_WINDOW_KINDS = Object.freeze(["five_hour"]);
+
+/**
  * The four classification buckets every reading falls into. `measured` and `estimated` are both
  * "fresh" (within the window's max staleness); `stale` and `unavailable` both withhold
  * `utilization` (`null`) so unknown or stale capacity can never be silently read as unlimited.
@@ -246,6 +258,61 @@ function classifyReading({ windowKind, info, observedAtMs, now, maxStalenessMs, 
 }
 
 /**
+ * T-0438: the only way to get a reading at decision time once the board has gone idle long enough
+ * for the scan result to age out -- see docs/usage-telemetry.md's "Decision-time probe" section
+ * for why widening `maxStalenessMs` cannot fix this honestly (the live board's own idle gaps run
+ * from tens of minutes to a full day, far past anything a wider constant could truthfully claim
+ * as "still fresh"). `probeFn` is never required: omitting it (the default everywhere this card
+ * does not explicitly wire one in) reproduces the exact pre-T-0438 scan-only behavior.
+ *
+ * Tried only when BOTH hold: `windowKind` is in `PROBEABLE_WINDOW_KINDS`, and `scanned` is not
+ * already fresh (`measured`/`estimated`) -- a reading a real run already refreshed costs nothing
+ * more to trust, and probing on top of that would spend from the window for no benefit.
+ *
+ * Fail-safe throughout, matching every other reader in this module: a probe that throws, resolves
+ * with `null`/a non-object, or reports a `rate_limit_info` for a DIFFERENT `rateLimitType` than
+ * `windowKind` (a probe is one more independent observation, not guaranteed to be the window this
+ * caller asked about) leaves `scanned` exactly as it was. A probe can only ever replace a reading
+ * with a fresher one of the SAME window, never invent a reading that wasn't honestly obtained.
+ *
+ * A successful probe is classified via the same `classifyReading` every scanned reading goes
+ * through -- the status-only-is-never-measured rule, the elapsed-reset rule, and the
+ * stale-withholds-utilization rule all apply identically. `timingTrusted` is always `true` and
+ * `observedAtMs` is always `now`: the probe's own caller received this `rate_limit_info` at this
+ * instant, so there is nothing to distrust about its timing the way a historical log record can be
+ * untimed.
+ */
+async function withFreshProbe({ scanned, windowKind, now, maxStalenessMs, probeFn }) {
+  const alreadyFresh = scanned.classification === READING_STATUS.MEASURED || scanned.classification === READING_STATUS.ESTIMATED;
+  if (!probeFn || alreadyFresh || !PROBEABLE_WINDOW_KINDS.includes(windowKind)) {
+    return scanned;
+  }
+
+  let probed;
+  try {
+    probed = await probeFn({ windowKind, now });
+  } catch {
+    return scanned;
+  }
+
+  const info = probed && typeof probed === "object" && !Array.isArray(probed) ? probed.rateLimitInfo : null;
+  if (!info || typeof info !== "object" || Array.isArray(info) || info.rateLimitType !== windowKind) {
+    return scanned;
+  }
+
+  return classifyReading({
+    windowKind,
+    info,
+    observedAtMs: now,
+    now,
+    maxStalenessMs,
+    logPath: "probe",
+    foundVia: "probe",
+    timingTrusted: true
+  });
+}
+
+/**
  * Reads the newest telemetry for ONE window (`five_hour` or `seven_day`), scanned independently
  * of any other window's events -- see docs/usage-telemetry.md's "reading independently" section
  * for the bug this fixes (a newest-event-wins reader can miss an exhausted window entirely when
@@ -263,7 +330,8 @@ export async function readWindowUsage({
   maxLogsScanned = DEFAULT_MAX_LOGS_SCANNED,
   readdirFn = fs.readdir,
   statFn = fs.stat,
-  openFn = fs.open
+  openFn = fs.open,
+  probeFn = null
 } = {}) {
   if (!WINDOW_KINDS.includes(windowKind)) {
     throw new Error(`unknown usage window kind: ${windowKind}`);
@@ -284,30 +352,33 @@ export async function readWindowUsage({
       openFn
     });
   } catch (err) {
-    return unavailableReading(windowKind, `${windowKind} telemetry unreadable: ${err.message}`, effectiveMaxStalenessMs);
+    const scanned = unavailableReading(windowKind, `${windowKind} telemetry unreadable: ${err.message}`, effectiveMaxStalenessMs);
+    return withFreshProbe({ scanned, windowKind, now, maxStalenessMs: effectiveMaxStalenessMs, probeFn });
   }
 
-  if (!found) {
-    return unavailableReading(windowKind, `no ${windowKind} telemetry found in ${runsDir}/*.jsonl`, effectiveMaxStalenessMs);
-  }
+  const scanned = !found
+    ? unavailableReading(windowKind, `no ${windowKind} telemetry found in ${runsDir}/*.jsonl`, effectiveMaxStalenessMs)
+    : classifyReading({
+        windowKind,
+        info: found.info,
+        observedAtMs: found.observedAtMs,
+        now,
+        maxStalenessMs: effectiveMaxStalenessMs,
+        logPath: found.logPath,
+        foundVia: found.foundVia,
+        timingTrusted: found.timingTrusted
+      });
 
-  return classifyReading({
-    windowKind,
-    info: found.info,
-    observedAtMs: found.observedAtMs,
-    now,
-    maxStalenessMs: effectiveMaxStalenessMs,
-    logPath: found.logPath,
-    foundVia: found.foundVia,
-    timingTrusted: found.timingTrusted
-  });
+  return withFreshProbe({ scanned, windowKind, now, maxStalenessMs: effectiveMaxStalenessMs, probeFn });
 }
 
 /**
  * Reads both windows independently and returns `{five_hour, seven_day}`. One window's reading
  * never influences the other's -- each is a completely separate scan for its own `rateLimitType`.
+ * `probeFn`, when given, is threaded to every window's own `readWindowUsage` call, which alone
+ * decides (via `PROBEABLE_WINDOW_KINDS`) whether that window is ever actually tried.
  */
-export async function readUsageTelemetry({ runsDir, now = Date.now(), maxStalenessMs = {}, ...ioOverrides } = {}) {
+export async function readUsageTelemetry({ runsDir, now = Date.now(), maxStalenessMs = {}, probeFn = null, ...ioOverrides } = {}) {
   const readings = {};
   for (const windowKind of WINDOW_KINDS) {
     readings[windowKind] = await readWindowUsage({
@@ -315,8 +386,80 @@ export async function readUsageTelemetry({ runsDir, now = Date.now(), maxStalene
       windowKind,
       now,
       maxStalenessMs: maxStalenessMs[windowKind] ?? DEFAULT_MAX_STALENESS_MS[windowKind],
+      probeFn,
       ...ioOverrides
     });
   }
   return readings;
+}
+
+/**
+ * T-0438 fix round 4 (reviewer, 2026-10-16T17:12:25.400Z): "the fresh reading never reaches the
+ * launch decision." `autoLaunchPoller.js`'s `tick()` reads telemetry with the decision-time probe
+ * for its own `usage gate comparison` log line, but a real launch decision happens strictly LATER
+ * in the same tick -- `store.list()`, the idle gate, and `launchAdvisory.js`'s admission/
+ * reservation critical section all await real I/O first. A reading classified fresh AT THE SCAN
+ * can have aged past its own bound, or its window reset, by the time something actually consumes
+ * it. Carrying the already-obtained reading forward (see `decideLaunchAdvisory`'s
+ * `telemetryReadingsHint` in advisoryLogger.js) without re-checking it at the new point in time
+ * would trust a timestamp that is no longer current -- so this re-applies the exact same
+ * staleness/reset rules `classifyReading` already enforces, but evaluated against `now` as of
+ * THIS later call. Only ever downgrades a reading toward stale/unavailable, never upgrades one --
+ * the same one-directional "unknown/stale capacity is never silently read as current" rule every
+ * other check in this module already follows.
+ */
+export function revalidateReadingAt({ reading, now }) {
+  if (!reading || reading.classification === READING_STATUS.UNAVAILABLE) return reading;
+
+  // The window has rolled over since this reading was taken -- it describes a window that no
+  // longer exists, so its utilization must never be carried forward as though it still described
+  // the current one (acceptance edge case: "a reading taken before a reset describes a window
+  // that no longer exists"). A reading already flagged `resetElapsed` at scan time already
+  // accounted for this; only a reset that happens BETWEEN the scan and this later check is new.
+  if (!reading.resetElapsed && typeof reading.resetsAtMs === "number" && now >= reading.resetsAtMs) {
+    return unavailableReading(
+      reading.windowKind,
+      `window reset at ${reading.resetsAtIso} since this reading was observed -- no longer current at consumption time`,
+      reading.maxStalenessMs
+    );
+  }
+
+  if (typeof reading.observedAtMs !== "number") {
+    // No trustworthy observation instant to check age against to begin with (an untimed
+    // historical scan record, already classified conservatively) -- nothing new to revalidate.
+    return reading;
+  }
+
+  const ageMs = Math.max(0, now - reading.observedAtMs);
+  if (reading.classification !== READING_STATUS.STALE && ageMs > reading.maxStalenessMs) {
+    return {
+      ...reading,
+      classification: READING_STATUS.STALE,
+      utilization: null,
+      ageMs,
+      reason: `stale by the time of consumption (age ${ageMs}ms > max ${reading.maxStalenessMs}ms since observed at ${new Date(reading.observedAtMs).toISOString()})`
+    };
+  }
+
+  return { ...reading, ageMs };
+}
+
+/**
+ * Applies `revalidateReadingAt` to every window in a `readUsageTelemetry()`-shaped result. A
+ * window missing from `readings` entirely (never produced by the real `readUsageTelemetry`,
+ * which always returns every `WINDOW_KINDS` entry as a reading object -- but not guaranteed by
+ * every caller's own decide()-shaped value, e.g. a timeout/error fallback or a test double)
+ * revalidates to a real `unavailable` reading object, matching every other "no data" case in this
+ * module -- never a bare `null`, which every per-window consumer (`classifyWindowCapacity`,
+ * `evaluateWindowAdmission`) dereferences unconditionally.
+ */
+export function revalidateTelemetryReadingsAt({ readings, now }) {
+  const result = {};
+  for (const windowKind of WINDOW_KINDS) {
+    const reading = readings?.[windowKind] ?? null;
+    result[windowKind] = reading
+      ? revalidateReadingAt({ reading, now })
+      : unavailableReading(windowKind, `no ${windowKind} reading to revalidate`, DEFAULT_MAX_STALENESS_MS[windowKind]);
+  }
+  return result;
 }
