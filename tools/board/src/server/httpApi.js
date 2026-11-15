@@ -1077,7 +1077,7 @@ function rescopePatchForComment({ task, text, author, actor }) {
  * the deploy pull would be a silently different kind of "done" than a drag to the Done column
  * (docs/board-invariants.md PULL-1 is exactly the bug that shape of divergence causes).
  */
-async function applyTerminalStatusEffects({ orchestrator, restartCoordinator, id, status, repoRoot }) {
+export async function applyTerminalStatusEffects({ orchestrator, restartCoordinator, id, status, repoRoot }) {
   // A card that has landed is never going to be re-run, so the untracked artifacts held for it
   // across worktree reclaims (LoRA checkpoints, generated output -- see artifactPreservation.js)
   // have no further purpose and are the largest thing the board keeps on disk per card. This is
