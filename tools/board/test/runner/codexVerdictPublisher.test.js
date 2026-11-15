@@ -40,6 +40,16 @@ function makeFakeArchive() {
   };
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 let tasksDir;
 
 beforeEach(async () => {
@@ -614,6 +624,100 @@ describe("publishCodexVerdict -- recoverable delivery, not a one-shot claim that
     expect(result.status).toBe("duplicate");
     expect(result.entry).toEqual(preExisting);
     expect(archive.appendEntryFn).toHaveBeenCalledTimes(1); // only the pre-seeded call -- never a second append
+    expect(archive.store.get("T-0460")).toHaveLength(1);
+  });
+
+  // FIX ROUND 3 (Dennie, human comment (b), P1): reproduces Codex's probes.mjs finding. Two
+  // recoverers observe the SAME dead marker. The first (P1) fully reclaims it -- unlinks the dead
+  // marker, creates its own live one, re-checks the archive, and is paused immediately before its
+  // own append. The second (P2) captured its "stale" decision from the ORIGINAL dead marker
+  // before P1 ever touched it, then is suspended until after P1 has already reclaimed -- exactly
+  // the pre-emption window the bug report names. Resuming, P2 must not destroy P1's live
+  // replacement: re-reading on the next loop iteration cannot undo a removal that already
+  // destroyed a live claim.
+  it("a recoverer's stale decision, captured before a concurrent recoverer fully reclaims, must not destroy the live replacement when finally acted on -- archive ends with exactly one entry, not two", async () => {
+    const archive = makeFakeArchive();
+    const deliveryId = "two-recoverers-double-append-race";
+    const markerPath = deliveryMarkerPath(tasksDir, "T-0460", deliveryId);
+    await fs.mkdir(path.dirname(markerPath), { recursive: true });
+    await fs.writeFile(markerPath, JSON.stringify({ pid: 999999, claimedAt: new Date().toISOString() }), "utf8");
+
+    const baseArgs = {
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId,
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A,
+      isPidAliveFn: (pid) => pid !== 999999,
+      readEntriesFn: archive.readEntriesFn
+    };
+
+    const p1ReachedAppend = deferred();
+    const p1AppendGate = deferred();
+    const p1AppendEntryFn = vi.fn(async (...a) => {
+      p1ReachedAppend.resolve();
+      await p1AppendGate.promise;
+      return archive.appendEntryFn(...a);
+    });
+
+    // P2 reads the ORIGINAL dead marker -- captured eagerly via the real fs call -- then is
+    // suspended before it can act on that observation (decide stale, then remove it).
+    const p2Captured = deferred();
+    const p2ReadGate = deferred();
+    let p2ReadCalls = 0;
+    const p2ReadFileFn = async (p) => {
+      if (p === markerPath && p2ReadCalls === 0) {
+        p2ReadCalls += 1;
+        const content = await fs.readFile(p, "utf8");
+        p2Captured.resolve();
+        await p2ReadGate.promise;
+        return content;
+      }
+      return fs.readFile(p, "utf8");
+    };
+
+    const p2Promise = publishCodexVerdict({ ...baseArgs, readFileFn: p2ReadFileFn });
+    await p2Captured.promise;
+
+    const p1Promise = publishCodexVerdict({ ...baseArgs, appendEntryFn: p1AppendEntryFn });
+    await p1ReachedAppend.promise;
+
+    p2ReadGate.resolve();
+    const p2Result = await p2Promise;
+
+    p1AppendGate.resolve();
+    const p1Result = await p1Promise;
+
+    const statuses = [p1Result.status, p2Result.status].sort();
+    expect(statuses).toEqual(["duplicate", "published"]);
+    expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
+    expect(archive.store.get("T-0460")).toHaveLength(1);
+  });
+
+  // Acceptance edge case: the already-published short-circuit must hold "under any marker state"
+  // -- including no marker file existing at all, the ordinary shape of a brand-new claim attempt
+  // for a deliveryId the archive already has (e.g. a replayed event after the marker was long
+  // since cleaned up). Exercised directly via the archive, not by hand-constructing a marker.
+  it("an archive entry already present for this deliveryId is never appended a second time even with NO marker file present at all", async () => {
+    const archive = makeFakeArchive();
+    const deliveryId = "already-in-archive-no-marker";
+    const preExisting = { deliveryId, jobId: "job-1", ticketId: "T-0460", sprintId: "sprint-7", dispatchedSha: SHA_A, heading: "Codex Review: PASS", timestamp: "2026-10-21T00:00:00.000Z", outcome: "PASS", text: "..." };
+    await archive.appendEntryFn(tasksDir, "T-0460", preExisting);
+
+    const result = await publishCodexVerdict({
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId,
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A,
+      ...archive
+    });
+
+    expect(result.status).toBe("duplicate");
+    expect(result.entry).toEqual(preExisting);
+    expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
     expect(archive.store.get("T-0460")).toHaveLength(1);
   });
 });

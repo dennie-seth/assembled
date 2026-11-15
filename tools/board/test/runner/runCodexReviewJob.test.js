@@ -57,6 +57,16 @@ async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("runCodexReviewJob -- the subject card being mid-run (precondition)", () => {
   it("refuses to start and publishes BLOCKED, never constructing a runner, when the subject's OWN implementation run is live", async () => {
     const createRunner = vi.fn();
@@ -250,6 +260,66 @@ describe("claimReviewSlot / releaseOwnedReviewSlot -- launchReservation.js's own
     const lease = JSON.parse(await fs.readFile(leasePath, "utf8"));
     expect(lease.released).toBe(false);
     expect(lease.owner.pid).toBe(555555);
+  });
+
+  // FIX ROUND 3 (Dennie, human comment (a), P1): reproduces the exact interleave Codex's
+  // probes.mjs found -- A and B both read the SAME already-used, already-RELEASED lease (the
+  // ordinary resting state after any completed review, not an exotic crash state). A judges it
+  // stale, unlinks it, and reserves a fresh LIVE lease. B, still holding its earlier observation,
+  // must not then remove A's live replacement just because the filename is unchanged.
+  it("a removal decided from a stale read must not delete a DIFFERENT, live generation reclaimed in the meantime -- exactly one of two callers ends up holding the slot", async () => {
+    const cardId = reviewRunStateKey("T-0460");
+    const ownerPrior = { pid: process.pid, jobId: "job-prior" };
+    const prior = await claimReviewSlot({ runsDir, cardId, owner: ownerPrior });
+    await releaseOwnedReviewSlot({
+      runsDir,
+      cardId,
+      executionId: prior.executionId,
+      invocationId: prior.invocationId,
+      owner: ownerPrior,
+      outcome: { status: "completed" }
+    });
+
+    const leasePath = reservationLeasePath(runsDir, { cardId, executionId: REVIEW_SLOT_EXECUTION_ID, invocationId: REVIEW_SLOT_INVOCATION_ID });
+
+    // B reads the released lease -- captured eagerly via the real fs call -- then is suspended
+    // before it gets to act on that observation, exactly like a process pre-empted between its
+    // read and its destructive unlink. The value returned once released is provably the STALE
+    // one, not a fresh re-read made after resuming.
+    const bCaptured = deferred();
+    const bGate = deferred();
+    let bReadCalls = 0;
+    const bReadFileFn = async (p) => {
+      if (p === leasePath && bReadCalls === 0) {
+        bReadCalls += 1;
+        const content = await fs.readFile(p, "utf8");
+        bCaptured.resolve();
+        await bGate.promise;
+        return content;
+      }
+      return fs.readFile(p, "utf8");
+    };
+
+    const bPromise = claimReviewSlot({
+      runsDir,
+      cardId,
+      owner: { pid: process.pid, jobId: "job-b" },
+      readFileFn: bReadFileFn
+    });
+    await bCaptured.promise;
+
+    // A now fully reclaims the slot while B is suspended: A's own read sees the SAME released
+    // lease (B only read it, never removed it), decides stale, and reclaims a brand-new live one.
+    const aResult = await claimReviewSlot({ runsDir, cardId, owner: { pid: process.pid, jobId: "job-a" } });
+    expect(aResult.claimed).toBe(true);
+
+    bGate.resolve();
+    const bResult = await bPromise;
+
+    expect(bResult.claimed).toBe(false);
+    const lease = JSON.parse(await fs.readFile(leasePath, "utf8"));
+    expect(lease.owner.jobId).toBe("job-a");
+    expect(lease.released).toBe(false);
   });
 });
 
