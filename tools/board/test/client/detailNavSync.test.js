@@ -183,7 +183,6 @@ describe("nav bar re-synchronises after section focus is restored on a same-card
     // Round 1's guard: nothing is auto-focused onto the new card -- the old card's section
     // (keyed "composer") must not be re-attached to T-0002's structurally identical landmark.
     expect(document.activeElement).toBe(document.body);
-    const { jump } = navBarParts(root);
     // T-0002 has no attachments and an empty comment thread (but a composer is still offered),
     // so its jump list is its own, not T-0001's stale options.
     expect(Array.from(root.querySelectorAll(".detail-nav-jump option")).map((o) => o.value)).toEqual([
