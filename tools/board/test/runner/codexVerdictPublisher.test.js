@@ -721,6 +721,70 @@ describe("publishCodexVerdict -- recoverable delivery, not a one-shot claim that
     expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
     expect(archive.store.get("T-0460")).toHaveLength(1);
   });
+
+  // Edge case: a marker removed by a third party in the exact window between the staleness
+  // decision and the re-verification read must resolve to a retry, never an exception escaping
+  // the claim path.
+  it("a marker removed by a third party between the stale decision and the re-verification read results in a clean retry, not a thrown error", async () => {
+    const archive = makeFakeArchive();
+    const deliveryId = "third-party-removes-between-read-and-reverify";
+    const markerPath = deliveryMarkerPath(tasksDir, "T-0460", deliveryId);
+    await fs.mkdir(path.dirname(markerPath), { recursive: true });
+    await fs.writeFile(markerPath, JSON.stringify({ pid: 999999, claimedAt: new Date().toISOString() }), "utf8");
+
+    let readCalls = 0;
+    const readFileFn = async (p) => {
+      readCalls += 1;
+      if (p === markerPath && readCalls === 2) {
+        // The third party: some other recoverer already finished and cleaned up entirely right
+        // as this caller is about to re-verify.
+        await fs.unlink(markerPath).catch(() => {});
+      }
+      return fs.readFile(p, "utf8");
+    };
+
+    const result = await publishCodexVerdict({
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId,
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A,
+      isPidAliveFn: (pid) => pid !== 999999,
+      readFileFn,
+      ...archive
+    });
+
+    // The marker was gone out from under it by the time of the re-check -- this caller must
+    // never throw, and its retry finds the slot genuinely free to claim and publish into.
+    expect(result.status).toBe("published");
+    expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
+  });
+
+  // Edge case: a marker with a malformed/absent pid record must never be read as a live claim --
+  // it is reclaimable, the same as any other stale marker.
+  it("a marker with a malformed/absent pid record is treated as unclaimable (reclaimable), not as a live claim", async () => {
+    const archive = makeFakeArchive();
+    const deliveryId = "malformed-owner-record";
+    const markerPath = deliveryMarkerPath(tasksDir, "T-0460", deliveryId);
+    await fs.mkdir(path.dirname(markerPath), { recursive: true });
+    // No `pid` field at all -- the shape a corrupted or hand-edited marker file could have.
+    await fs.writeFile(markerPath, JSON.stringify({ claimedAt: new Date().toISOString() }), "utf8");
+
+    const result = await publishCodexVerdict({
+      tasksDir,
+      taskId: "T-0460",
+      deliveryId,
+      dispatchedJob: dispatchedJob(),
+      runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
+      currentHead: SHA_A,
+      isPidAliveFn: () => true, // would wrongly look "alive" if this value were ever passed a pid
+      ...archive
+    });
+
+    expect(result.status).toBe("published");
+    expect(archive.appendEntryFn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("publishCodexVerdict -- the happy path", () => {

@@ -321,6 +321,58 @@ describe("claimReviewSlot / releaseOwnedReviewSlot -- launchReservation.js's own
     expect(lease.owner.jobId).toBe("job-a");
     expect(lease.released).toBe(false);
   });
+
+  // Edge case: a lease removed by a third party in the exact window between the staleness
+  // decision and the re-verification read must resolve to a retry, never an exception escaping
+  // the claim path.
+  it("a lease removed by a third party between the stale decision and the re-verification read results in a clean retry, not a thrown error", async () => {
+    const cardId = reviewRunStateKey("T-0460");
+    const ownerPrior = { pid: process.pid, jobId: "job-prior" };
+    const prior = await claimReviewSlot({ runsDir, cardId, owner: ownerPrior });
+    await releaseOwnedReviewSlot({
+      runsDir,
+      cardId,
+      executionId: prior.executionId,
+      invocationId: prior.invocationId,
+      owner: ownerPrior,
+      outcome: { status: "completed" }
+    });
+
+    const leasePath = reservationLeasePath(runsDir, { cardId, executionId: REVIEW_SLOT_EXECUTION_ID, invocationId: REVIEW_SLOT_INVOCATION_ID });
+    let readCalls = 0;
+    const readFileFn = async (p) => {
+      readCalls += 1;
+      if (p === leasePath && readCalls === 2) {
+        // The third party: removes the lease entirely right as the caller is about to
+        // re-verify it, simulating a concurrent recoverer that already won the slot and moved
+        // on (e.g. released it again) before this caller's re-check lands.
+        await fs.unlink(leasePath).catch(() => {});
+      }
+      return fs.readFile(p, "utf8");
+    };
+
+    const result = await claimReviewSlot({ runsDir, cardId, owner: { pid: process.pid, jobId: "job-b" }, readFileFn });
+
+    // The lease was removed out from under it by the time of the re-check -- this caller must
+    // never throw, and its retry finds the slot genuinely free to claim.
+    expect(result.claimed).toBe(true);
+  });
+
+  // Edge case: a lease file with a malformed/absent owner record must never be read as a live
+  // claim -- it is reclaimable, the same as any other stale lease.
+  it("a lease with a malformed/absent owner record is treated as unclaimable (reclaimable), not as a live claim", async () => {
+    const cardId = reviewRunStateKey("T-0460");
+    const executionId = REVIEW_SLOT_EXECUTION_ID;
+    const invocationId = REVIEW_SLOT_INVOCATION_ID;
+    const leasePath = reservationLeasePath(runsDir, { cardId, executionId, invocationId });
+    await fs.mkdir(path.dirname(leasePath), { recursive: true });
+    // No `owner` field at all -- the shape a corrupted or hand-edited lease file could have.
+    await fs.writeFile(leasePath, JSON.stringify({ cardId, executionId, invocationId, released: false }), "utf8");
+
+    const result = await claimReviewSlot({ runsDir, cardId, owner: { pid: process.pid, jobId: "job-new" } });
+
+    expect(result.claimed).toBe(true);
+  });
 });
 
 describe("runCodexReviewJob -- real concurrency: two simultaneous starts for the same card", () => {
