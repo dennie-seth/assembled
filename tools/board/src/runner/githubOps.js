@@ -131,6 +131,31 @@ export async function createPr({ worktreeDir, base, head, title, body }) {
 }
 
 /**
+ * Current state of a PR, read directly from its URL (never a branch) -- T-0458's merge
+ * reconciler calls this with `task.pr`, which is always a full URL (see `_handlePass` in
+ * runOrchestrator.js), not a branch name. Deliberately does NOT take a branch: by the time a
+ * card reaches `review`, `_handlePass` has already called `removeWorktree` on its feature
+ * worktree, so there is no checked-out branch left to ask about -- `gh pr view <url>` only needs
+ * *some* directory inside this repo's own git checkout to resolve `{owner}/{repo}` from the
+ * remote, which is what `worktreeDir` (the main checkout) supplies here.
+ *
+ * Returns the parsed `{state, url, headRefName, number}` object as-is -- `state` is exactly
+ * "OPEN" | "CLOSED" | "MERGED" per GitHub's own enum, so a PR closed without merging reads
+ * "CLOSED", never "MERGED", regardless of whether it carried a merge commit. Throws (classified
+ * via ghError, see classifyGhError) on any failure -- a missing/renamed PR, an auth problem, a
+ * transient GitHub-side blip -- so the caller decides how to treat "could not be read" rather
+ * than this function guessing a state on its behalf.
+ */
+export async function getPrState({ worktreeDir, prUrl }) {
+  try {
+    const { stdout } = await gh(["pr", "view", prUrl, "--json", "state,url,headRefName,number"], worktreeDir);
+    return JSON.parse(stdout);
+  } catch (err) {
+    throw ghError(err);
+  }
+}
+
+/**
  * REST-API fallback for createPr, used when `gh pr create` (GraphQL) keeps failing transiently.
  * REST stayed available during the 2026-08-17 GraphQL-only outage that motivated this. Uses gh's
  * `{owner}/{repo}` placeholder expansion (resolved from the worktree's own git remote) rather

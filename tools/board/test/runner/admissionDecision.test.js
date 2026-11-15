@@ -8,6 +8,7 @@ import {
   admissionEnforcementEnabledFromEnv,
   loadAdmissionConfigFromEnv
 } from "../../src/runner/admissionDecision.js";
+import { resolveUnitConversionForAdmission, DEFAULT_USD_UTILIZATION_CONVERSION } from "../../src/runner/usdUtilizationConversion.js";
 
 function reading(overrides = {}) {
   return {
@@ -432,6 +433,43 @@ describe("evaluateAdmission -- T-0402: a per-window unitConversion, never a shar
     });
     expect(result.windows.five_hour.predictedRemainingCostUpperBound).toBeCloseTo(0.5); // 5usd / 10usd-per-unit
     expect(result.windows.seven_day.predictedRemainingCostUpperBound).toBeCloseTo(0.005); // 5usd / 1000usd-per-unit
+  });
+});
+
+/**
+ * T-0457 investigated why seven_day's censoring drops its one other candidate rate-sample cycle
+ * and found that recovering it would not clear MIN_SAMPLES_FOR_USABLE_CONVERSION regardless (see
+ * docs/usd-utilization-conversion.md) -- so `DEFAULT_USD_UTILIZATION_CONVERSION.windows.seven_day`
+ * stays `null` through `resolveUnitConversionForAdmission`, exactly as it did before this card.
+ * This exercises the REAL committed table (not a hand-built stub) through the REAL
+ * evaluateAdmission fail-safe T-0402 restored, so a future change to either module can't silently
+ * let a fitting five_hour window wave through an aggregate seven_day can't yet be compared against.
+ */
+describe("evaluateAdmission -- T-0457: the real committed conversion's seven_day gap still vetoes the aggregate", () => {
+  const nestedConfig = {
+    dial: 1,
+    externalBurnAllowance: { five_hour: 0.05, seven_day: 0.05 },
+    uncertaintyReserve: { five_hour: 0.05, seven_day: 0.05 }
+  };
+
+  it("resolveUnitConversionForAdmission(DEFAULT_USD_UTILIZATION_CONVERSION) still resolves seven_day to null, and the aggregate still holds on it even with a genuinely fitting five_hour window", () => {
+    const unitConversion = resolveUnitConversionForAdmission(DEFAULT_USD_UTILIZATION_CONVERSION);
+    expect(unitConversion.five_hour).not.toBeNull();
+    expect(unitConversion.seven_day).toBeNull();
+
+    const result = evaluateAdmission({
+      telemetryReadings: {
+        five_hour: reading({ windowKind: "five_hour", utilization: 0.1 }),
+        seven_day: reading({ windowKind: "seven_day", utilization: 0.1 })
+      },
+      estimate: estimate({ value: 1 }),
+      reservedUnspentCostUsd: 0,
+      config: nestedConfig,
+      unitConversion
+    });
+    expect(result.windows.five_hour.holdReason).not.toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    expect(result.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    expect(result.admitted).toBeNull();
   });
 });
 

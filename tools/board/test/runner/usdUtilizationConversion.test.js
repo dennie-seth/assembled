@@ -8,6 +8,7 @@ import {
   MIN_SAMPLES_FOR_USABLE_CONVERSION,
   MAX_COEFFICIENT_OF_VARIATION,
   deriveRateSamplesForWindow,
+  diagnoseCensoredCycles,
   fitConversionFromSamples,
   deriveUsdUtilizationConversionFromRuns,
   resolveUnitConversionForAdmission,
@@ -121,6 +122,79 @@ describe("deriveRateSamplesForWindow -- one rate sample per completed reset cycl
     const ledgerEntries = [ledgerEntry({ recordedAtMs: 1500, costUsd: 2 }), ledgerEntry({ recordedAtMs: 5500, costUsd: 9 })];
     const samples = deriveRateSamplesForWindow({ readings, ledgerEntries });
     expect(samples).toHaveLength(2);
+  });
+});
+
+describe("diagnoseCensoredCycles -- names exactly which reset cycles censoring (not reading scarcity) dropped (T-0457)", () => {
+  it("reports a cycle with two or more readings and a genuine increase whose interval contains a censored entry", () => {
+    const readings = [
+      reading({ receivedAtMs: 1000, utilization: 0.1, resetsAt: 1 }),
+      reading({ receivedAtMs: 2000, utilization: 0.3, resetsAt: 1 })
+    ];
+    const ledgerEntries = [ledgerEntry({ recordedAtMs: 1200, costUsd: 4 }), ledgerEntry({ recordedAtMs: 1600, costUsd: null })];
+    const diagnostics = diagnoseCensoredCycles({ readings, ledgerEntries });
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({ resetsAt: 1, readingCount: 2, censoredEntryCount: 1, knownEntryCount: 1 });
+  });
+
+  it("counts every censored entry in the interval, not just whether one exists", () => {
+    const readings = [
+      reading({ receivedAtMs: 1000, utilization: 0.1, resetsAt: 1 }),
+      reading({ receivedAtMs: 2000, utilization: 0.3, resetsAt: 1 })
+    ];
+    const ledgerEntries = [
+      ledgerEntry({ recordedAtMs: 1100, costUsd: null }),
+      ledgerEntry({ recordedAtMs: 1300, costUsd: null }),
+      ledgerEntry({ recordedAtMs: 1500, costUsd: 2 })
+    ];
+    const diagnostics = diagnoseCensoredCycles({ readings, ledgerEntries });
+    expect(diagnostics[0].censoredEntryCount).toBe(2);
+    expect(diagnostics[0].knownEntryCount).toBe(1);
+  });
+
+  it("never reports a cycle that has no censored entries at all -- that is not a censoring drop", () => {
+    const readings = [
+      reading({ receivedAtMs: 1000, utilization: 0.1, resetsAt: 1 }),
+      reading({ receivedAtMs: 2000, utilization: 0.3, resetsAt: 1 })
+    ];
+    const ledgerEntries = [ledgerEntry({ recordedAtMs: 1500, costUsd: 4 })];
+    expect(diagnoseCensoredCycles({ readings, ledgerEntries })).toHaveLength(0);
+  });
+
+  it("never reports a cycle with fewer than two readings, even with a censored entry nearby -- that drop is a reading shortage, not censoring", () => {
+    const readings = [reading({ receivedAtMs: 1000, utilization: 0.1, resetsAt: 1 })];
+    const ledgerEntries = [ledgerEntry({ recordedAtMs: 1000, costUsd: null })];
+    expect(diagnoseCensoredCycles({ readings, ledgerEntries })).toHaveLength(0);
+  });
+
+  it("never reports a cycle whose utilization did not increase, even with a censored entry inside it", () => {
+    const readings = [
+      reading({ receivedAtMs: 1000, utilization: 0.3, resetsAt: 1 }),
+      reading({ receivedAtMs: 2000, utilization: 0.3, resetsAt: 1 })
+    ];
+    const ledgerEntries = [ledgerEntry({ recordedAtMs: 1500, costUsd: null })];
+    expect(diagnoseCensoredCycles({ readings, ledgerEntries })).toHaveLength(0);
+  });
+
+  it("ignores ledger entries outside the cycle's own interval", () => {
+    const readings = [
+      reading({ receivedAtMs: 1000, utilization: 0.1, resetsAt: 1 }),
+      reading({ receivedAtMs: 2000, utilization: 0.3, resetsAt: 1 })
+    ];
+    const ledgerEntries = [ledgerEntry({ recordedAtMs: 500, costUsd: null }), ledgerEntry({ recordedAtMs: 1500, costUsd: 4 })];
+    expect(diagnoseCensoredCycles({ readings, ledgerEntries })).toHaveLength(0);
+  });
+
+  it("reports multiple independently-censored cycles separately", () => {
+    const readings = [
+      reading({ receivedAtMs: 1000, utilization: 0.1, resetsAt: 1 }),
+      reading({ receivedAtMs: 2000, utilization: 0.3, resetsAt: 1 }),
+      reading({ receivedAtMs: 5000, utilization: 0.1, resetsAt: 2 }),
+      reading({ receivedAtMs: 6000, utilization: 0.4, resetsAt: 2 })
+    ];
+    const ledgerEntries = [ledgerEntry({ recordedAtMs: 1500, costUsd: null }), ledgerEntry({ recordedAtMs: 5500, costUsd: null })];
+    const diagnostics = diagnoseCensoredCycles({ readings, ledgerEntries });
+    expect(diagnostics).toHaveLength(2);
   });
 });
 
@@ -293,5 +367,42 @@ describe("DEFAULT_USD_UTILIZATION_CONVERSION -- the committed, versioned, cited 
     expect(DEFAULT_USD_UTILIZATION_CONVERSION.windows.five_hour.usable).toBe(true);
     expect(DEFAULT_USD_UTILIZATION_CONVERSION.windows.five_hour.sampleCount).toBeGreaterThanOrEqual(MIN_SAMPLES_FOR_USABLE_CONVERSION);
     expect(DEFAULT_USD_UTILIZATION_CONVERSION.windows.seven_day.usable).toBe(false);
+  });
+});
+
+/**
+ * T-0457: restoring the weekly backstop behind five_hour-only enforcement means finding out
+ * WHY seven_day's censoring drops its one other candidate cycle (docs/usd-utilization-
+ * conversion.md's "origin of costUsd: null" section has the full citation against the real
+ * tasks/.runs evidence) -- and confirming that doing so honestly still leaves seven_day short of
+ * MIN_SAMPLES_FOR_USABLE_CONVERSION (the real history has only one other seven_day reset cycle
+ * with two or more timed readings at all; recovering it fully would cap seven_day at 2 samples,
+ * not 5). five_hour's own committed fit is untouched by this investigation -- pinned here
+ * byte-for-byte so a future change to this module can never silently drift it.
+ */
+describe("T-0457: the committed five_hour fit stays pinned; seven_day's honest non-fit is re-confirmed", () => {
+  it("DEFAULT_USD_UTILIZATION_CONVERSION.windows.five_hour is exactly the value T-0402 committed", () => {
+    expect(DEFAULT_USD_UTILIZATION_CONVERSION.windows.five_hour).toEqual({
+      usable: true,
+      reason: null,
+      sampleCount: 5,
+      usdPerUtilizationUnit: 77.45769000000003,
+      candidateUsdPerUtilizationUnit: 77.45769000000003,
+      mean: 86.41720572222225,
+      sd: 34.75204141309151,
+      cv: 0.4021426187372661,
+      min: 55.147420000000004,
+      max: 144.3804077777778,
+      version: CONVERSION_VERSION,
+      fitDate: "2026-10-16",
+      method: "reset-cycle-aggregate",
+      windowRangeStart: "2026-09-17T20:52:57.940Z",
+      windowRangeEnd: "2026-09-30T16:10:45.255Z"
+    });
+  });
+
+  it("seven_day's sampleCount stays below the usable floor -- this card does not lower the floor to make one fit", () => {
+    expect(DEFAULT_USD_UTILIZATION_CONVERSION.windows.seven_day.sampleCount).toBeLessThan(MIN_SAMPLES_FOR_USABLE_CONVERSION);
+    expect(DEFAULT_USD_UTILIZATION_CONVERSION.windows.seven_day.usdPerUtilizationUnit).toBeNull();
   });
 });
