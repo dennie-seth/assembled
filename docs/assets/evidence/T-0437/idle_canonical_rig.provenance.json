@@ -1,0 +1,24 @@
+{
+  "arm_c_benchmark": [
+    0.072,
+    0.112
+  ],
+  "beats_arm_c_benchmark": true,
+  "card": "T-0437",
+  "frame_delta_range": [
+    0.00702576112412178,
+    0.04054054054054054
+  ],
+  "generator": "assets/src/character/gen_idle_canonical_rig_evidence_T0437.py",
+  "generator_hash": "fa867efafb4ff048555283f194b183f1d8b13dd8b06a9219721c154875fa1780",
+  "layout": {
+    "cell_px": 48,
+    "cols": 12,
+    "rows": 1
+  },
+  "method": "char_gen.idle_cycle.render_frames (the canonical-rig standing idle) over the ten committed assets/src/character/parts/side_view/*.png parts, descended to the shared 48px cell via char_gen.character_scale.CHARACTER_SCALE. Measured here, after the fact, directly from the already-committed sheet -- this script performs no rendering of its own.",
+  "model": "none -- deterministic composite, zero GPU/network calls",
+  "model_hash": null,
+  "motion_class": "idle",
+  "sheet_sha256": "3ced2018ae91d32f30e613917ad07feab4231fbfa4df6c510f2fee12cb7000df"
+}
