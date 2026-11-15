@@ -243,6 +243,31 @@ describe("buildLaunchDecide -- composes T-0367 telemetry, T-0369 estimation, and
     );
   });
 
+  describe("T-0402 -- unitConversion is threaded through to evaluateAdmissionFn", () => {
+    it("defaults to null (the existing units_not_comparable fail-safe) when no unitConversion is supplied", async () => {
+      const deps = baseDeps();
+      await buildLaunchDecide(deps)();
+      expect(deps.evaluateAdmissionFn).toHaveBeenCalledWith(expect.objectContaining({ unitConversion: null }));
+    });
+
+    it("passes a supplied unitConversion straight through to evaluateAdmissionFn", async () => {
+      const unitConversion = { five_hour: { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" }, seven_day: null };
+      const deps = baseDeps({ unitConversion });
+      await buildLaunchDecide(deps)();
+      expect(deps.evaluateAdmissionFn).toHaveBeenCalledWith(expect.objectContaining({ unitConversion }));
+    });
+
+    it("wired end to end through the REAL evaluateAdmission, a usable five_hour conversion yields a genuine admit/hold, never units_not_comparable", async () => {
+      const unitConversion = { five_hour: { usdPerUtilizationUnit: 10, sampleCount: 20, fitDate: "2026-09-01", version: "v1" }, seven_day: null };
+      const deps = baseDeps({ unitConversion });
+      const record = await buildLaunchDecide(deps)();
+      expect(record.admission.windows.five_hour.holdReason).not.toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+      expect(typeof record.admission.windows.five_hour.admitted).toBe("boolean");
+      // seven_day has no conversion in this test -- it legitimately still holds.
+      expect(record.admission.windows.seven_day.holdReason).toBe(HOLD_REASON.UNITS_NOT_COMPARABLE);
+    });
+  });
+
   it("is failure-isolated: a throwing telemetry reader still yields a scoreable hold record, never throws", async () => {
     const deps = baseDeps({
       // Use the real decideLaunchAdvisory (T-0369) so its own unguarded `await readUsageTelemetryFn(...)`
