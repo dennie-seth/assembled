@@ -229,6 +229,12 @@ export function buildLaunchDecide({
   coverageTarget = DEFAULT_COVERAGE_TARGET,
   fitDate = null,
   admissionConfig,
+  // T-0402: the versioned, per-window USD-to-utilization conversion (`usdUtilizationConversion.js`-
+  // shaped, `{five_hour, seven_day}`) -- defaults to `null`, same fail-safe `evaluateAdmission`
+  // already applies when it's omitted (every USD estimate holds `units_not_comparable`). The real
+  // caller (`cardLaunch.js`) resolves and passes the committed, derived-from-evidence table;
+  // nothing here ever invents one.
+  unitConversion = null,
   timeoutMs = DEFAULT_ADVISORY_TIMEOUT_MS,
   logger = console,
   now = () => new Date(),
@@ -318,7 +324,8 @@ export function buildLaunchDecide({
         telemetryReadings: implementerAdvisory.telemetryReadings,
         estimate: candidateEstimate,
         reservedUnspentCostUsd,
-        config: admissionConfig
+        config: admissionConfig,
+        unitConversion
       });
 
       // Re-checked: the reads above awaited, so the timeout could have fired while this turn was
