@@ -646,6 +646,68 @@ data arrives -- proven in `runCodexReviewJob.test.js`'s "streams NDJSON events i
 durably" test, which asserts an event appended to the log *before* the child's `exit` event ever
 fires.
 
+**FIX ROUND 3 (Dennie, human comments (a) and (b), P1, routed from a Codex final review using
+`probes.mjs` to control filesystem operation order): two TOCTOU races, same shape, found by
+deterministic reproduction rather than inspection.** Both `claimReviewSlot`'s stale-lease reclaim
+(§8b, FIX ROUND 2 (b)) and `publishEntryExactlyOnce`'s dead-marker recovery (§8b, FIX ROUND 2 (a))
+decided "this is stale" from one `await`ed read, then acted on that decision with a *second*,
+later `await` (`unlinkFn(path)`) -- with nothing joining the two into one atomic step. A concurrent
+caller could reclaim the exact same path in the gap between them; the first caller's later unlink
+then removed that live replacement by filename, since plain `unlink(path)` deletes whatever
+currently occupies the path, not specifically the stale generation that was actually observed:
+
+- In `claimReviewSlot` (`scripts/runCodexReview.js`): caller A and caller B both read the same
+  already-released lease (the *ordinary* resting state after any completed review, not an exotic
+  crash state). A judges it stale, unlinks it, loops, and reserves a fresh *live* lease. B, still
+  holding only its earlier observation, reaches its own `unlinkFn(leasePath)` and deletes A's new
+  live lease -- both then loop and both successfully reserve, so both return `claimed: true` and
+  both could launch a paid review of the same ticket.
+- In `publishEntryExactlyOnce` (`codexVerdictPublisher.js`): two recoverers observe the same dead
+  marker. The first fully reclaims it (unlinks the dead marker, creates its own live one,
+  re-checks the archive, and is in flight toward its own append). The second -- still holding its
+  earlier observation of the now-gone dead marker -- unlinks the first's live replacement, then
+  also creates its own marker and appends. Both callers append, producing **two archive entries
+  for one delivery** -- the exact double-publish the single marker (FIX ROUND 2 (a)) was
+  introduced to prevent, reappearing one level up, exactly as Dennie's report predicted: "re-reading
+  on the next loop iteration does not undo a removal that has already destroyed a live
+  replacement."
+
+**The fix, identical in shape for both:** re-read the raw bytes at the same path immediately
+before the destructive unlink, and compare them *byte-for-byte* against the raw bytes the
+staleness decision was originally made from. A mismatch -- or the file already gone -- means a
+concurrent caller has already acted on it since this caller looked, so this caller must never
+remove it; it loops back and re-evaluates from scratch instead. An inode-based version of this
+check (capture `fs.stat(path).ino` alongside the content, compare inode numbers) was tried and
+discarded first: it reproduced the exact same bug it was meant to fix, because the tmpfs this
+card's own tests run on reuses a just-freed inode for the very next file created at the same path
+often enough to make the comparison pass when it should have failed -- discovered by watching the
+first attempt's own test still fail after the inode fix was applied. The byte-comparison version
+has no such dependency on filesystem allocator behavior.
+
+Exercised with controlled interleaving (a `deferred()`-gated read, in the same style already used
+elsewhere in this suite for pullRestartSetupWindow.test.js's own concurrency tests), not relying on
+real-world timing: `runCodexReviewJob.test.js`'s "a removal decided from a stale read must not
+delete a DIFFERENT, live generation reclaimed in the meantime" drives caller B to capture the
+released lease's raw bytes, suspends B there, lets caller A fully reclaim a live lease, then
+resumes B and asserts B backs off (`claimed: false`) rather than destroying A's lease; confirmed
+RED against the pre-fix code (B incorrectly returned `claimed: true` after destroying A's lease)
+before the fix was applied. `codexVerdictPublisher.test.js`'s "a recoverer's stale decision,
+captured before a concurrent recoverer fully reclaims, must not destroy the live replacement when
+finally acted on" drives the identical shape for the marker recovery path -- P1 paused immediately
+before its own append, P2 resumed with its stale observation only after P1 has fully reclaimed --
+and asserts the archive ends with exactly one entry, not two; also confirmed RED first (both
+callers returned `published`, two archive entries). Both tests' RED output is reproduced verbatim
+in this card's own commit history (`test(infra): failing tests for the FIX ROUND 3 TOCTOU races...`).
+
+Four edge cases named in the round-3 acceptance are each their own test, for both functions: a
+lease/marker removed by a third party in the exact window between the staleness decision and the
+re-verification read resolves to a clean retry, never an exception escaping the claim path; and a
+lease/marker with a malformed or absent owner/pid field is treated as reclaimable, never as a live
+claim (the existing `releaseOwnedReviewSlot`-only-releases-its-own-claim test, and the existing
+"append for an already-archived `(taskId, deliveryId)` is never duplicated" test, both already
+covered the remaining two named edge cases unchanged -- re-run and re-confirmed passing rather than
+re-written).
+
 ## 9. Reuses the board's existing machinery
 
 | What | File:line / module | How this spike uses it |
@@ -764,6 +826,11 @@ or whether a pre-spend ceiling is needed before any further slice, is a scope de
   under real concurrency (two simultaneous `runCodexReviewJob` calls against the real
   `launchReservation.js` primitives, not mocks) and shown to spawn exactly one child (§8b, FIX
   ROUND 2 (b)).
+- Two TOCTOU races in the stale-reclaim paths FIX ROUND 2 introduced -- `claimReviewSlot`'s lease
+  reclaim and the verdict publisher's dead-marker recovery -- were found by deterministic
+  reproduction (Codex's `probes.mjs`), confirmed RED against this card's own pre-fix code, and
+  closed with a byte-for-byte re-verification immediately before the destructive unlink (§8b, FIX
+  ROUND 3).
 - Least-privilege: the env allowlist, the hardcoded sandbox mode, and the absence of any
   model-writable code path are each demonstrated, not merely asserted.
 
@@ -825,21 +892,18 @@ that would make it a reviewer the board actually depends on day to day.
 
 ## 14. Test/suite status and gitleaks
 
-- `npx vitest run` (`npm test`) from `tools/board/`: **230 test files, 4602 tests, all passing**
+- `npx vitest run` (`npm test`) from `tools/board/`: **230 test files, 4609 tests, all passing**
   (includes this card's 6 test files: `codexVerdictSchema.test.js`, `codexCliRunner.test.js`
   (covering the token-budget ceiling, §11), `codexVerdictPublisher.test.js` (covering the
-  recoverable-delivery fix, the acceptance-criteria-version identity check, and now FIX ROUND 2
-  (a)'s single-marker collapse -- no second `.takeover` file, a dead claim left by a crashed
-  RECOVERY attempt still recovers, two/three simultaneous recoverers still leave exactly one
-  archive entry, and the archive is re-checked as authoritative before any append during
-  recovery), `codexResultExtractor.test.js`, `codexBoardKillRecovery.test.js` (§8b), and
-  `runCodexReviewJob.test.js` (the two preconditions, durable streaming, the
-  `budgetExceeded`/timeout branches, and now FIX ROUND 2 (b)'s atomic `launchReservation.js` claim:
-  refusal without constructing a runner, claim-before-`createRunner` ordering, release on both the
-  happy path and a thrown `start()`, a dedicated `claimReviewSlot`/`releaseOwnedReviewSlot` unit
-  block against a real temp dir, and a real-concurrency block driving two simultaneous
-  `runCodexReviewJob` calls against the genuine atomic primitive), plus every pre-existing test in
-  the suite -- no regressions).
+  recoverable-delivery fix, the acceptance-criteria-version identity check, FIX ROUND 2 (a)'s
+  single-marker collapse, and now FIX ROUND 3 (b)'s byte-for-byte re-verification before the
+  stale-marker unlink -- the double-append race with a controlled-interleave repro, plus the
+  third-party-removal and malformed-pid edge cases), `codexResultExtractor.test.js`,
+  `codexBoardKillRecovery.test.js` (§8b), and `runCodexReviewJob.test.js` (the two preconditions,
+  durable streaming, the `budgetExceeded`/timeout branches, FIX ROUND 2 (b)'s atomic
+  `launchReservation.js` claim, and now FIX ROUND 3 (a)'s byte-for-byte re-verification before the
+  stale-lease unlink -- the same controlled-interleave repro, plus the third-party-removal and
+  malformed-owner edge cases), plus every pre-existing test in the suite -- no regressions).
 - `npm run lint` (`eslint .`) from `tools/board/`: clean.
 - `git status --porcelain`: empty at the end of this run (confirmed before stopping).
 - **gitleaks: not run.** The `infra` persona (and no persona checked) holds a grant to execute
