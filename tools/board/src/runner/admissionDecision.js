@@ -50,9 +50,12 @@ function estimateIsKnown(estimate) {
  * Converts a USD amount into `WINDOW_CAPACITY_UNIT`s via a versioned, recorded-evidence
  * conversion (spec §4 / Codex constraint 4: "unless a conversion is derived from recorded
  * evidence (versioned, with its sample count and fit date) the per-window comparison returns an
- * explicit units-not-comparable hold"). `unitConversion` is `null` by default everywhere in this
- * card -- no such fit has been built yet -- so every USD estimate hits `UNITS_NOT_COMPARABLE`
- * until a later card derives and versions one.
+ * explicit units-not-comparable hold"). `unitConversion` defaults to `null` HERE -- this
+ * function itself never assumes a caller supplied one -- but T-0402 derived and wired a real,
+ * per-window conversion (`usdUtilizationConversion.js`'s `DEFAULT_USD_UTILIZATION_CONVERSION`,
+ * resolved via `resolveUnitConversionForAdmission()`) that `cardLaunch.js` now passes by default
+ * for every real caller. See `docs/usd-utilization-conversion.md` for which windows that
+ * conversion actually makes comparable today (`five_hour` does; `seven_day` doesn't yet).
  */
 function convertUsdToWindowUnits(usdAmount, unitConversion) {
   if (!unitConversion || typeof unitConversion.usdPerUtilizationUnit !== "number" || unitConversion.usdPerUtilizationUnit <= 0) {
@@ -73,8 +76,11 @@ function convertUsdToWindowUnits(usdAmount, unitConversion) {
  * reservation ledger's current unspent total (USD, see `launchReservation.js`); `config` carries
  * this window's `externalBurnAllowance`/`uncertaintyReserve` (both in `WINDOW_CAPACITY_UNIT`s)
  * and the overall `dial`. `unitConversion`, when supplied, is the versioned USD-per-utilization-
- * unit rate a later card derives from recorded evidence -- omitted (the default everywhere
- * today), every USD estimate is `UNITS_NOT_COMPARABLE` rather than silently assumed convertible.
+ * unit rate T-0402 derived from recorded evidence (`usdUtilizationConversion.js`); real callers
+ * (`cardLaunch.js`) now pass it by default. This parameter still defaults to `null` HERE, so a
+ * caller that omits it -- or a window whose own rate isn't usable yet (e.g. `seven_day`, see
+ * `docs/usd-utilization-conversion.md`) -- gets an explicit `UNITS_NOT_COMPARABLE` hold rather
+ * than silently assumed convertible.
  */
 export function evaluateWindowAdmission({ windowKind, reading, estimate, reservedUnspentCostUsd = 0, config, unitConversion = null }) {
   if (!reading || reading.classification !== READING_STATUS.MEASURED || typeof reading.utilization !== "number") {
