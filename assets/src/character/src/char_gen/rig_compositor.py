@@ -235,7 +235,13 @@ def build_placements(
 
     * `shoulder_points` -- `{"R": (x, y), "L": (x, y)}` world points, replacing the
       single shared `attach["shoulder"]` point every pose used before this card.
+      `upper.upper_dy` is added to each point's y the same way `attach_world`
+      carries it through `hip_world` -- a caller-supplied point is otherwise a
+      static world point with no breath coupling of its own (T-0437 fix round:
+      the arms stayed put while the torso rose until this was added).
     * `hip_points` -- same shape, replacing `leg_hip_points`'s computed result.
+      Deliberately NOT given the `upper_dy` term -- the hips/feet are planted
+      and must stay static regardless of `shoulder_points`' own breath coupling.
     * `lateral_offset_frac` -- `{part_name: frac}`, a sideways shift (as a fraction of
       the torso's own width) applied ONCE per limb chain, at that chain's ROOT part
       (`shoulder_*` for the arm chain, `thigh_*` for the leg chain). The distal part
@@ -304,9 +310,16 @@ def build_placements(
     for side in ("R", "L"):
         sh_name, fa_name = f"shoulder_{side}", f"forearm_{side}"
         shoulder_abs_deg = upper.torso_deg + upper.shoulder_deg_for(side)
-        sh_world = (
-            shoulder_points[side] if shoulder_points is not None else attach_world("shoulder")
-        )
+        if shoulder_points is not None:
+            # A caller-supplied point is a static world point (T-0436's two-point
+            # attach), unlike `attach_world("shoulder")`, which carries `upper_dy`
+            # automatically via `hip_world`. Add it here so the breath still reaches
+            # the arms (T-0437 fix round: they stayed put while the torso rose).
+            # Never added to `hip_points` -- the planted hips/feet stay static.
+            raw = shoulder_points[side]
+            sh_world = (raw[0], raw[1] + upper.upper_dy)
+        else:
+            sh_world = attach_world("shoulder")
         sh_world = lateral(sh_world, sh_name)
         placements.append(place(sh_name, shoulder_abs_deg, sh_world))
         # elbow inherits sh_world's own shift through this FK step -- the chain's
