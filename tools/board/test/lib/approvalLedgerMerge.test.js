@@ -145,6 +145,78 @@ describe("mergeApprovalLedgerJson", () => {
     expect(result.merged.cards.map((c) => c.id)).toEqual(["T-0001", "T-0002"]);
   });
 
+  it("conflicts when ours is an empty or whitespace-only text, even with a valid ancestor and theirs", () => {
+    const baseText = ledger({ generatedAt: "2026-10-21T09:00:00.000Z", cards: [card("T-0001")] });
+    const theirsText = ledger({ generatedAt: "2026-10-21T11:00:00.000Z", cards: [card("T-0001"), card("T-0002")] });
+
+    const emptyResult = mergeApprovalLedgerJson({ baseText, oursText: "", theirsText });
+    expect(emptyResult.ok).toBe(false);
+
+    const whitespaceResult = mergeApprovalLedgerJson({ baseText, oursText: "   \n", theirsText });
+    expect(whitespaceResult.ok).toBe(false);
+  });
+
+  it("conflicts when theirs is an empty or whitespace-only text, even with a valid ancestor and ours", () => {
+    const baseText = ledger({ generatedAt: "2026-10-21T09:00:00.000Z", cards: [card("T-0001")] });
+    const oursText = ledger({ generatedAt: "2026-10-21T12:00:00.000Z", cards: [card("T-0001"), card("T-0002")] });
+
+    const emptyResult = mergeApprovalLedgerJson({ baseText, oursText, theirsText: "" });
+    expect(emptyResult.ok).toBe(false);
+
+    const whitespaceResult = mergeApprovalLedgerJson({ baseText, oursText, theirsText: "   \n" });
+    expect(whitespaceResult.ok).toBe(false);
+  });
+
+  it("still succeeds on a missing/empty ancestor with two valid, non-empty parents -- the empty-parent rejection does not break add/add", () => {
+    const oursText = ledger({ generatedAt: "2026-10-21T12:00:00.000Z", cards: [card("T-0001"), card("T-0002")] });
+    const theirsText = ledger({ generatedAt: "2026-10-21T11:00:00.000Z", cards: [card("T-0001"), card("T-0003")] });
+
+    const result = mergeApprovalLedgerJson({ baseText: "", oursText, theirsText });
+
+    expect(result.ok).toBe(true);
+    expect(result.merged.cards.map((c) => c.id)).toEqual(["T-0001", "T-0002", "T-0003"]);
+  });
+
+  it("conflicts rather than silently dropping a row whose id is missing, null, or not a string", () => {
+    const baseText = ledger({ generatedAt: "2026-10-21T09:00:00.000Z", cards: [card("T-0001")] });
+    const theirsText = ledger({ generatedAt: "2026-10-21T11:00:00.000Z", cards: [card("T-0001")] });
+
+    for (const malformed of [{ requires_approval: false }, { id: null, requires_approval: false }, { id: 42, requires_approval: false }]) {
+      const oursText = JSON.stringify({ version: 1, generated_at: "2026-10-21T12:00:00.000Z", cards: [card("T-0001"), malformed] });
+      const result = mergeApprovalLedgerJson({ baseText, oursText, theirsText });
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  it("conflicts rather than letting a duplicate id silently overwrite the earlier row", () => {
+    const baseText = ledger({ generatedAt: "2026-10-21T09:00:00.000Z", cards: [card("T-0001")] });
+    const oursText = JSON.stringify({
+      version: 1,
+      generated_at: "2026-10-21T12:00:00.000Z",
+      cards: [card("T-0001", { approved_by: "Alice" }), card("T-0001", { approved_by: "Bob" })]
+    });
+    const theirsText = ledger({ generatedAt: "2026-10-21T11:00:00.000Z", cards: [card("T-0001")] });
+
+    const result = mergeApprovalLedgerJson({ baseText, oursText, theirsText });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("still merges a row with extra unknown fields alongside a valid string id -- the id check is not a schema check", () => {
+    const baseText = ledger({ generatedAt: "2026-10-21T09:00:00.000Z", cards: [card("T-0001")] });
+    const oursText = JSON.stringify({
+      version: 1,
+      generated_at: "2026-10-21T12:00:00.000Z",
+      cards: [card("T-0001", { some_future_field: "whatever" })]
+    });
+    const theirsText = ledger({ generatedAt: "2026-10-21T11:00:00.000Z", cards: [card("T-0001")] });
+
+    const result = mergeApprovalLedgerJson({ baseText, oursText, theirsText });
+
+    expect(result.ok).toBe(true);
+    expect(result.merged.cards.find((c) => c.id === "T-0001").some_future_field).toBe("whatever");
+  });
+
   it("produces output that round-trips as valid JSON with a cards array", () => {
     const baseText = ledger({ generatedAt: "2026-10-21T09:00:00.000Z", cards: [card("T-0001")] });
     const oursText = ledger({ generatedAt: "2026-10-21T12:00:00.000Z", cards: [card("T-0001")] });

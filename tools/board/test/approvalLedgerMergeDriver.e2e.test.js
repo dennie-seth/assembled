@@ -158,4 +158,32 @@ describe("approval-ledger merge driver (end-to-end, real git repo)", () => {
 
     await git(["merge", "--abort"], repoDir);
   });
+
+  it("exits nonzero and leaves a zero-byte current ledger untouched instead of overwriting it", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "board-ledger-driver-direct-"));
+    try {
+      const basePath = path.join(dir, "base.json");
+      const oursPath = path.join(dir, "ours.json");
+      const theirsPath = path.join(dir, "theirs.json");
+
+      await writeFile(basePath, ledgerJson({ generatedAt: "2026-10-21T09:00:00.000Z", cards: [card("T-0001")] }));
+      await writeFile(oursPath, ""); // zero-byte current ledger -- simulates a truncated/corrupt write
+      await writeFile(
+        theirsPath,
+        ledgerJson({ generatedAt: "2026-10-21T11:00:00.000Z", cards: [card("T-0001"), card("T-0002")] })
+      );
+
+      const driverResult = await execFileAsync("node", [DRIVER_SRC, basePath, oursPath, theirsPath]).then(
+        (res) => ({ code: 0, ...res }),
+        (err) => ({ code: err.code ?? 1, stdout: err.stdout ?? "", stderr: err.stderr ?? "" })
+      );
+
+      expect(driverResult.code).not.toBe(0);
+
+      const oursAfter = await readFile(oursPath, "utf8");
+      expect(oursAfter).toBe("");
+    } finally {
+      await rmTemp(dir);
+    }
+  });
 });

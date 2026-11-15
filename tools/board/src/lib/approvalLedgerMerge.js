@@ -16,7 +16,7 @@
  */
 
 function parseLedger(text) {
-  if (text == null || text === "") return { cards: [], generated_at: null, version: null, empty: true };
+  if (text == null || text.trim() === "") return { cards: [], generated_at: null, version: null, blank: true };
   let parsed;
   try {
     parsed = JSON.parse(text);
@@ -24,7 +24,33 @@ function parseLedger(text) {
     return null;
   }
   if (!parsed || !Array.isArray(parsed.cards)) return null;
-  return { cards: parsed.cards, generated_at: parsed.generated_at ?? null, version: parsed.version ?? null, empty: false };
+  return { cards: parsed.cards, generated_at: parsed.generated_at ?? null, version: parsed.version ?? null, blank: false };
+}
+
+class InvalidCardsError extends Error {}
+
+/** Indexes cards by id, rejecting (rather than silently dropping/overwriting) any malformed or duplicate id. */
+function indexById(cards) {
+  const byId = new Map();
+  for (const c of cards) {
+    if (!c || typeof c.id !== "string") {
+      throw new InvalidCardsError("a card is missing a valid string id");
+    }
+    if (byId.has(c.id)) {
+      throw new InvalidCardsError(`duplicate card id ${JSON.stringify(c.id)}`);
+    }
+    byId.set(c.id, c);
+  }
+  return byId;
+}
+
+/** Same as indexById, but a malformed base (ancillary, not authoritative) degrades to "no ancestor" instead of failing the merge. */
+function tryIndexById(cards) {
+  try {
+    return indexById(cards);
+  } catch {
+    return new Map();
+  }
 }
 
 function deepEqual(a, b) {
@@ -36,14 +62,6 @@ function deepEqual(a, b) {
   const bKeys = Object.keys(b);
   if (aKeys.length !== bKeys.length) return false;
   return aKeys.every((k) => deepEqual(a[k], b[k]));
-}
-
-function indexById(cards) {
-  const byId = new Map();
-  for (const c of cards) {
-    if (c && typeof c.id === "string") byId.set(c.id, c);
-  }
-  return byId;
 }
 
 /** Merges one card present on both sides, field by field, against the base (3-way per field). */
@@ -88,14 +106,29 @@ export function mergeApprovalLedgerJson({ baseText, oursText, theirsText }) {
 
   if (!ours) return { ok: false, reason: "ours side is not valid JSON with a cards array" };
   if (!theirs) return { ok: false, reason: "theirs side is not valid JSON with a cards array" };
-  // An empty cards array is indistinguishable from a truncated/corrupt write -- never trust it
-  // enough to let it silently win a union against a non-empty side.
-  if (!ours.empty && ours.cards.length === 0) return { ok: false, reason: "ours side has an empty cards array" };
-  if (!theirs.empty && theirs.cards.length === 0) return { ok: false, reason: "theirs side has an empty cards array" };
+  // A blank ours/theirs (zero-byte or whitespace-only text) is corruption, never a legitimate
+  // empty ledger -- unlike a missing/blank *ancestor*, which is the ordinary add/add case and is
+  // tolerated below. A syntactically valid but empty cards array is corruption-shaped for the same
+  // reason: either way, never trust it enough to let it silently win a union against a non-empty
+  // side.
+  if (ours.blank) return { ok: false, reason: "ours side is empty" };
+  if (theirs.blank) return { ok: false, reason: "theirs side is empty" };
+  if (ours.cards.length === 0) return { ok: false, reason: "ours side has an empty cards array" };
+  if (theirs.cards.length === 0) return { ok: false, reason: "theirs side has an empty cards array" };
 
-  const baseById = base ? indexById(base.cards) : new Map();
-  const oursById = indexById(ours.cards);
-  const theirsById = indexById(theirs.cards);
+  const baseById = base && !base.blank ? tryIndexById(base.cards) : new Map();
+  let oursById;
+  let theirsById;
+  try {
+    oursById = indexById(ours.cards);
+  } catch (err) {
+    return { ok: false, reason: `ours side: ${err.message}` };
+  }
+  try {
+    theirsById = indexById(theirs.cards);
+  } catch (err) {
+    return { ok: false, reason: `theirs side: ${err.message}` };
+  }
   const ids = new Set([...oursById.keys(), ...theirsById.keys()]);
 
   const mergedCards = [];
