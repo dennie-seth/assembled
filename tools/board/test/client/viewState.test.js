@@ -327,6 +327,131 @@ describe("captureViewState / applyViewState", () => {
   });
 });
 
+// ---------------------------------------------------------------- section-nav landmarks
+//
+// FIX ROUND (2026-10-21, Codex review): the blanket guard above (`isSectionNavLandmark`)
+// excluded every `data-detail-section` landmark from focus capture, not just on a card
+// switch but on a SAME-card re-render too -- e.g. a new comment arriving over the socket.
+// That reset the reader's navigation position back to the top on every such update, which
+// is the exact "scroll the comment wall" complaint T-0462 exists to fix. These tests cover
+// the (taskId, sectionKey)-keyed path that replaces the blanket exclusion: restore on a
+// same-task rebuild, invalidate (never restore) on a task switch or a missing section, and
+// never let the generic signature fallback in `locate()` re-attach it to a different task's
+// structurally identical landmark.
+
+describe("captureViewState / applyViewState -- section-nav landmarks", () => {
+  function mountSection(taskId, sectionKey) {
+    const root = document.createElement("div");
+    root.dataset.taskId = taskId;
+    root.innerHTML = `<div class="detail-top-landmark" data-detail-section="${sectionKey}" tabindex="-1"></div>`;
+    document.body.replaceChildren(root);
+    return root;
+  }
+
+  it("restores focus to the section landmark after a same-card re-render", () => {
+    const root = mountSection("T-0001", "body");
+    root.querySelector("[data-detail-section]").focus();
+
+    const snapshot = captureViewState(root);
+    root.innerHTML = '<div class="detail-top-landmark" data-detail-section="body" tabindex="-1"></div>';
+    // root.dataset.taskId is unchanged -- same card, just rebuilt.
+    applyViewState(root, snapshot);
+
+    expect(document.activeElement.dataset.detailSection).toBe("body");
+  });
+
+  it("invalidates the restore on a task switch, even though the new landmark is structurally identical", () => {
+    const root = mountSection("T-0001", "body");
+    root.querySelector("[data-detail-section]").focus();
+
+    const snapshot = captureViewState(root);
+    root.innerHTML = '<div class="detail-top-landmark" data-detail-section="body" tabindex="-1"></div>';
+    root.dataset.taskId = "T-0002"; // a different card was selected before this render landed
+
+    applyViewState(root, snapshot);
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("invalidates the restore when the named section is absent from the re-rendered (same) card", () => {
+    const root = mountSection("T-0001", "composer");
+    root.querySelector("[data-detail-section]").focus();
+
+    const snapshot = captureViewState(root);
+    // Same task, but the composer section is gone this time.
+    root.innerHTML = '<div class="detail-top-landmark" data-detail-section="body" tabindex="-1"></div>';
+
+    applyViewState(root, snapshot);
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("does not change scroll position when restoring section-nav focus", () => {
+    const root = mountSection("T-0001", "attachments");
+    root.dataset.scrollManaged = "true"; // isolate from the generic rootScroll capture/restore
+    root.querySelector("[data-detail-section]").focus();
+
+    const snapshot = captureViewState(root);
+    root.innerHTML = '<div class="detail-top-landmark" data-detail-section="attachments" tabindex="-1"></div>';
+    root.scrollTop = 777; // wherever the rebuild happened to leave it
+
+    applyViewState(root, snapshot);
+
+    expect(root.scrollTop).toBe(777);
+  });
+
+  it("captures no section-focus target when focus is on document.body", () => {
+    const root = mountSection("T-0001", "body");
+    const snapshot = captureViewState(root);
+    expect(snapshot.sectionFocus).toBeNull();
+  });
+
+  it("captures no section-focus target when focus is outside the root", () => {
+    const root = mountSection("T-0001", "body");
+    const outside = document.createElement("input");
+    document.body.appendChild(outside);
+    outside.focus();
+
+    const snapshot = captureViewState(root);
+    expect(snapshot.sectionFocus).toBeNull();
+  });
+
+  it("two back-to-back captures/restores for the same card both land correctly", () => {
+    const root = mountSection("T-0001", "body");
+    root.querySelector("[data-detail-section]").focus();
+
+    const firstSnapshot = captureViewState(root);
+    root.innerHTML = '<div class="detail-top-landmark" data-detail-section="body" tabindex="-1"></div>';
+    applyViewState(root, firstSnapshot);
+    expect(document.activeElement.dataset.detailSection).toBe("body");
+
+    const secondSnapshot = captureViewState(root);
+    root.innerHTML = '<div class="detail-top-landmark" data-detail-section="body" tabindex="-1"></div>';
+    applyViewState(root, secondSnapshot);
+    expect(document.activeElement.dataset.detailSection).toBe("body");
+  });
+
+  it("leaves the non-landmark focus path (title, draft text) completely unchanged", () => {
+    const root = document.createElement("div");
+    root.dataset.taskId = "T-0001";
+    root.innerHTML = '<input type="text" name="title" value="half typed">';
+    document.body.replaceChildren(root);
+    const input = root.querySelector("input");
+    input.focus();
+    input.selectionStart = 4;
+    input.selectionEnd = 4;
+
+    const snapshot = captureViewState(root);
+    expect(snapshot.sectionFocus).toBeNull();
+    root.innerHTML = '<input type="text" name="title" value="">';
+    applyViewState(root, snapshot);
+
+    const restored = root.querySelector("input");
+    expect(restored.value).toBe("half typed");
+    expect(document.activeElement).toBe(restored);
+  });
+});
+
 // ---------------------------------------------------------------- multi-root + idle flush
 
 describe("createRenderGate across several roots", () => {

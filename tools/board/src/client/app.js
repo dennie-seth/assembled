@@ -18,10 +18,29 @@ import {
 import { applyTaskEvent, buildStatusPatch, STATUSES, TASK_EVENT_TYPES } from "./board.js";
 import { renderBoard, BATCH_SIZE } from "./boardView.js";
 import { applyViewState, captureViewState, createRenderGate } from "./viewState.js";
-import { renderDetailPanel } from "./detailPanel.js";
+import { renderDetailPanel, stepDetailSection, focusDetailSection } from "./detailPanel.js";
 import { renderConsolePanel } from "./consolePanel.js";
 import { renderCreateForm } from "./createForm.js";
 import { renderGitStatusBar } from "./gitStatusBar.js";
+import { isTextEntry } from "./viewState.js";
+
+// T-0462: section-navigation shortcuts for the detail panel. Always Alt-modified -- a repo-wide
+// search turned up no pre-existing keydown listener anywhere under src/client to collide with,
+// but a bare ArrowUp/ArrowDown is still relied on for native page scrolling and for moving the
+// selected option in the panel's own <select> fields (priority/status/agent/phase/complexity,
+// and the nav's own jump select), and a bare letter would eat a keystroke the instant it fired
+// while typing anywhere. Alt+Left/Right (browser back/forward) and Alt+D (address bar in
+// Chrome) were deliberately avoided for the same reason.
+const DETAIL_NAV_NEXT_KEY = "ArrowDown";
+const DETAIL_NAV_PREV_KEY = "ArrowUp";
+const DETAIL_NAV_COMPOSER_KEY = "c";
+const DETAIL_NAV_ATTACHMENTS_KEY = "a";
+
+function shouldIgnoreDetailNavKey(target) {
+  if (!target) return false;
+  if (target.tagName === "SELECT") return true;
+  return isTextEntry(target);
+}
 
 export function createApp({
   boardRoot,
@@ -186,6 +205,30 @@ export function createApp({
   function handleClose() {
     selectedId = null;
     render();
+  }
+
+  // Never fires while the user is typing (text entry/contenteditable) or has focus on a
+  // <select> -- see the module-level comment above for why. Stateless: "current section" is
+  // read from document.activeElement by stepDetailSection/focusDetailSection themselves, so
+  // switching to a different selectedId naturally starts the next card's navigation fresh.
+  function handleDetailNavKeydown(event) {
+    if (selectedId === null || !detailRoot) return;
+    if (!event.altKey || shouldIgnoreDetailNavKey(event.target)) return;
+
+    const key = event.key;
+    if (key === DETAIL_NAV_NEXT_KEY) {
+      event.preventDefault();
+      stepDetailSection(detailRoot, 1);
+    } else if (key === DETAIL_NAV_PREV_KEY) {
+      event.preventDefault();
+      stepDetailSection(detailRoot, -1);
+    } else if (key.toLowerCase() === DETAIL_NAV_COMPOSER_KEY) {
+      event.preventDefault();
+      focusDetailSection(detailRoot, "composer");
+    } else if (key.toLowerCase() === DETAIL_NAV_ATTACHMENTS_KEY) {
+      event.preventDefault();
+      focusDetailSection(detailRoot, "attachments");
+    }
   }
 
   async function handleSave(taskId, patch) {
@@ -387,6 +430,7 @@ export function createApp({
     agentOptions = fetchedAgents;
     render();
     renderGate.attach();
+    document.addEventListener("keydown", handleDetailNavKeydown);
     connectSocketImpl(handleSocketMessage);
 
     if (fetchGitStatusImpl) {
@@ -428,6 +472,7 @@ export function createApp({
     handleCancelCreate,
     handleCreateSubmit,
     handleSocketMessage,
+    handleDetailNavKeydown,
     handleExportBacklog,
     handleExportDone,
     pollGitStatus,
