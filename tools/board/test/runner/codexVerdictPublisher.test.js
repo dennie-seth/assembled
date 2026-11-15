@@ -650,7 +650,8 @@ describe("publishCodexVerdict -- recoverable delivery, not a one-shot claim that
       runResult: { kind: "payload", payload: validPayload({ outcome: "PASS" }) },
       currentHead: SHA_A,
       isPidAliveFn: (pid) => pid !== 999999,
-      readEntriesFn: archive.readEntriesFn
+      readEntriesFn: archive.readEntriesFn,
+      appendEntryFn: archive.appendEntryFn
     };
 
     const p1ReachedAppend = deferred();

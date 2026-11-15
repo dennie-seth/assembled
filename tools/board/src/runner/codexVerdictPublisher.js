@@ -91,9 +91,15 @@ async function overwriteMarkerAtomic(markerPath, content, { writeFileFn, mkdirFn
   }
 }
 
-async function readMarker(markerPath, { readFileFn }) {
+/**
+ * Reads the marker's raw (unparsed) content -- the exact bytes the stale-reclaim recovery path
+ * below re-verifies immediately before its destructive unlink (FIX ROUND 3, human comment (b)).
+ * Returning the raw string, not the parsed object, is what lets the caller compare two reads for
+ * byte-for-byte identity later without caring which fields happen to differ.
+ */
+async function readMarkerRaw(markerPath, { readFileFn }) {
   try {
-    return JSON.parse(await readFileFn(markerPath));
+    return await readFileFn(markerPath);
   } catch (err) {
     if (err && err.code === "ENOENT") return null;
     throw err;
@@ -137,6 +143,26 @@ const MAX_CLAIM_RECOVERY_ATTEMPTS = 25;
  * its recorded `pid` is not alive. A live claimant's marker is left untouched (reported as a
  * genuine in-flight duplicate) -- this function never races a claimant that might still be
  * writing.
+ *
+ * FIX ROUND 3 (Dennie, human comment (b), P1): the stale-decision-then-unlink pair above used to
+ * have no exclusivity joining them, the identical shape as the `claimReviewSlot` bug this same
+ * round fixed in `runCodexReview.js`. Two recoverers can both observe the SAME dead marker; the
+ * first fully reclaims it (unlinks the dead marker, creates its own live one, re-checks the
+ * archive, and is in flight toward its own append); the second -- still holding only its EARLIER
+ * observation of the now-gone dead marker -- reaches its own `unlinkFn(markerPath)` and deletes
+ * the first's live replacement, since `unlink(path)` removes whatever currently occupies the
+ * path, not specifically the stale generation that was actually observed. Both then proceed to
+ * append, producing two archive entries for one delivery -- the exact double-publish the single
+ * marker was introduced to prevent, reappearing one level up. The comment this replaced said
+ * "the next loop iteration re-reads the true current state rather than assuming" -- true for the
+ * NEXT iteration, but it does nothing to undo a removal the CURRENT iteration already committed.
+ * The stale branch now re-reads the marker's raw bytes immediately before the destructive unlink
+ * and compares them, byte-for-byte, against the raw bytes this observation was originally decided
+ * from (never a parsed-field or filesystem-inode comparison -- an inode can be reused by the OS
+ * the instant it's freed, which would silently defeat an inode-based check on exactly the kind of
+ * fast tmpfs this card's own tests run on). A mismatch, or the marker already gone, means a
+ * concurrent recoverer already acted on it, so this caller must never remove it -- it loops back
+ * and re-evaluates from scratch instead.
  */
 async function publishEntryExactlyOnce({
   tasksDir,
@@ -178,11 +204,17 @@ async function publishEntryExactlyOnce({
       return { alreadyPublished: false, entry };
     }
 
-    const marker = await readMarker(markerPath, io);
-    if (!marker) {
+    const observedRaw = await readMarkerRaw(markerPath, io);
+    if (observedRaw === null) {
       // Raced with someone else's removal of the marker we just failed to create -- the slot is
       // free again; loop back and try to claim it fresh rather than giving up.
       continue;
+    }
+    let marker;
+    try {
+      marker = JSON.parse(observedRaw);
+    } catch {
+      continue; // mid-write or corrupted; re-read fresh rather than trusting a partial parse
     }
     if (marker.completed) {
       return { alreadyPublished: true, entry: marker.entry };
@@ -201,9 +233,20 @@ async function publishEntryExactlyOnce({
       return { alreadyPublished: true, entry: null };
     }
 
-    // Stale: not completed, no archive entry, recorded claimant is dead. Reclaim the SAME marker
-    // path -- best-effort unlink, since another recoverer may win the removal-then-reclaim race;
-    // either way the next loop iteration re-reads the true current state rather than assuming.
+    // Stale: not completed, no archive entry, recorded claimant is dead. Re-verify immediately
+    // before the destructive act that the marker on disk is still byte-for-byte the SAME content
+    // this observation was decided from (see this function's own docstring, FIX ROUND 3). A
+    // concurrent recoverer may already have reclaimed this same stale marker and be actively
+    // working a brand-new, live one in its place.
+    let currentRaw;
+    try {
+      currentRaw = await readFileFn(markerPath);
+    } catch {
+      continue; // already gone -- someone else reclaimed or completed it; re-read fresh
+    }
+    if (currentRaw !== observedRaw) {
+      continue; // changed since we looked -- never remove it, re-evaluate from scratch
+    }
     await unlinkFn(markerPath).catch(() => {});
   }
 

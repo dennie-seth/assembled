@@ -117,6 +117,22 @@ export const REVIEW_SLOT_INVOCATION_ID = "lock";
  * a review that was killed outright -- not merely one that threw and released cleanly -- still
  * frees the slot for the next attempt rather than stranding the card behind a dead claim forever
  * (the card's own edge case: "state explicitly how the claim becomes reclaimable").
+ *
+ * FIX ROUND 3 (Dennie, human comment (a), P1): the staleness decision above (`stillLive`) and the
+ * `unlinkFn` call that acts on it are two separate awaits, with no exclusivity joining them. Two
+ * callers can both read the identical released lease, both decide it is stale, and then race to
+ * act on that SAME stale observation: the first unlinks it and reserves a brand-new, live lease;
+ * the second -- still holding only its earlier observation, with nothing telling it the world has
+ * moved on -- reaches `unlinkFn(leasePath)` and deletes that live replacement BY FILENAME, since
+ * plain `unlink(path)` removes whatever currently occupies the path, not specifically the stale
+ * generation that was actually observed. Codex's `probes.mjs` reproduced this deterministically.
+ * The fix re-reads the lease's raw bytes immediately before the destructive unlink and compares
+ * them, byte-for-byte, against the raw bytes this observation was originally decided from (never
+ * a filesystem-inode comparison -- an inode can be reused by the OS the instant it's freed, which
+ * would silently defeat an inode-based check on exactly the kind of fast tmpfs this card's own
+ * tests run on): a mismatch, or the lease already gone, means a concurrent caller has already
+ * acted on it, and this caller must never remove it -- it loops back and re-evaluates from scratch
+ * instead.
  */
 export async function claimReviewSlot({
   runsDir,
@@ -142,9 +158,11 @@ export async function claimReviewSlot({
     } catch (err) {
       if (!(err instanceof DuplicateReservationError)) throw err;
       const leasePath = reservationLeasePath(runsDir, { cardId, executionId, invocationId });
+      let observedRaw;
       let existing;
       try {
-        existing = JSON.parse(await readFileFn(leasePath));
+        observedRaw = await readFileFn(leasePath);
+        existing = JSON.parse(observedRaw);
       } catch {
         continue; // raced with a concurrent reclaim removing the lease -- retry the reserve
       }
@@ -152,6 +170,19 @@ export async function claimReviewSlot({
       const stillLive = existing.released !== true && ownerPid !== null && isPidAliveFn(ownerPid);
       if (stillLive) {
         return { claimed: false, reason: "review-already-in-flight", existing };
+      }
+      // Re-verify immediately before the destructive act: the lease about to be removed must
+      // still be byte-for-byte the SAME content judged stale above -- never merely a file still
+      // existing at this filename -- or a concurrent claimant's brand-new, live lease could be
+      // destroyed in its place.
+      let currentRaw;
+      try {
+        currentRaw = await readFileFn(leasePath);
+      } catch {
+        continue; // already gone -- someone else reclaimed it; retry the reserve fresh
+      }
+      if (currentRaw !== observedRaw) {
+        continue; // changed since we looked -- never remove it, re-evaluate from scratch
       }
       await unlinkFn(leasePath).catch(() => {});
     }
