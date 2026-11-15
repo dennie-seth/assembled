@@ -38,6 +38,8 @@
  * `T-0001` and fail silently when they got it wrong.
  */
 
+import { syncDetailNavBar } from "./detailPanel.js";
+
 const TRANSIENT_TAGS = new Set(["SELECT", "INPUT", "TEXTAREA"]);
 
 //: `<input type=...>` values that hold no user-entered state worth protecting --
@@ -286,18 +288,29 @@ export function applyViewState(root, snapshot) {
  * rather than restore, even when the new card has a section with the same key. `preventScroll`
  * keeps this from ever moving the panel's scroll position; restoring focus must not be how the
  * reader loses their place either.
+ *
+ * FIX ROUND (2026-11-15, Codex review): `detailPanel.js`'s own nav bar is populated earlier, in
+ * `renderDetailPanel`, before focus has actually moved back here -- so it always resolves "no
+ * section focused" at that point and shows a stale position (its label, jump selector and
+ * Prev/Next boundary state all out of sync with where focus really ends up). `syncDetailNavBar`
+ * re-resolves all three together from whatever is actually focused once this function is done,
+ * whether the restore matched (focus moved) or not (coherent-but-empty is still coherent) -- it
+ * only ever reads DOM state and sets text/value/disabled, so it cannot itself move focus or
+ * scroll.
  */
 function restoreSectionFocus(root, sectionFocus) {
   if (!sectionFocus) return;
   const currentTaskId = root.dataset?.taskId ?? null;
   if (currentTaskId === null || currentTaskId !== sectionFocus.taskId) return;
   const el = findSectionLandmark(root, sectionFocus.sectionKey);
-  if (!el) return;
-  try {
-    el.focus({ preventScroll: true });
-  } catch {
-    // Not focusable any more (disabled, or rebuilt as a different control).
+  if (el) {
+    try {
+      el.focus({ preventScroll: true });
+    } catch {
+      // Not focusable any more (disabled, or rebuilt as a different control).
+    }
   }
+  syncDetailNavBar(root);
 }
 
 /**

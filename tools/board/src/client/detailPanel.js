@@ -691,6 +691,30 @@ function populateNavBar(root) {
   updateNavDisplay(root, sections, currentSectionIndex(root, sections));
 }
 
+/**
+ * Re-resolve the nav bar's label, jump selection and boundary buttons from a single index,
+ * derived from wherever focus actually is right now.
+ *
+ * FIX ROUND (2026-11-15, Codex review): `populateNavBar` runs synchronously inside
+ * `renderDetailPanel`, before `viewState.js`'s `applyViewState` has restored section-nav focus
+ * onto the rebuilt landmark -- at that point `document.activeElement` is `document.body` (the
+ * old subtree was just torn out), so the bar's own view of "current section" is always resolved
+ * BEFORE the restore, not after it. Nothing re-ran it once focus actually landed, so the
+ * announcement, the jump selector and the Prev/Next disabled state kept describing the stale
+ * pre-restore position (typically "Top") while real focus sat wherever the reader had navigated
+ * to. Exported so `viewState.js`'s section-focus restoration -- the one call that knows focus has
+ * just moved for real -- can re-synchronise the bar without reaching into detailPanel's own
+ * internals. No-ops when `root` has no nav bar at all (no task selected) -- there is nothing to
+ * synchronise, and `listDetailSections` mutates `dataset.detailSection` on whatever it finds, so
+ * skipping it entirely when there is no bar to update avoids that side effect on a root that was
+ * never a full rendered detail panel in the first place.
+ */
+export function syncDetailNavBar(root) {
+  if (!root || !root.querySelector(".detail-nav")) return;
+  const sections = listDetailSections(root);
+  updateNavDisplay(root, sections, currentSectionIndex(root, sections));
+}
+
 function deleteControlsFor(task, onDelete) {
   const wrap = document.createElement("div");
   wrap.className = "detail-delete-wrap";
